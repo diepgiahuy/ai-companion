@@ -2,8 +2,7 @@ FROM espressif/idf:v6.0.2
 
 WORKDIR /project
 COPY . .
-RUN idf.py set-target esp32s3 \
- && idf.py build \
- && idf.py size
+RUN /opt/esp/entrypoint.sh /bin/bash -c \
+    'idf.py set-target esp32s3 && idf.py build && idf.py size'
 
 CMD ["idf.py", "build"]
