@@ -1,0 +1,100 @@
+name: Feature
+description: Propose an implementation-ready product or device capability
+title: "[Feature] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the outcome and repository reality. Keep framework or algorithm choices open unless evidence already fixes them.
+
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Outcome
+      description: What user or system behavior will exist when this is complete?
+      placeholder: A device owner can...
+    validations:
+      required: true
+
+  - type: textarea
+    id: current_state
+    attributes:
+      label: Current state
+      description: Verified files, symbols, behavior, and limitations.
+      placeholder: |
+        - backend/internal/...
+        - components/...
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: Changes owned by this issue.
+    validations:
+      required: true
+
+  - type: textarea
+    id: non_goals
+    attributes:
+      label: Non-goals
+      description: Related work intentionally excluded.
+    validations:
+      required: true
+
+  - type: textarea
+    id: decisions
+    attributes:
+      label: Decisions and open questions
+      description: Separate fixed contracts from hypotheses requiring a spike or benchmark.
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Observable success and failure behavior.
+      placeholder: |
+        - [ ] When ..., then ...
+        - [ ] If ..., the system ...
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: test_layers
+    attributes:
+      label: Relevant test layers
+      description: Select only layers that can prove this issue.
+      options:
+        - label: Static/build
+        - label: Unit or host
+        - label: Persistence/protocol/provider integration
+        - label: Simulation
+        - label: Physical HIL
+        - label: Manual product verification
+
+  - type: textarea
+    id: security_privacy
+    attributes:
+      label: Security, privacy, and data lifecycle
+      description: Ownership, authorization, replay, abuse, retention, deletion, and secrets.
+    validations:
+      required: true
+
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies and ownership
+      description: Blocking issues, base branch, merge order, owned paths, and shared-file integrator.
+    validations:
+      required: true
+
+  - type: textarea
+    id: rollout
+    attributes:
+      label: Rollout and rollback
+      description: How the change is enabled, observed, disabled, or reverted.
+    validations:
+      required: true
