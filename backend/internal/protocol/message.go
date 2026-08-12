@@ -62,6 +62,7 @@ type Message struct {
 	Transport     string         `json:"transport,omitempty"`
 	SessionID     string         `json:"session_id,omitempty"`
 	TurnID        string         `json:"turn_id,omitempty"`
+	GenerationID  uint64         `json:"generation_id,omitempty"`
 	State         string         `json:"state,omitempty"`
 	Mode          string         `json:"mode,omitempty"`
 	Text          string         `json:"text,omitempty"`

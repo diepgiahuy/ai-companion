@@ -1,7 +1,7 @@
 # Companion Production v1 — Single-User AI Voice Device
 
 > **Status:** Production rewrite in controlled rollout  
-> **Checkpoint:** CP5.1 — model gateway provider seam extracted + regression green
+> **Checkpoint:** CP4.1 — realtime generation invalidation + ordered TTS queueing green
 > **Updated:** 2026-08-12  
 > **Source baseline:** `esp32-companion-poc-commercial-prod-shaped-20260811`  
 > **Rule:** a feature is never marked ✅ until its stated test gate passes. Research choice ≠ implemented. Source-complete ≠ hardware-proven.
@@ -22,7 +22,7 @@ Legend: ✅ passed gate · 🟡 in progress / partial · 🔴 not started · �
 | CP1 | Physical hardware stabilization | 🟡 ⚠️ deferred | Mic + speaker + power + display SKU proven simultaneously on bench |
 | CP2 | Production firmware foundation | 🔴 | ESP-IDF build/flash/HIL passes; Arduino removed from production path |
 | CP3 | Audio front-end / hands-free | 🔴 ⚠️ | AFE/AEC/VADNet/WakeNet tuned; measured hands-free barge-in works |
-| CP4 | Realtime session + transport | 🔴 | WSS baseline retained; WebRTC benchmark passes; cancel/backpressure/late-frame tests pass |
+| CP4 | Realtime session + transport | 🟡 | WSS baseline retained; WebRTC benchmark passes; cancel/backpressure/late-frame tests pass |
 | CP5 | Go production platform | 🟡 | Go 1.26.x + ADK Go integration + provider/model seam passes tests |
 | CP6 | Product domain + data layer | 🔴 | PostgreSQL + Ent + Atlas + River migration passes parity + recovery tests |
 | CP7 | Agent/tools/context | 🔴 | ADK workflow replaces custom router/tool loop without feature regression |
@@ -964,6 +964,52 @@ No checkpoint can skip directly to L7 and be considered production-ready if lowe
 
 Every implementation checkpoint adds an entry here and updates the dashboard. Every PASS checkpoint also has a Git tag/snapshot so it can be restored without reconstructing changes manually.
 
+## 2026-08-12 — CP4.1 Realtime generation invalidation + ordered output
+
+Status: PASS
+
+Changed:
+- Added `generation_id` to turn-scoped protocol control messages.
+- Bound turn-specific outbound control/audio to the turn context and generation.
+- Writer now rejects queued output whose generation is stale or whose turn context has been cancelled.
+- `abort` invalidates the generation even after processing has finished, preventing already-queued playback from leaking after barge-in.
+- Preserved session-lifetime delivery for alarms/config/global control so short scheduler/request contexts do not accidentally cancel queued device messages.
+- Added an audio-lane ordering barrier so `tts.stop` cannot overtake the final audio frames of its turn.
+- Added bounded-queue/backpressure and stale-generation tests.
+
+Tests executed:
+- `GOTOOLCHAIN=local CGO_ENABLED=1 go test -race -count=1 -modfile=go.offline.mod ./internal/server ./internal/protocol` -> PASS.
+- `bash scripts/e2e_offline.sh` -> PASS after fixes. Host C++ simulator `2/2`; partition/SRAM budget PASS; all backend packages under race detector PASS.
+- `git diff --check` -> PASS.
+
+Measured:
+- Server E2E still emits all expected Opus frames before `tts.stop`.
+- Audio/control queues remain bounded; overflow is rejected rather than growing without limit.
+
+Problems found:
+- First implementation attached short-lived scheduler contexts to all queued messages, causing reminder alarms to be dropped after enqueue.
+- Full E2E then exposed `tts.stop` overtaking the final queued audio frame because control messages intentionally have priority over the audio lane.
+
+Root cause:
+- Message lifetime and message priority were conflated. Turn media needs turn cancellation/generation semantics, while global control needs session lifetime; end-of-media control also needs strict ordering behind its media frames.
+
+Solution:
+- Apply context/generation only to turn-scoped outbound.
+- Keep global control independent of producer request timeout after successful enqueue.
+- Queue `tts.stop` as an ordered audio-lane barrier while preserving priority for unrelated alarm/config control.
+
+Trade-offs accepted:
+- WSS session logic is still implemented inside the server session object; transport-independent extraction/WebRTC parity remains later CP4 work.
+- At most an already-in-progress socket write can be visible at the exact instant barge-in occurs; queued stale writes are cancelled/dropped.
+
+Rollback path:
+- Git tag `CP4.1-20260812` restores this checkpoint.
+- Git tag `CP5.1-20260812` restores the model-gateway checkpoint before realtime queue changes.
+- Git tag `CP0-20260812` restores the frozen baseline.
+
+Next:
+- CP4.2: separate realtime session semantics from the concrete WebSocket adapter and add reconnect/slow-consumer/late-frame integration coverage without requiring ESP32 hardware.
+
 ## 2026-08-12 — CP5.1 Model gateway extraction
 
 Status: PASS
@@ -1115,6 +1161,6 @@ Research refreshed on **2026-08-12** from primary/project documentation. Version
 
 # 22. Next action
 
-**Software-first rollout is active. Hardware CP1/CP3 are deferred, not waived.** Continue deterministic backend/transport/platform checkpoints that can be fully verified without the physical ESP32. The immediate next checkpoint is CP4.1: introduce the production realtime session state machine with bounded queues, generation invalidation and stale-frame/cancel tests.
+**Software-first rollout is active. Hardware CP1/CP3 are deferred, not waived.** CP5.1 (model gateway seam) and CP4.1 (generation invalidation + ordered TTS output) are now green and individually restorable. The immediate next checkpoint is CP4.2: separate realtime session semantics from the concrete WebSocket adapter, then test reconnect, slow consumer/backpressure and late-frame behavior using software transports/fakes.
 
 Dependency-heavy CP5.2 (Go 1.26.5 + ADK Go v2.2.x) and CP6 (Postgres/Ent/Atlas/River) remain separate reversible checkpoints; they are promoted only in an environment that can fetch the pinned dependencies and execute the real compile/integration gates. Hardware validation resumes later at CP1/CP2/CP3 and remains mandatory before Production RC.
