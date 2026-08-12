@@ -18,8 +18,9 @@ The table below distinguishes **implemented** from **production-proven**. A gree
 | Exact Go 1.26.5 + race/E2E | ✅ passed | Clean GitHub Actions + Docker production gate |
 | Module reproducibility | ✅ passed | `go mod tidy` zero-diff + `go mod verify` |
 | Dependency vulnerability reachability | ✅ passed | `govulncheck` — 0 called vulnerabilities at verified checkpoint |
-| CodeQL | ✅ passed | GitHub CodeQL traced Go build on active PR |
+| CodeQL | ✅ passed | GitHub CodeQL traced Go build on verified PR head |
 | Mic raw signal | ✅ passed | Real ESP32-S3 + INMP441 peak/RMS responds to sound |
+| Physical ESP32-S3 HIL | ⚪ unproven | Real fail-closed workflow exists; requires dedicated `esp32s3-hil` runner + board and `HIL_ENABLED=true` |
 | Real ASR → LLM → TTS voice E2E | ⚪ unproven | Requires real ASR/TTS providers and real device/network run |
 | Real LLM tool quality | ⚪ unproven | Requires real-model task-success/argument benchmark |
 | Prompt regression quality | ⚪ unproven | Requires versioned real-model eval/red-team suite |
@@ -48,6 +49,7 @@ The current development branch/PR implements foundations for the next production
 - **Native MCP bridge** — official MCP Go SDK behind the Companion `ToolRegistry`/policy boundary, with endpoint validation and SSRF-safe defaults.
 - **WebRTC Opus bridge** — Pion WebRTC adapter in parallel with the existing WebSocket transport; latency target remains unproven until measured on real networks.
 - **Expanded GitHub CI/CD** — module lock, race/vet, govulncheck, CodeQL, evidence truth gate, dependency review capability detection, release provenance foundation.
+- **Physical HIL workflow** — fail-closed ESP-IDF build/flash/serial test using `pytest-embedded`; it never falls back to a mock result and is intentionally skipped on PRs until the dedicated board runner is enabled.
 
 See PR #1 for the exact diff and deliberately unclaimed gates.
 
@@ -143,6 +145,8 @@ go test -tags "adk,mcp,webrtc,nolibopusfile" -race -count=1 ./...
 ```
 
 Additional CI workflows run evidence validation, module reproducibility, `govulncheck`, CodeQL and release/security checks. Passing these gates proves only their stated scope.
+
+Physical HIL is a separate gate. It requires a self-hosted macOS ARM64 runner labeled `esp32s3-hil`, a connected ESP32-S3, ESP-IDF installed on the runner, and repository variable `HIL_ENABLED=true`. Without that physical environment the PR HIL job is skipped and **does not count as evidence**.
 
 ## Production definition of done
 
