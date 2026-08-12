@@ -7,4 +7,4 @@ They preserve the production import paths through `backend/go.offline.mod` while
 - system `libopus.so.0` through a minimal CGo wrapper, and
 - a minimal RFC6455 WebSocket client/server used only by the test process.
 
-Production and release builds continue to use `backend/go.mod` (Go 1.25 and the pinned upstream modules). Do not ship these compatibility modules as application providers.
+Production and release builds continue to use `backend/go.mod` (Go 1.26.5 and the pinned upstream modules). Do not ship these compatibility modules as application providers.

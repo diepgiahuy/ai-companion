@@ -1,8 +1,12 @@
 package agent
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 	"time"
 
@@ -23,15 +27,15 @@ type ContextPlanner interface {
 }
 
 type Qwen struct {
-	model        string
-	location     *time.Location
-	modelGateway ModelGateway
-	turns        TurnResultStore
-	conversation *conversationctx.Service
-	toolRegistry *capability.ToolRegistry
-	planner      ContextPlanner
-	usageMeter   UsageMeter
-	usageGuard   interface {
+	baseURL, apiKey, model string
+	location               *time.Location
+	client                 *http.Client
+	turns                  TurnResultStore
+	conversation           *conversationctx.Service
+	toolRegistry           *capability.ToolRegistry
+	planner                ContextPlanner
+	usageMeter             UsageMeter
+	usageGuard             interface {
 		Check(context.Context, string) error
 	}
 	modelSelector ModelSelector
@@ -43,18 +47,13 @@ const promptVersion = "companion-v3"
 
 type Option func(*Qwen)
 
-func WithModelGateway(gateway ModelGateway) Option {
-	return func(q *Qwen) { q.modelGateway = gateway }
-}
 func WithModelSelector(selector ModelSelector) Option {
 	return func(q *Qwen) { q.modelSelector = selector }
 }
 func WithUsageMeter(m UsageMeter) Option { return func(q *Qwen) { q.usageMeter = m } }
 func WithUsageGuard(g interface {
 	Check(context.Context, string) error
-}) Option {
-	return func(q *Qwen) { q.usageGuard = g }
-}
+}) Option                                                { return func(q *Qwen) { q.usageGuard = g } }
 func WithConversation(s *conversationctx.Service) Option { return func(q *Qwen) { q.conversation = s } }
 func WithToolRegistry(r *capability.ToolRegistry) Option { return func(q *Qwen) { q.toolRegistry = r } }
 func WithContextPlanner(p ContextPlanner) Option         { return func(q *Qwen) { q.planner = p } }
@@ -63,7 +62,7 @@ func NewQwen(baseURL, apiKey, model, timezone string, turns TurnResultStore, opt
 	if err != nil {
 		return nil, fmt.Errorf("load timezone: %w", err)
 	}
-	q := &Qwen{model: model, location: loc, turns: turns, modelGateway: NewOpenAICompatibleGateway(baseURL, apiKey, nil)}
+	q := &Qwen{baseURL: strings.TrimRight(baseURL, "/"), apiKey: apiKey, model: model, location: loc, client: &http.Client{Timeout: 45 * time.Second}, turns: turns}
 	for _, o := range options {
 		o(q)
 	}
@@ -72,9 +71,6 @@ func NewQwen(baseURL, apiKey, model, timezone string, turns TurnResultStore, opt
 	}
 	if q.toolRegistry == nil {
 		return nil, fmt.Errorf("tool registry is required")
-	}
-	if q.modelGateway == nil {
-		return nil, fmt.Errorf("model gateway is required")
 	}
 	return q, nil
 }
@@ -97,6 +93,25 @@ type functionCall struct {
 type toolDefinition struct {
 	Type     string         `json:"type"`
 	Function map[string]any `json:"function"`
+}
+type chatRequest struct {
+	Model             string           `json:"model"`
+	Messages          []chatMessage    `json:"messages"`
+	Tools             []toolDefinition `json:"tools,omitempty"`
+	ToolChoice        string           `json:"tool_choice,omitempty"`
+	ParallelToolCalls bool             `json:"parallel_tool_calls,omitempty"`
+	Temperature       float64          `json:"temperature"`
+	MaxTokens         int              `json:"max_tokens"`
+}
+type chatResponse struct {
+	Choices []struct {
+		Message chatMessage `json:"message"`
+	} `json:"choices"`
+	Usage struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+		TotalTokens      int `json:"total_tokens"`
+	} `json:"usage"`
 }
 
 func (q *Qwen) Respond(ctx context.Context, turnID, transcript string) (string, error) {
@@ -206,20 +221,47 @@ func (q *Qwen) RespondRich(ctx context.Context, turnID, transcript string) (pipe
 	return pipeline.AgentResult{}, fmt.Errorf("tool loop exceeded three rounds")
 }
 func (q *Qwen) complete(ctx context.Context, messages []chatMessage, tools []toolDefinition, model string) (chatMessage, error) {
-	req := ModelRequest{Model: model, Messages: messages, Tools: tools, Temperature: .1, MaxTokens: 384}
+	reqBody := chatRequest{Model: model, Messages: messages, Tools: tools, Temperature: .1, MaxTokens: 384}
 	if len(tools) > 0 {
-		req.ToolChoice = "auto"
-		req.ParallelToolCalls = true
+		reqBody.ToolChoice = "auto"
+		reqBody.ParallelToolCalls = true
 	}
-	response, err := q.modelGateway.Complete(ctx, req)
+	payload, err := json.Marshal(reqBody)
 	if err != nil {
 		return chatMessage{}, err
 	}
-	if q.usageMeter != nil && response.Usage.TotalTokens > 0 {
-		turn, _ := pipeline.CurrentTurn(ctx)
-		q.usageMeter.RecordUsage(ctx, Usage{Provider: "model-gateway", Model: model, PromptVersion: promptVersion, PromptTokens: response.Usage.PromptTokens, CompletionTokens: response.Usage.CompletionTokens, TotalTokens: response.Usage.TotalTokens, UserID: turn.UserID, DeviceID: turn.DeviceID})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, q.baseURL+"/chat/completions", bytes.NewReader(payload))
+	if err != nil {
+		return chatMessage{}, err
 	}
-	return response.Message, nil
+	req.Header.Set("Content-Type", "application/json")
+	if q.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+q.apiKey)
+	}
+	resp, err := q.client.Do(req)
+	if err != nil {
+		return chatMessage{}, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	if err != nil {
+		return chatMessage{}, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return chatMessage{}, fmt.Errorf("qwen endpoint returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+	var decoded chatResponse
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		return chatMessage{}, fmt.Errorf("decode qwen response: %w", err)
+	}
+	if len(decoded.Choices) == 0 {
+		return chatMessage{}, fmt.Errorf("qwen response has no choices")
+	}
+	if q.usageMeter != nil && decoded.Usage.TotalTokens > 0 {
+		turn, _ := pipeline.CurrentTurn(ctx)
+		q.usageMeter.RecordUsage(ctx, Usage{Provider: "openai-compatible", Model: model, PromptVersion: promptVersion, PromptTokens: decoded.Usage.PromptTokens, CompletionTokens: decoded.Usage.CompletionTokens, TotalTokens: decoded.Usage.TotalTokens, UserID: turn.UserID, DeviceID: turn.DeviceID})
+	}
+	return decoded.Choices[0].Message, nil
 }
 func (q *Qwen) executeTool(ctx context.Context, key string, call toolCall) string {
 	return q.toolRegistry.Execute(ctx, call.Function.Name, capability.ToolRequest{Key: key, Arguments: call.Function.Arguments}).Content

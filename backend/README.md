@@ -1,6 +1,6 @@
 # Companion Go backend
 
-Toolchain: **Go 1.25.0** (`go.mod` + container gate).
+Toolchain: **Go 1.26.5** (`go.mod` + container gate).
 
 This server implements the Xiaozhi-compatible subset used by the ESP32 POC:
 
@@ -36,7 +36,7 @@ Opus packets and does not read Ogg/Opus files.
 
 The root [`README.md`](../README.md) is the source of truth for the complete firmware + backend roadmap. Backend work should preserve these priorities:
 
-- 🟡 relative `timer.create(delay_seconds)`, ACK/retry reminder scheduler + user/device-scoped alarm/schedule push are implemented; Go 1.25 E2E rerun pending in this sandbox
+- 🟡 relative `timer.create(delay_seconds)`, ACK/retry reminder scheduler + user/device-scoped alarm/schedule push are implemented; Go 1.26.5 E2E rerun pending in this sandbox
 - 🟡 strongly typed expense/budget/note/journal/schedule CRUD (including timer pause/resume) + bounded authoritative queries are implemented; rerun pending here
 - 🟡 voice-note WAV persistence + SQLite metadata + bounded list tool are implemented; rerun pending here
 - 🔴 proactive event delivery with quiet-hours/rate-limit policy
@@ -74,7 +74,7 @@ cover registry discovery/execution and native resource URIs; future MCP adapters
 register into these same ports instead of adding a second agent execution path. Server/store tests also
 cover deterministic relative timer creation, reminder claim/recover/fire and device-targeted `alarm` delivery.
 
-This delivery sandbox has Go 1.23.2 while `go.mod` requires Go 1.25 and network
+This delivery sandbox has Go 1.23.2 while `go.mod` requires Go 1.26.5 and network
 toolchain download is blocked, so the modified Go suite must be rerun with the
-supplied Docker image or a local Go 1.25 + libopus environment before those
+supplied Docker image or a local Go 1.26.5 + libopus environment before those
 features are promoted from 🟡 to ✅ in the root README.

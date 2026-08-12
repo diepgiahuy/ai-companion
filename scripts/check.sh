@@ -31,10 +31,10 @@ python3 "$ROOT/scripts/budget_check.py"
 if command -v go >/dev/null 2>&1; then
   GO_VERSION="$(GOTOOLCHAIN=local go env GOVERSION 2>/dev/null || true)"
   if [[ "$GO_VERSION" =~ ^go([0-9]+)\.([0-9]+) ]] &&
-     (( BASH_REMATCH[1] > 1 || (BASH_REMATCH[1] == 1 && BASH_REMATCH[2] >= 25) )); then
+     (( BASH_REMATCH[1] > 1 || (BASH_REMATCH[1] == 1 && BASH_REMATCH[2] >= 26) )); then
     (cd "$ROOT/backend" && GOTOOLCHAIN=local go test -tags nolibopusfile -race ./...)
   else
-    echo "Go 1.25+ required; local ${GO_VERSION:-unknown} is too old, so backend tests remain pending."
+    echo "Go 1.26+ required; local ${GO_VERSION:-unknown} is too old, so backend tests remain pending."
   fi
 else
   echo "Go unavailable: backend tests remain pending in this environment."

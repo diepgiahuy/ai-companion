@@ -1,9 +1,9 @@
 # Companion Production v1 — Single-User AI Voice Device
 
 > **Status:** Production rewrite in controlled rollout  
-> **Checkpoint:** CP4.1 — realtime generation invalidation + ordered TTS queueing green
+> **Checkpoint:** CP-SW1 — realtime turn runtime + streaming response foundation  
 > **Updated:** 2026-08-12  
-> **Source baseline:** `esp32-companion-poc-commercial-prod-shaped-20260811`  
+> **Source baseline:** `companion-production-v1-cp0-20260812`  
 > **Rule:** a feature is never marked ✅ until its stated test gate passes. Research choice ≠ implemented. Source-complete ≠ hardware-proven.
 
 This repository is no longer treated as a throwaway POC. The target is a **single-user production companion device** built around ESP32-S3 with a Go backend, local-first voice/LLM capability, optional cloud realtime voice, durable personal features, secure updates, dynamic UI/assets, and replaceable providers.
@@ -14,44 +14,62 @@ The previous README is preserved at `docs/LEGACY_POC_README_20260811.md` for aud
 
 ## 0. Checkpoint dashboard
 
-Legend: ✅ passed gate · 🟡 in progress / partial · 🔴 not started · 🧪 candidate under benchmark · ⚠️ requires physical hardware / external provider.
+**Rollout policy changed on 2026-08-12:** software is implemented first; firmware/hardware work is intentionally deferred until the server/runtime stack is production-shaped and regression-covered.
+
+Legend: ✅ passed gate · 🟡 in progress / partial · 🔴 not started · 🧪 candidate under benchmark · ⚠️ requires external runtime/provider/hardware.
 
 | Checkpoint | Scope | Status | Exit gate |
 |---|---|---:|---|
-| CP0 | Freeze baseline + production README + current tests | ✅ | Baseline archived; host + offline backend regression pass; no false production claims |
-| CP1 | Physical hardware stabilization | 🟡 ⚠️ deferred | Mic + speaker + power + display SKU proven simultaneously on bench |
-| CP2 | Production firmware foundation | 🔴 | ESP-IDF build/flash/HIL passes; Arduino removed from production path |
-| CP3 | Audio front-end / hands-free | 🔴 ⚠️ | AFE/AEC/VADNet/WakeNet tuned; measured hands-free barge-in works |
-| CP4 | Realtime session + transport | 🟡 | WSS baseline retained; WebRTC benchmark passes; cancel/backpressure/late-frame tests pass |
-| CP5 | Go production platform | 🟡 | Go 1.26.x + ADK Go integration + provider/model seam passes tests |
-| CP6 | Product domain + data layer | 🔴 | PostgreSQL + Ent + Atlas + River migration passes parity + recovery tests |
-| CP7 | Agent/tools/context | 🔴 | ADK workflow replaces custom router/tool loop without feature regression |
-| CP8 | Local AI runtime | 🔴 | Vietnamese ASR + local model + streaming TTS meet quality/latency gates |
-| CP9 | Memory/context | 🔴 | Memory candidate wins Vietnamese benchmark; temporal conflict tests pass |
-| CP10 | Dynamic UI/assets/package runtime | 🔴 | LVGL XML + mmap assets; signed package install/rollback passes |
-| CP11 | Optional Wasm extension runtime | 🔴 🧪 | WAMR RAM/CPU/security quotas pass on S3; disabled if budget fails |
-| CP12 | Cloud native realtime voice | 🔴 | Provider-independent live voice seam; interruption/tool/session tests pass |
-| CP13 | OTA/security/observability hardening | 🔴 ⚠️ | A/B OTA rollback + signing + telemetry + recovery + security provisioning tested |
-| CP14 | Production RC | 🔴 ⚠️ | 24h+ soak, fault injection, HIL, backup/restore, release checklist all green |
+| CP-SW0 | Freeze legacy baseline + production charter | ✅ | Baseline archived; existing host/backend regression passes |
+| CP-SW1 | Realtime turn runtime + streaming response foundation | ✅ | Generation-safe barge-in queueing + deterministic sentence segmentation + overlapping model/TTS test + race suite pass |
+| CP-SW2 | Go 1.26.5 + Google ADK Go v2.2 integration | 🟡 ⚠️ | ADK model/tool/session seam compiles on exact Go 1.26.5; legacy Qwen path remains rollback fallback until parity suite passes |
+| CP-SW3 | PostgreSQL + Ent + Atlas + River | 🔴 | Domain parity, migrations, transactional reminder/job recovery, backup/restore tests pass |
+| CP-SW4 | ADK agent/tools/context migration | 🔴 | Custom keyword router/tool loop removed from primary path; typed tools, sessions, skills/context tests pass |
+| CP-SW5 | Local AI runtime | 🔴 🧪 | Vietnamese streaming ASR + local LLM + streaming TTS meet quality/latency gates |
+| CP-SW6 | Memory/context benchmark | 🔴 🧪 | Vietnamese personal-memory benchmark chooses adapter; temporal conflict/provenance tests pass |
+| CP-SW7 | Dynamic package/control platform | 🔴 | Signed package manifest/assets/UI capability model + rollback + remote config/feature flag tests pass |
+| CP-SW8 | MCP + observability + security hardening | 🔴 | MCP isolation, OpenTelemetry traces/metrics, auth/secrets/fault-injection gates pass |
+| CP-SW9 | Optional cloud native realtime voice | 🔴 | Provider-independent realtime voice adapter + interruption/tool/session parity passes |
+| CP-FW1 | ESP-IDF production firmware migration | 🔴 ⚠️ | Exact target build/flash/HIL; Arduino removed from production path |
+| CP-FW2 | ESP-SR/WebRTC/LVGL/package runtime | 🔴 ⚠️ | AEC/VAD/WakeNet/WebRTC/UI/package resource budgets and soak tests pass |
+| CP-HW1 | Production hardware stabilization/PCB | 🔴 ⚠️ | Power/acoustics/RF/thermal/manufacturing tests pass |
+| CP-RC1 | Production RC | 🔴 ⚠️ | 24h+ soak, fault injection, HIL, backup/restore, release checklist all green |
 
-### CP0 evidence — 2026-08-12
+### CP-SW1 evidence — 2026-08-12
 
-**Verified in this environment:**
+**Implemented in code:**
 
-- `scripts/check.sh`: host C++ regression `2/2 PASS`.
-- Partition/budget gate: `2 x 4 MiB OTA slots`, partition end within 16 MiB flash, current design SRAM budget script passes.
-- `scripts/e2e_offline.sh`: host regression passes and backend functional E2E runs with race detection; all exercised backend packages pass.
-- Existing source remains intact; only documentation/checkpoint metadata is changed in CP0.
+- Added provider-neutral `pipeline.StreamingAgent` + `AgentStreamEvent` so ADK/local/cloud runtimes can stream response deltas without coupling the voice server to one model API.
+- Added deterministic `internal/realtime.Segmenter` for Vietnamese/English streamed text. First clause can break on comma after a minimum length; later clauses prefer stronger punctuation; a maximum-rune safety boundary prevents unbounded buffering.
+- Added overlapping response path: model generation continues while completed clauses are synthesized sequentially by TTS. The server no longer has to wait for the whole answer before starting speech when the agent supports streaming.
+- Added generation-scoped outbound messages. Queued audio/control belonging to an interrupted turn is rejected by the single writer after generation invalidation.
+- Added explicit `{type:"turn", state:"interrupted", generation_id:...}` terminal control event so the device can drop any playback already buffered locally.
+- Added `generation_id` to turn-scoped protocol control messages. Legacy raw binary Opus framing is deliberately preserved for compatibility in this checkpoint; wire-level audio sequence/header negotiation is deferred to the transport checkpoint.
+- Production Go pin changed from 1.25.0 to **1.26.5** in `backend/go.mod`, test container, devcontainer and CI release gate. The offline compatibility test module intentionally remains Go 1.23 so this restricted environment can keep running functional regression tests.
 
-**Not verified in this environment:**
+**Tests passed in this environment:**
 
-- Production Go toolchain target (current container has Go 1.23.2; Production v1 moves to Go 1.26.x).
-- ESP-IDF target compile/flash because `idf.py` is not installed in this container.
-- Physical ESP32-S3 HIL from this container.
+- `go test -race -count=1 -modfile=go.offline.mod ./...` ✅
+- New sentence-segmentation tests ✅
+- New deterministic test proving TTS starts before a blocked streaming model finishes ✅
+- New generation invalidation test proving stale queued turn output becomes unwritable after interruption ✅
+- `scripts/e2e_offline.sh` ✅: host C++ `2/2 PASS`, Opus probe, partition/SRAM design gate, full backend functional E2E + race.
 
-**Current real hardware bench note:** speaker/MAX98357A path has produced audio; INMP441 raw test is still unresolved (`min=-1 max=-1`) and is CP1's first blocker.
+**Not claimed yet:**
 
----
+- Google ADK is not integrated into the source yet. ADK Go v2.2.0 pins Go 1.26.5; this sandbox only provides Go 1.23.2 and cannot fetch the production dependency graph. CP-SW2 must run on the exact production toolchain/container/CI before it can be marked ✅.
+- Current custom Qwen/context/tool implementation remains the active compatibility path until CP-SW2/CP-SW4 parity tests prove the ADK replacement.
+- WebSocket audio is still the legacy 60 ms framing contract; 20/40 ms negotiation and WebRTC are deferred to firmware/transport work rather than changed blindly while hardware is intentionally out of scope.
+
+### CP-SW1 notes / difficulty / solution / trade-off
+
+| Item | Difficulty/risk | Solution now | Trade-off / follow-up |
+|---|---|---|---|
+| Barge-in | Cancelling provider context did not guarantee already queued audio disappeared | generation-tag queued turn output; writer drops stale generations; explicit interrupted event | one packet already written to the socket cannot be recalled; device must clear its local playback buffer on interrupt |
+| LLM → TTS latency | old `Agent.Respond()` waits for complete text | optional `StreamingAgent`; sentence segmenter feeds TTS while model still generates | legacy agents still work; ADK adapter must implement streaming next |
+| Sentence boundaries | token-by-token TTS sounds broken; waiting for full sentences adds latency | deterministic punctuation/min/max rune segmenter | language-specific prosody remains TTS/provider concern; benchmark thresholds later |
+| Production Go | environment only has Go 1.23.2 | separate release pin Go 1.26.5 and offline compatibility mod | exact production dependency gate remains pending until CI/container is available |
+| Protocol evolution | adding headers to raw Opus would break current firmware immediately | add generation to control plane first; preserve binary frame compatibility | define WSS v2/WebRTC framing later with explicit negotiation |
 
 # 1. Product goal
 
@@ -660,287 +678,140 @@ Also track:
 
 ---
 
-# 16. Rollout plan in detail
+# 16. Rollout plan in detail — software first
 
-## CP1 — Hardware stabilization
+The order below is binding for the current rewrite. **Do not switch to hardware work until the requested software checkpoints are completed or explicitly reprioritized.** Every checkpoint updates this README with: status, code changed, tests executed, failures, solution, trade-offs, rollback path, and next gate.
 
-**Implement**
+## CP-SW1 — Realtime turn runtime + streaming foundation — ✅
 
-- Fix INMP441 signal/contact issue.
-- Verify exact board/module/display SKU.
-- Update wiring/BOM to actual 8 Ω speaker and real display.
-- Proper wiring/connector/decoupling bench revision.
-- Simultaneous mic + speaker I2S test.
+Delivered in this checkpoint:
 
-**Test**
+- provider-neutral streaming-agent interface;
+- deterministic sentence/clause segmentation;
+- overlapping LLM-stream → segment → TTS execution;
+- generation-safe stale-output rejection;
+- explicit interruption event;
+- exact production Go 1.26.5 pin for release environments;
+- regression/race/E2E coverage.
 
-- raw mic range/RMS/record playback;
-- speaker stress;
-- simultaneous RX/TX;
-- power/brownout;
-- Wi-Fi + audio coexistence.
+Rollback: the existing non-streaming `Agent.Respond/RichAgent` path remains intact.
 
-**Trade-off / note**
+## CP-SW2 — Google ADK Go v2.2 + model gateway
 
-Do not design PCB/enclosure around an unproven mic/display stack. S3 remains the default until measured constraints prove otherwise.
+Plan:
 
----
+1. Add ADK v2.2 behind `AgentRuntime`/adapter boundary, not directly throughout domain code.
+2. Start with the official ADK OpenAI-compatible model adapter for local Ollama/vLLM-compatible endpoints, while isolating it because Google marks that adapter experimental.
+3. Add Gemini-native model adapter separately.
+4. Map existing read/write capabilities to typed ADK `FunctionTool`s.
+5. Preserve existing Qwen implementation behind a rollback feature flag until parity is proven.
+6. Add provider matrix tests: fake model, local OpenAI-compatible endpoint contract, tool calls, streaming, cancellation, malformed tool args.
+7. Add session isolation tests and a deterministic model/tool replay harness.
 
-## CP2 — ESP-IDF production firmware
+Exit gate:
 
-**Implement**
+- exact Go 1.26.5 build;
+- ADK v2.2 dependency resolved and locked;
+- existing expense/budget/note/reminder E2E parity;
+- streaming + tool-call + cancellation tests green;
+- no domain package imports an ADK package directly.
 
-- Move production build to ESP-IDF 5.5.4.
-- Component Manager lock/pins.
-- Board HAL for exact pins/peripherals.
-- Keep host-testable core separated from IDF adapters.
-- Reproduce existing speaker/mic/display/network behavior.
+## CP-SW3 — PostgreSQL + Ent + Atlas + River
 
-**Test**
+Plan:
 
-- `idf.py build`, `size`, `size-components`, `size-files`;
-- flash + reboot loop;
-- heap/PSRAM instrumentation;
-- HIL smoke test.
+- model current authoritative domain state in Ent schemas;
+- use Atlas versioned migrations;
+- migrate SQLite test fixtures/data with parity checks;
+- River for reminder/timer/background durable jobs;
+- transactionally commit state + job where required;
+- idempotency keys on externally retried mutations;
+- backup/restore and crash-recovery tests.
 
-**Rollback**
+Keep SQLite only as a lightweight local/test compatibility adapter if useful; Production v1 server source of truth becomes PostgreSQL after parity.
 
-Legacy Arduino bench sketch remains a hardware diagnostic only, not a production fallback image.
+## CP-SW4 — ADK tools, skills, sessions and context
 
----
+Plan:
 
-## CP3 — ESP-SR audio front-end
+- replace primary custom keyword `ContextRouter`;
+- replace custom model tool loop with ADK typed tools/workflows;
+- progressive disclosure/skills so unrelated tools are not stuffed into each turn;
+- authoritative domain reads stay direct/tool-backed, never memory hallucinations;
+- scoped session/event history;
+- compaction/token budget tests;
+- destructive-action confirmation/policy boundary.
 
-**Implement**
+Delete custom framework-like code only after parity tests pass.
 
-- AFE;
-- full-duplex AEC;
-- VADNet;
-- WakeNet;
-- physical button fallback.
+## CP-SW5 — Local AI runtime
 
-**Test**
+Benchmark, do not assume:
 
-- false wake / missed wake;
-- echo during TTS;
-- near/far field;
-- user interruption while speaker active;
-- multiple speaker volume levels.
+- Vietnamese streaming ASR candidates;
+- Qwen3.5-class local models and alternatives on the actual host hardware;
+- streaming Vietnamese TTS candidates;
+- partial ASR, first-token, first-segment, first-audio timestamps;
+- code-switching and tool-call accuracy.
 
-**Trade-off**
+The selected components remain replaceable providers.
 
-More DSP costs CPU/RAM. Promote only the configuration that retains safe headroom.
+## CP-SW6 — Personal memory/context
 
----
+Build a Vietnamese evaluation corpus first, then benchmark memory engines/adapters. Requirements:
 
-## CP4 — Realtime transport/session
-
-**Implement**
-
-- Production `RealtimeVoiceSession` state machine.
-- Bounded queues and one outbound audio writer.
-- Generation invalidation.
-- WSS adapter parity.
-- Espressif WebRTC adapter.
-
-**Test**
-
-- packet loss;
-- reconnect;
-- Wi-Fi roam/drop;
-- server restart;
-- slow consumer/backpressure;
-- stale frame after cancel;
-- memory/CPU comparison WSS vs WebRTC.
-
-**Decision gate**
-
-WebRTC becomes default only if measured reliability/latency outweighs its footprint. WSS remains supported.
-
----
-
-## CP5 — Go 1.26 + ADK platform
-
-**Implement**
-
-- toolchain update;
-- ADK v2.x integration;
-- model gateway;
-- session adapter;
-- workflow test harness.
-
-**Test**
-
-- deterministic fake model;
-- streaming model events;
-- tool calls;
-- cancellation;
-- retry/timeout;
-- session isolation;
-- race detector.
-
----
-
-## CP6 — Postgres/Ent/Atlas/River
-
-**Implement**
-
-- Ent schemas for current domain state;
-- versioned Atlas baseline migration;
-- parity import from SQLite fixtures;
-- River jobs for timers/reminders/cleanup.
-
-**Test**
-
-- migration up from empty DB;
-- migration from representative legacy state;
-- transaction rollback;
-- reminder persistence across restart;
-- duplicate/idempotency tests;
-- Postgres 17 + 18 CI matrix.
-
----
-
-## CP7 — ADK agent/tools/context migration
-
-**Implement**
-
-- typed internal FunctionTools;
-- finance/product skills;
-- remove custom keyword ContextRouter path after parity;
-- bounded context assembly using ADK/session processors;
-- official MCP adapter for external tools.
-
-**Test**
-
-Golden corpus must cover all existing expense/budget/note/journal/timer/reminder/voice-memo behaviors plus malformed/ambiguous/adversarial tool calls.
-
-**Rollback**
-
-Run new ADK route in shadow mode against old agent until output/tool parity is understood.
-
----
-
-## CP8 — Local AI
-
-**Implement/benchmark**
-
-- sherpa-onnx Vietnamese ASR candidates;
-- Qwen3.5-4B and at least one comparison model/runtime;
-- VieNeu streaming TTS.
-
-**Test**
-
-Quality + latency + memory + VI/EN code-switching. Do not select a model solely by public benchmark.
-
----
-
-## CP9 — Memory
-
-**Implement**
-
-`MemoryPort` adapters and an evaluation harness first; then Graphiti/Mem0/simple Postgres-vector candidates.
-
-**Test corpus**
-
-- “I dislike coffee” -> later “I like coffee now”;
-- current vs historical preference;
-- Vietnamese paraphrases without exact keyword;
-- irrelevant chatter should not become high-salience memory;
-- forget/delete;
+- preference/fact extraction;
 - provenance;
-- 1k/10k memory retrieval latency.
+- temporal update/supersession;
+- conflict handling;
+- semantic + lexical retrieval quality;
+- deletion/privacy;
+- source-of-truth separation from expense/budget/reminder/device state.
 
----
+No memory vendor is promoted to production before this benchmark.
 
-## CP10 — Dynamic UI/assets/packages
+## CP-SW7 — Dynamic UI/assets/extension package control plane
 
-**Implement**
+Server-side work first:
 
-- LVGL XML runtime;
-- `esp_mmap_assets`;
-- typed UI subjects/events;
-- signed package manifest/install/rollback.
+- signed `Companion Package` manifest and compatibility rules;
+- package catalog/install/rollback metadata;
+- capability permissions;
+- UI schema/XML/assets manifest;
+- Wasm extension manifest and host-capability ABI design;
+- no arbitrary MCP/network access from device extensions; remote tool calls proxy through backend/ADK.
 
-**Test**
+Firmware execution of LVGL XML/WAMR is deferred until software package semantics and signing are stable.
 
-- malformed XML;
-- incompatible screen/package;
-- corrupted asset hash;
-- power loss during package install;
-- rollback to last-known-good package.
+## CP-SW8 — MCP, OpenFeature, OpenTelemetry, security
 
----
+- official MCP Go SDK for external integrations;
+- OpenFeature for kill switches/rollouts;
+- OpenTelemetry traces/metrics for every voice turn and tool execution;
+- structured `slog`;
+- secret management and outbound allowlists;
+- prompt/tool provenance boundaries;
+- timeouts/retries/circuit-breaking where external calls exist;
+- fault-injection tests.
 
-## CP11 — WAMR extension runtime
+## CP-SW9 — Optional cloud native realtime voice
 
-**Implement only if benchmark passes**
+Add a separate `RealtimeVoiceProvider` abstraction; do not force native S2S into the text-model `model.LLM` abstraction. Required parity:
 
-- WAMR 2.4.x pinned patched release;
-- strict host capability API;
-- memory/stack/instruction/time quotas;
-- no generic networking/WASI exposure by default;
-- signed package requirement.
-
-**Kill condition**
-
-If WAMR materially compromises audio reliability, heap headroom or security simplicity on S3, Production v1 ships LVGL XML/assets without Wasm.
-
----
-
-## CP12 — Cloud live voice
-
-**Implement**
-
-- `RealtimeVoiceProvider` interface;
 - Gemini Live adapter;
 - OpenAI Realtime adapter;
-- transcript/tool/interruption normalization.
+- audio interruption;
+- tool/function call bridge through backend;
+- transcript/session persistence policy;
+- fallback to local cascade runtime.
 
-**Test**
+## CP-FW1 / CP-FW2 / CP-HW1 — deferred
 
-- 15+ minute lifecycle/reconnect handling;
-- barge-in;
-- provider timeout;
-- tool call mid-audio;
-- network loss;
-- fallback to local cascade.
+Only after the software checkpoints requested above: ESP-IDF migration, ESP-SR AEC/VAD/WakeNet, WebRTC/LVGL/package runtime, then physical power/acoustic/RF/PCB validation. These remain documented in the firmware/hardware sections but are not the current work queue.
 
----
+## CP-RC1 — production release candidate
 
-## CP13 — Security/OTA/observability
-
-**Implement**
-
-- A/B firmware downloader + pending-verify self-test;
-- signed metadata/artifacts;
-- OTel traces/metrics;
-- backup/restore scripts;
-- OpenFeature rollout controls;
-- production key/provisioning runbook.
-
-**Hardware security gate**
-
-Secure Boot/Flash Encryption/eFuse changes occur only after recovery path is repeatedly proven on sacrificial boards.
-
----
-
-## CP14 — Production RC
-
-Required release gates:
-
-- 24h+ device/backend voice soak.
-- Repeated Wi-Fi disconnect/reconnect.
-- Backend kill/restart during active turn and active reminder.
-- Database backup + restore.
-- OTA good image, bad hash, bad signature, boot-fail rollback.
-- Package good/bad/rollback.
-- No unbounded memory/goroutine growth.
-- Current golden agent/tool corpus green.
-- Hardware power/audio/display stress green.
-- README/status exactly matches what has actually passed.
-
----
+Final gate includes software + firmware + hardware integration, long soak, fault injection, backup/restore, security provisioning, OTA rollback and release artifact verification.
 
 # 17. Test layers
 
@@ -960,98 +831,9 @@ No checkpoint can skip directly to L7 and be considered production-ready if lowe
 
 ---
 
-# 18. Checkpoint log
+# 18. Checkpoint update template
 
-Every implementation checkpoint adds an entry here and updates the dashboard. Every PASS checkpoint also has a Git tag/snapshot so it can be restored without reconstructing changes manually.
-
-## 2026-08-12 — CP4.1 Realtime generation invalidation + ordered output
-
-Status: PASS
-
-Changed:
-- Added `generation_id` to turn-scoped protocol control messages.
-- Bound turn-specific outbound control/audio to the turn context and generation.
-- Writer now rejects queued output whose generation is stale or whose turn context has been cancelled.
-- `abort` invalidates the generation even after processing has finished, preventing already-queued playback from leaking after barge-in.
-- Preserved session-lifetime delivery for alarms/config/global control so short scheduler/request contexts do not accidentally cancel queued device messages.
-- Added an audio-lane ordering barrier so `tts.stop` cannot overtake the final audio frames of its turn.
-- Added bounded-queue/backpressure and stale-generation tests.
-
-Tests executed:
-- `GOTOOLCHAIN=local CGO_ENABLED=1 go test -race -count=1 -modfile=go.offline.mod ./internal/server ./internal/protocol` -> PASS.
-- `bash scripts/e2e_offline.sh` -> PASS after fixes. Host C++ simulator `2/2`; partition/SRAM budget PASS; all backend packages under race detector PASS.
-- `git diff --check` -> PASS.
-
-Measured:
-- Server E2E still emits all expected Opus frames before `tts.stop`.
-- Audio/control queues remain bounded; overflow is rejected rather than growing without limit.
-
-Problems found:
-- First implementation attached short-lived scheduler contexts to all queued messages, causing reminder alarms to be dropped after enqueue.
-- Full E2E then exposed `tts.stop` overtaking the final queued audio frame because control messages intentionally have priority over the audio lane.
-
-Root cause:
-- Message lifetime and message priority were conflated. Turn media needs turn cancellation/generation semantics, while global control needs session lifetime; end-of-media control also needs strict ordering behind its media frames.
-
-Solution:
-- Apply context/generation only to turn-scoped outbound.
-- Keep global control independent of producer request timeout after successful enqueue.
-- Queue `tts.stop` as an ordered audio-lane barrier while preserving priority for unrelated alarm/config control.
-
-Trade-offs accepted:
-- WSS session logic is still implemented inside the server session object; transport-independent extraction/WebRTC parity remains later CP4 work.
-- At most an already-in-progress socket write can be visible at the exact instant barge-in occurs; queued stale writes are cancelled/dropped.
-
-Rollback path:
-- Git tag `CP4.1-20260812` restores this checkpoint.
-- Git tag `CP5.1-20260812` restores the model-gateway checkpoint before realtime queue changes.
-- Git tag `CP0-20260812` restores the frozen baseline.
-
-Next:
-- CP4.2: separate realtime session semantics from the concrete WebSocket adapter and add reconnect/slow-consumer/late-frame integration coverage without requiring ESP32 hardware.
-
-## 2026-08-12 — CP5.1 Model gateway extraction
-
-Status: PASS
-
-Changed:
-- Extracted a provider-neutral `ModelGateway` boundary from `agent.Qwen`.
-- Moved OpenAI-compatible HTTP request/response handling into `OpenAICompatibleGateway`.
-- Kept conversation history, context planning, policy, tool execution, idempotency and usage accounting in the agent/runtime layer rather than the provider adapter.
-- Added `WithModelGateway` injection for local/cloud/fake/future ADK model adapters.
-- Added deterministic model gateway tests for response policy, tool policy and provider error propagation.
-- Hardware work is explicitly deferred while software checkpoints proceed.
-
-Tests executed:
-- `GOTOOLCHAIN=local CGO_ENABLED=1 go test -race -count=1 -modfile=go.offline.mod ./internal/agent` -> PASS.
-- `bash scripts/e2e_offline.sh` -> PASS. Host C++ simulator `2/2`; partition/SRAM budget PASS; all backend packages exercised under race detector PASS.
-- `git diff --check` -> PASS.
-
-Measured:
-- No firmware binary/heap change: backend-only checkpoint.
-- Deterministic agent package race test: PASS.
-
-Problems found:
-- Current execution container is Go 1.23.2 and has no outbound network, so Go 1.26.5 toolchain and ADK v2 dependencies cannot be downloaded/compiled here yet.
-
-Root cause:
-- Sandbox network/toolchain availability, not source incompatibility.
-
-Solution:
-- Split CP5 into independently reversible sub-checkpoints. CP5.1 lands the provider seam using the existing offline dependency set; actual Go/ADK dependency migration remains a later gate and is not falsely marked complete.
-
-Trade-offs accepted:
-- The legacy type name `Qwen` remains temporarily to reduce migration risk; model/provider behavior is no longer hard-coupled to Qwen. Rename/removal can happen when the ADK runner owns orchestration.
-
-Rollback path:
-- Git tag `CP5.1-20260812` restores this exact checkpoint.
-- Git tag `CP0-20260812` restores the frozen production baseline before the provider seam.
-
-Next:
-- CP4.1 software-only realtime session state machine: bounded queues, generation invalidation, stale-frame rejection, cancel/barge-in tests.
-- CP5.2 toolchain/ADK integration proceeds when an environment can fetch/pin Go 1.26.5 + ADK Go v2.2.x and run its real compile gate.
-
-## Checkpoint update template
+Every implementation checkpoint adds an entry here and updates the dashboard.
 
 ```markdown
 ## YYYY-MM-DD — CPx.y <name>
@@ -1161,6 +943,15 @@ Research refreshed on **2026-08-12** from primary/project documentation. Version
 
 # 22. Next action
 
-**Software-first rollout is active. Hardware CP1/CP3 are deferred, not waived.** CP5.1 (model gateway seam) and CP4.1 (generation invalidation + ordered TTS output) are now green and individually restorable. The immediate next checkpoint is CP4.2: separate realtime session semantics from the concrete WebSocket adapter, then test reconnect, slow consumer/backpressure and late-frame behavior using software transports/fakes.
+**Current work queue: CP-SW2 — Google ADK Go v2.2 + model gateway.**
 
-Dependency-heavy CP5.2 (Go 1.26.5 + ADK Go v2.2.x) and CP6 (Postgres/Ent/Atlas/River) remain separate reversible checkpoints; they are promoted only in an environment that can fetch the pinned dependencies and execute the real compile/integration gates. Hardware validation resumes later at CP1/CP2/CP3 and remains mandatory before Production RC.
+Implementation sequence:
+
+1. Build/run the backend in the exact Go **1.26.5** production environment.
+2. Add `google.golang.org/adk/v2@v2.2.0` and lock the dependency graph.
+3. Introduce an ADK adapter without allowing ADK types to leak into domain/data packages.
+4. Wrap the first four representative capabilities as typed tools: `expense.log`, `budget.get`, `timer.create`, `memory.recall` (memory remains compatibility-only until CP-SW6).
+5. Run fake-model deterministic tests, then OpenAI-compatible local endpoint contract tests, then streaming/barge-in E2E.
+6. Compare behavior against the existing compatibility agent; switch primary runtime only after parity is green.
+
+Hardware work is intentionally not in the current queue.

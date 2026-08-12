@@ -7,8 +7,8 @@ cmake --build build-host
 ctest --test-dir build-host --output-on-failure
 python3 scripts/budget_check.py
 
-echo '== backend Go 1.25 + race + websocket/tool-loop E2E =='
-(cd backend && go env GOVERSION | grep -Eq '^go1\.25([\.]|$)')
+echo '== backend Go 1.26.5 + race + websocket/tool-loop E2E =='
+(cd backend && go env GOVERSION | grep -Eq '^go1\.26\.5$')
 (cd backend && go test -tags nolibopusfile -race ./...)
 
 echo 'E2E PASS'

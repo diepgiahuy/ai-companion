@@ -76,3 +76,20 @@ func CurrentTurn(ctx context.Context) (TurnContext, bool) {
 	turn, ok := ctx.Value(turnContextKey{}).(TurnContext)
 	return turn, ok
 }
+
+// AgentStreamEvent is the normalized streaming surface between an agent runtime
+// (ADK, local model adapter, cloud model, etc.) and the realtime voice session.
+// Tool execution remains inside the agent/runtime; the voice server consumes
+// only user-presentable deltas and UI/status updates.
+type AgentStreamEvent struct {
+	TextDelta string
+	UI        *UICard
+	Status    string
+}
+
+// StreamingAgent allows text to reach sentence segmentation/TTS before the
+// model has finished the whole response. Implementations must return promptly
+// when ctx is cancelled so barge-in can stop a stale generation.
+type StreamingAgent interface {
+	Stream(ctx context.Context, turnID, transcript string, emit func(AgentStreamEvent) error) error
+}

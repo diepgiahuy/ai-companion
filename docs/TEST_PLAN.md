@@ -5,7 +5,7 @@
 | Level | What it proves | Current result |
 |---|---|---|
 | Host unit/integration tests | FSM, 20 ms capture pump, playback, timeout, barge-in, Smart VAD, idle, alarm/beep | **PASS in this delivery** |
-| Go race/E2E tests | WebSocket lifecycle, Opus, Qwen tools, SQLite, scheduler/alarm | ✅ network-isolated functional suite passes with `-race`; Go 1.25 production-module release gate remains separate |
+| Go race/E2E tests | WebSocket lifecycle, Opus, Qwen tools, SQLite, scheduler/alarm | ✅ network-isolated functional suite passes with `-race`; Go 1.26.5 production-module release gate remains separate |
 | Budget/partition check | N16 flash layout and two OTA slots | **PASS in this delivery** |
 | Wokwi | boot, OLED, GPIO40 button, state transitions | project supplied; audio is not acoustically simulated |
 | ESP-IDF target compile | real ESP32-S3 API compatibility and binary size | pending in this sandbox; use supplied IDF container |
@@ -116,4 +116,4 @@ speaker reference path and actual enclosure are measured.
 
 ### Offline functional gate
 
-`make e2e-offline` runs the complete software flow without Docker/network using test-only compatibility modules. `make e2e-container` remains the release acceptance gate for Go 1.25 and pinned upstream dependencies.
+`make e2e-offline` runs the complete software flow without Docker/network using test-only compatibility modules. `make e2e-container` remains the release acceptance gate for Go 1.26.5 and pinned upstream dependencies.

@@ -232,8 +232,8 @@ func (s *Server) handleDevice(writer http.ResponseWriter, request *http.Request)
 type outbound struct {
 	kind       websocket.MessageType
 	data       []byte
-	ctx        context.Context
 	generation uint64
+	turnScoped bool
 }
 
 type turn struct {
@@ -382,20 +382,14 @@ func (s *session) readLoop(ctx context.Context) error {
 
 func (s *session) writeLoop(ctx context.Context) error {
 	write := func(message outbound) error {
+		// A cancelled/interrupting turn may already have audio/control items queued.
+		// Never let those stale generation items reach the device after barge-in.
 		if !s.outboundCurrent(message) {
 			return nil
 		}
-		baseCtx := ctx
-		if message.ctx != nil {
-			baseCtx = message.ctx
-		}
-		writeCtx, cancel := context.WithTimeout(baseCtx, 5*time.Second)
+		writeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
-		err := s.connection.Write(writeCtx, message.kind, message.data)
-		if errors.Is(err, context.Canceled) && !s.outboundCurrent(message) {
-			return nil
-		}
-		return err
+		return s.connection.Write(writeCtx, message.kind, message.data)
 	}
 	for {
 		// Always drain control first when available so alarms/config/abort are not
@@ -444,7 +438,7 @@ func (s *session) handleControl(ctx context.Context, data []byte) error {
 			return fmt.Errorf("unsupported listen state %q", message.State)
 		}
 	case "abort":
-		s.cancelActive()
+		s.interruptActive(ctx, "client_abort")
 		return nil
 	case "alarm_ack":
 		if s.ackReminder == nil {
@@ -475,16 +469,31 @@ func (s *session) startTurn(parent context.Context, turnID string) error {
 	if strings.TrimSpace(turnID) == "" {
 		return fmt.Errorf("turn_id is required")
 	}
+
+	var interrupted *turn
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.active != nil {
-		s.active.cancel()
+		interrupted = s.active
+		interrupted.cancel()
+		s.active = nil
 	}
 	s.generation++
+	generation := s.generation
 	ctx, cancel := context.WithCancel(parent)
 	s.active = &turn{
 		id: turnID, state: "listening", ctx: ctx, cancel: cancel,
-		pcm: make([]byte, 0, protocol.UplinkSampleRate*2), generation: s.generation,
+		pcm: make([]byte, 0, protocol.UplinkSampleRate*2), generation: generation,
+	}
+	s.mu.Unlock()
+
+	if interrupted != nil {
+		// This terminal notification is intentionally not generation-scoped: it
+		// must survive invalidation of the old turn and tell the device to drop
+		// any already-buffered playback immediately.
+		_ = s.sendJSON(parent, protocol.Message{
+			Type: "turn", State: "interrupted", SessionID: s.id,
+			TurnID: interrupted.id, GenerationID: interrupted.generation, Reason: "barge_in",
+		})
 	}
 	return nil
 }
@@ -549,7 +558,7 @@ func (s *session) processTurn(current *turn, pcm []byte) {
 	if !s.isCurrent(current) {
 		return
 	}
-	s.sendTurnJSON(current, protocol.Message{
+	s.sendTurnJSON(current.ctx, current, protocol.Message{
 		Type: "stt", SessionID: s.id, TurnID: current.id, Text: transcript,
 	})
 
@@ -562,10 +571,30 @@ func (s *session) processTurn(current *turn, pcm []byte) {
 	agentStarted := time.Now()
 	earlyUI := false
 	agentCtx = capability.WithPresentationSink(agentCtx, func(p capability.Presentation) {
-		if sendErr := s.sendTurnJSON(current, protocol.Message{Type: "ui", SessionID: s.id, TurnID: current.id, UI: &pipeline.UICard{Kind: p.Kind, Title: p.Title, Primary: p.Primary, Secondary: p.Secondary, Progress: p.Progress}}); sendErr == nil {
+		if sendErr := s.sendTurnJSON(current.ctx, current, protocol.Message{Type: "ui", SessionID: s.id, TurnID: current.id, UI: &pipeline.UICard{Kind: p.Kind, Title: p.Title, Primary: p.Primary, Secondary: p.Secondary, Progress: p.Progress}}); sendErr == nil {
 			earlyUI = true
 		}
 	})
+	if streaming, ok := s.components.Agent.(pipeline.StreamingAgent); ok {
+		metrics, streamErr := s.processStreamingReply(current, agentCtx, transcript, streaming)
+		if streamErr != nil {
+			if !errors.Is(streamErr, context.Canceled) {
+				s.failTurn(current, "agent_stream_failed", streamErr)
+			}
+			return
+		}
+		s.logger.Info("streaming voice turn completed",
+			"turn_id", current.id, "session_id", s.id, "device_id", s.deviceID, "user_id", s.userID,
+			"asr_ms", asrDuration.Milliseconds(), "agent_total_ms", metrics.AgentTotal.Milliseconds(),
+			"first_segment_ms", metrics.FirstSegmentAt.Milliseconds(), "tts_active_ms", metrics.TTSActive.Milliseconds(),
+			"total_ms", time.Since(turnStarted).Milliseconds())
+		s.mu.Lock()
+		if s.active == current {
+			s.active = nil
+		}
+		s.mu.Unlock()
+		return
+	}
 	if rich, ok := s.components.Agent.(pipeline.RichAgent); ok {
 		result, richErr := rich.RespondRich(agentCtx, current.id, transcript)
 		reply, ui, err = result.Text, result.UI, richErr
@@ -582,12 +611,12 @@ func (s *session) processTurn(current *turn, pcm []byte) {
 	}
 	s.setTurnState(current, "speaking")
 	if ui != nil && !earlyUI {
-		s.sendTurnJSON(current, protocol.Message{Type: "ui", SessionID: s.id, TurnID: current.id, UI: ui})
+		s.sendTurnJSON(current.ctx, current, protocol.Message{Type: "ui", SessionID: s.id, TurnID: current.id, UI: ui})
 	}
-	s.sendTurnJSON(current, protocol.Message{
+	s.sendTurnJSON(current.ctx, current, protocol.Message{
 		Type: "tts", State: "start", SessionID: s.id, TurnID: current.id,
 	})
-	s.sendTurnJSON(current, protocol.Message{
+	s.sendTurnJSON(current.ctx, current, protocol.Message{
 		Type: "tts", State: "sentence_start", SessionID: s.id, TurnID: current.id, Text: reply,
 	})
 	ttsStarted := time.Now()
@@ -596,7 +625,7 @@ func (s *session) processTurn(current *turn, pcm []byte) {
 		if err != nil {
 			return err
 		}
-		return s.sendTurn(current, outbound{kind: websocket.MessageBinary, data: packet})
+		return s.sendTurn(current.ctx, current, outbound{kind: websocket.MessageBinary, data: packet})
 	})
 	if err != nil {
 		if !errors.Is(err, context.Canceled) {
@@ -607,14 +636,9 @@ func (s *session) processTurn(current *turn, pcm []byte) {
 	if !s.isCurrent(current) {
 		return
 	}
-	if err := s.sendTurnAfterAudioJSON(current, protocol.Message{
+	s.sendTurnJSON(current.ctx, current, protocol.Message{
 		Type: "tts", State: "stop", SessionID: s.id, TurnID: current.id,
-	}); err != nil {
-		if !errors.Is(err, context.Canceled) {
-			s.failTurn(current, "tts_stop_failed", err)
-		}
-		return
-	}
+	})
 	ttsDuration := time.Since(ttsStarted)
 	s.logger.Info("voice turn completed",
 		"turn_id", current.id, "session_id", s.id, "device_id", s.deviceID, "user_id", s.userID,
@@ -643,23 +667,45 @@ func (s *session) setTurnState(candidate *turn, state string) {
 func (s *session) cancelActive() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	// Invalidate already-enqueued audio/control from the current generation even
-	// if processing has completed and active is already nil. This is required for
-	// barge-in/abort: queued TTS from an old turn must never leak into the next one.
-	s.generation++
 	if s.active != nil {
 		s.active.cancel()
 		s.active = nil
+		s.generation++ // invalidate queued turn-scoped output
 	}
+}
+
+func (s *session) interruptActive(ctx context.Context, reason string) {
+	s.mu.Lock()
+	current := s.active
+	if current != nil {
+		current.cancel()
+		s.active = nil
+		s.generation++ // invalidate any already-queued old audio/control
+	}
+	s.mu.Unlock()
+	if current != nil {
+		_ = s.sendJSON(ctx, protocol.Message{
+			Type: "turn", State: "interrupted", SessionID: s.id, TurnID: current.id,
+			GenerationID: current.generation, Reason: reason,
+		})
+	}
+}
+
+func (s *session) generationCurrent(generation uint64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.generation == generation
+}
+
+func (s *session) outboundCurrent(message outbound) bool {
+	return !message.turnScoped || s.generationCurrent(message.generation)
 }
 
 func (s *session) failTurn(current *turn, code string, err error) {
 	if !s.isCurrent(current) {
 		return
 	}
-	_ = s.sendTurnJSON(current, protocol.Message{
-		Type: "error", Code: code, Text: err.Error(), SessionID: s.id, TurnID: current.id,
-	})
+	s.sendTurnError(current.ctx, current, code, err.Error())
 	s.mu.Lock()
 	if s.active == current {
 		s.active = nil
@@ -675,44 +721,25 @@ func (s *session) sendJSON(ctx context.Context, message protocol.Message) error 
 	return s.send(ctx, outbound{kind: websocket.MessageText, data: data})
 }
 
-func (s *session) sendTurnJSON(current *turn, message protocol.Message) error {
+func (s *session) sendTurnJSON(ctx context.Context, current *turn, message protocol.Message) error {
 	message.GenerationID = current.generation
 	data, err := json.Marshal(message)
 	if err != nil {
 		return err
 	}
-	return s.sendTurn(current, outbound{kind: websocket.MessageText, data: data})
+	return s.sendTurn(ctx, current, outbound{kind: websocket.MessageText, data: data})
 }
 
-func (s *session) sendTurn(current *turn, message outbound) error {
+func (s *session) sendTurn(ctx context.Context, current *turn, message outbound) error {
+	message.turnScoped = true
 	message.generation = current.generation
-	message.ctx = current.ctx
-	return s.send(current.ctx, message)
+	return s.send(ctx, message)
 }
 
-// sendTurnAfterAudioJSON creates an ordering barrier on the audio lane. It is
-// used for control events such as tts.stop that must not overtake audio frames
-// already queued for the same turn. Unlike normal audio frame enqueue, this
-// waits for bounded queue capacity so the final barrier cannot be lost merely
-// because the writer is one frame behind.
-func (s *session) sendTurnAfterAudioJSON(current *turn, message protocol.Message) error {
-	message.GenerationID = current.generation
-	data, err := json.Marshal(message)
-	if err != nil {
-		return err
-	}
-	out := outbound{
-		kind:       websocket.MessageText,
-		data:       data,
-		ctx:        current.ctx,
-		generation: current.generation,
-	}
-	select {
-	case <-current.ctx.Done():
-		return current.ctx.Err()
-	case s.audioWrites <- out:
-		return nil
-	}
+func (s *session) sendTurnError(ctx context.Context, current *turn, code, message string) {
+	_ = s.sendTurnJSON(ctx, current, protocol.Message{
+		Type: "error", Code: code, Text: message, SessionID: s.id, TurnID: current.id,
+	})
 }
 
 func (s *session) sendError(ctx context.Context, code, message, turnID string) {
@@ -736,18 +763,6 @@ func (s *session) send(ctx context.Context, message outbound) error {
 	default:
 		return fmt.Errorf("client %s write queue is full", label)
 	}
-}
-
-func (s *session) outboundCurrent(message outbound) bool {
-	if message.ctx != nil && message.ctx.Err() != nil {
-		return false
-	}
-	if message.generation == 0 {
-		return true
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return message.generation == s.generation
 }
 
 func protocolConfig(c controlplane.RuntimeConfig) protocol.RuntimeConfig {

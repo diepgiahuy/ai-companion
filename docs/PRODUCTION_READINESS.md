@@ -23,5 +23,5 @@ Legend: ✅ software path implemented/tested · 🟡 production-shaped boundary 
 | OTA server/control plane | 🟡 | signed/versioned/expiring compatible manifest registry + device/admin endpoints; on-device download/rollback/HIL pending. |
 | Backpressure | ✅ | bounded separate control/audio queues; control traffic prioritized. |
 | Observability | 🟡 | per-turn stage latency + usage logs; OpenTelemetry exporter not yet wired. |
-| Exact Go 1.25 release CI | 🟡 | workflow/devcontainer added; this sandbox cannot execute Docker/GitHub-hosted run. |
+| Exact Go 1.26.5 release CI | 🟡 | workflow/devcontainer added; this sandbox cannot execute Docker/GitHub-hosted run. |
 | ESP-IDF target/HIL | 🔴 ⚠️ | no ESP-IDF toolchain/physical board in this sandbox. |

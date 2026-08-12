@@ -5,6 +5,8 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"strings"
+	"time"
 
 	"companion-server/internal/protocol"
 )
@@ -57,6 +59,44 @@ func (m MockTTS) Synthesize(ctx context.Context, _ string, emit func([]byte) err
 			phase++
 		}
 		if err := emit(frame); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// MockStreamingAgent exercises the production streaming path without a model
+// dependency. Respond preserves compatibility with the stable Agent interface.
+type MockStreamingAgent struct {
+	Deltas []string
+	Delay  time.Duration
+}
+
+func (m MockStreamingAgent) Respond(ctx context.Context, turnID, transcript string) (string, error) {
+	var b strings.Builder
+	err := m.Stream(ctx, turnID, transcript, func(event AgentStreamEvent) error {
+		b.WriteString(event.TextDelta)
+		return nil
+	})
+	return b.String(), err
+}
+
+func (m MockStreamingAgent) Stream(ctx context.Context, _, _ string, emit func(AgentStreamEvent) error) error {
+	deltas := m.Deltas
+	if len(deltas) == 0 {
+		deltas = []string{"Xin chào bạn,", " mình đang ở chế độ streaming."}
+	}
+	for _, delta := range deltas {
+		if m.Delay > 0 {
+			timer := time.NewTimer(m.Delay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			case <-timer.C:
+			}
+		}
+		if err := emit(AgentStreamEvent{TextDelta: delta}); err != nil {
 			return err
 		}
 	}

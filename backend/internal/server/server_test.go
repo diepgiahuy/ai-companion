@@ -394,3 +394,127 @@ func TestOTAManifestPublishAndDeviceCompatibility(t *testing.T) {
 		t.Fatalf("same metadata should be no-content, got=%d", resp2.StatusCode)
 	}
 }
+
+type blockingStreamAgent struct {
+	continueCh chan struct{}
+}
+
+func (a *blockingStreamAgent) Respond(context.Context, string, string) (string, error) {
+	return "unused", nil
+}
+
+func (a *blockingStreamAgent) Stream(ctx context.Context, _, _ string, emit func(pipeline.AgentStreamEvent) error) error {
+	if err := emit(pipeline.AgentStreamEvent{TextDelta: "Xin chào bạn,"}); err != nil {
+		return err
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-a.continueCh:
+	}
+	return emit(pipeline.AgentStreamEvent{TextDelta: " hôm nay thế nào?"})
+}
+
+func TestStreamingAgentStartsTTSBeforeModelFinishes(t *testing.T) {
+	agentRuntime := &blockingStreamAgent{continueCh: make(chan struct{})}
+	service := New(pipeline.Components{
+		ASR:    pipeline.MockASR{Transcript: "hello"},
+		Agent:  agentRuntime,
+		TTS:    pipeline.MockTTS{Frames: 1},
+		Codecs: pipeline.OpusFactory{},
+	}, "", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ts := httptest.NewServer(service.Handler())
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(ts.URL, "http")+"/v1/device", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "done")
+
+	audio := protocol.DefaultAudioParams()
+	writeJSON(t, ctx, conn, protocol.Message{Type: "hello", Version: protocol.Version, Transport: protocol.Transport, AudioParams: &audio})
+	hello := readJSON(t, ctx, conn)
+	turnID := "stream-before-finish"
+	writeJSON(t, ctx, conn, protocol.Message{Type: "listen", State: "start", SessionID: hello.SessionID, TurnID: turnID})
+	encoder, err := opus.NewEncoder(protocol.UplinkSampleRate, 1, opus.AppVoIP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	packet := make([]byte, protocol.MaximumOpusPacketBytes)
+	n, err := encoder.Encode(make([]int16, protocol.UplinkSamplesPerFrame), packet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.Write(ctx, websocket.MessageBinary, packet[:n]); err != nil {
+		t.Fatal(err)
+	}
+	writeJSON(t, ctx, conn, protocol.Message{Type: "listen", State: "stop", SessionID: hello.SessionID, TurnID: turnID})
+
+	firstSentence := false
+	firstAudio := false
+	continued := false
+	gotStop := false
+	for !gotStop {
+		kind, raw, err := conn.Read(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if kind == websocket.MessageBinary {
+			firstAudio = true
+			continue
+		}
+		var msg protocol.Message
+		if err := json.Unmarshal(raw, &msg); err != nil {
+			t.Fatal(err)
+		}
+		if msg.Type == "tts" && msg.State == "sentence_start" && msg.Text == "Xin chào bạn," {
+			firstSentence = true
+			// If the server had waited for the full model response, this message
+			// could never arrive because the model is blocked on continueCh.
+			if !continued {
+				close(agentRuntime.continueCh)
+				continued = true
+			}
+		}
+		if msg.Type == "tts" && msg.State == "stop" {
+			gotStop = true
+		}
+	}
+	if !firstSentence || !firstAudio || !continued {
+		t.Fatalf("streaming path did not overlap model/TTS: sentence=%v audio=%v continued=%v", firstSentence, firstAudio, continued)
+	}
+}
+
+func TestTurnGenerationInvalidatesQueuedOutput(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := &session{
+		id:            "session-1",
+		controlWrites: make(chan outbound, 4),
+		audioWrites:   make(chan outbound, 4),
+		generation:    7,
+	}
+	turnCtx, turnCancel := context.WithCancel(ctx)
+	current := &turn{id: "turn-7", ctx: turnCtx, cancel: turnCancel, generation: 7, state: "speaking"}
+	s.active = current
+	old := outbound{kind: websocket.MessageBinary, data: []byte{1}, generation: 7, turnScoped: true}
+	if !s.outboundCurrent(old) {
+		t.Fatal("current generation was unexpectedly stale")
+	}
+
+	s.interruptActive(ctx, "test")
+	if s.outboundCurrent(old) {
+		t.Fatal("stale queued audio remained writable after interruption")
+	}
+	select {
+	case terminal := <-s.controlWrites:
+		if terminal.turnScoped {
+			t.Fatal("interrupt terminal event must not be generation-scoped")
+		}
+	default:
+		t.Fatal("expected interruption control event")
+	}
+}
