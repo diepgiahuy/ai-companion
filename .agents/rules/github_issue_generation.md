@@ -1,28 +1,64 @@
-# GitHub Issue Generation for AI Delegation
+# GitHub issue generation for agent delegation
 
-Whenever the user asks to create or write a GitHub issue, requirement document, or ticket that is intended to be picked up by an AI Agent, you MUST follow this strict template and best practices.
+Use this guidance when an issue will be implemented by a human or coding agent.
 
-## Best Practices for AI Delegation
-1. **Mandatory State-of-the-Art (SotA) Research**: Before writing the issue, the AI MUST search the web for the absolute latest (2026+) technologies, algorithms, optimizations, and frameworks relevant to the requirement. Do not use legacy solutions. (e.g., use LovyanGFX instead of TFT_eSPI; use Kalman filters for RSSI; use Testcontainers for DB tests).
-2. **Context & Motivation**: Always explain the "why" so the AI doesn't hallucinate edge cases.
-3. **Explicit Hardware/BOM State**: Clearly state what hardware is being [ADDED] or [REPLACED].
-3. **Acceptance Criteria (AC)**: Write AC as strict, testable assertions (e.g., "When X happens, Y must occur"). Do not use vague terms like "make it look nice".
-4. **Architectural Pointers**: Explicitly list the files or directories the AI should modify to limit its search space and prevent it from inventing new architectures.
-5. **Architectural Policy Check**: Always read `COMMERCIAL_ARCHITECTURE.md` or equivalent policy documents beforehand. Ensure the issue does not violate Eventing (e.g., Transactional Outbox) or Privacy rules.
-6. **Testing Strategy (No Mocks)**: Enforce the use of Ephemeral Environments (Testcontainers) and Hardware-in-the-Loop (HIL/Emulators) over Unit Test Mocks.
-7. **AI Review Loop**: Require the AI to self-correct using raw `stdout`/`stderr` from CI, without asking humans for help on syntax/lint errors.
-8. **Human-in-the-Loop (HITL) Checkpoints**: Clearly list the specific gates where the AI must STOP and wait for human physical verification or business approval.
-9. **PR Splitting Strategy**: Break the large issue down into sequential, non-overlapping Pull Requests. Justify the split using Computer Science Principles (e.g., SOLID, Separation of Concerns).
-10. **Anti-Patterns**: Explicitly list what the AI is FORBIDDEN to do (e.g., Do NOT use `delay()`, Do NOT use `gomock`).
+## Research before specification
 
-## Template Structure
-Use Markdown with the following H2 sections:
-- `## 📖 Context & Motivation`
-- `## 🛠 Hardware Updates (BOM Changes)`
-- `## 🏗 Features & Acceptance Criteria (AC)`
-- `## 📁 Architectural Code Pointers for the AI Agent`
-- `## 🧪 Testing & Verification Strategy (NO MOCKS)`
-- `## 🔄 AI Self-Healing Review Loop`
-- `## 🙋‍♂️ Human-In-The-Loop (HITL) Checkpoints`
-- `## 🔀 Execution Plan (PR Splitting Strategy)`
-- `## 🚫 Anti-Patterns (Do NOT do this)`
+1. Inspect the current repository and recent changes before naming files, symbols,
+   commands, dependencies, or architecture patterns.
+2. Research time-sensitive technology and security choices using primary sources.
+3. Compare options by repository fit, maintenance, adoption, resource cost,
+   migration cost, security, and measurable performance.
+4. Treat an unmeasured framework or algorithm choice as a hypothesis. Do not turn
+   "latest", a vendor claim, or an example into a mandatory requirement.
+5. Record why a decision is already fixed. Otherwise leave it as an open decision
+   with a benchmark or spike exit criterion.
+
+## Ready-issue contract
+
+Every implementation issue should contain:
+
+- **Outcome:** user or system behavior that will exist when complete.
+- **Current state:** verified files, symbols, behavior, and limitations.
+- **Scope:** changes owned by this issue.
+- **Non-goals:** adjacent work intentionally excluded.
+- **Decisions and open questions:** fixed contracts versus hypotheses to evaluate.
+- **Acceptance criteria:** observable outcomes, including failure behavior.
+- **Test plan:** unit/host, integration, simulator, HIL, and manual layers that are
+  relevant. Do not require every layer for every change.
+- **Security and privacy:** trust boundaries, authorization, data lifecycle,
+  retention, deletion, replay, abuse, and secrets where applicable.
+- **Dependencies and ownership:** blocking issues, merge order, and likely shared
+  files.
+- **Rollout and rollback:** how to enable, observe, disable, or revert the change.
+
+Use actual repository paths. A new path must be marked as new and justified.
+
+## Testing guidance
+
+Use a test pyramid rather than a blanket "no mocks" rule:
+
+- Pure logic and state machines: deterministic unit tests.
+- Hardware/provider boundaries: fakes or mocks for errors and edge cases.
+- Persistence and protocol: integration tests against the implemented adapter.
+- Simulation: Wokwi or another simulator when it represents the relevant behavior.
+- Physical behavior: trusted-ref HIL for RF, timing, peripherals, audio, display,
+  power, OTA, and other hardware-dependent claims.
+
+A test must fail when the behavior fails. Never mask build or test errors with
+`|| true`, `|| echo`, ignored exit codes, or fictional test commands.
+
+## Delegation and PRs
+
+Use one accountable lead per issue. Split work when it spans independent domains or
+cannot be reviewed safely as one change. Parallel agents require a stable shared
+contract, explicit branch base, non-overlapping ownership, and an integrator for
+shared files. Stacked PRs are useful for real dependencies, not mandatory ceremony.
+
+Do not include generic instructions such as "do not hallucinate", "self-heal", "use
+2026 state of the art", or arbitrary line-count limits. Give the assignee concrete
+context, boundaries, evidence, and success criteria instead.
+
+GitHub issues are the tracker source of truth. Do not maintain a hand-copied issue
+body under `docs/`; link an ADR or design document only when it contains durable
+technical reasoning beyond the ticket.
