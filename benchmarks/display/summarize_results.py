@@ -3,7 +3,7 @@
 
 This program is intentionally dependency-free so a trusted GitHub Actions runner
 can validate evidence without pretending that a host or simulator measured a
-display.  It refuses pending, incomplete, or malformed physical result files.
+display. It refuses pending, incomplete, or malformed physical result files.
 """
 
 from __future__ import annotations
@@ -26,7 +26,6 @@ REQUIRED_FIELDS = (
     "coexistence",
     "binary_size_bytes",
     "heap",
-    "frames_ms",
     "visual_inspection",
     "recovery",
 )
@@ -111,15 +110,16 @@ def validate(document: dict[str, Any]) -> None:
 
 def summarize(document: dict[str, Any]) -> dict[str, Any]:
     validate(document)
-    runs: dict[str, dict[str, float | int]] = {}
+    runs: dict[str, dict[str, float | int | bool]] = {}
     for name, run in document["workload"].items():
         frames = sorted(float(value) for value in run["frames_ms"])
+        p95 = percentile_nearest_rank(frames, 0.95)
         runs[name] = {
             "sample_count": len(frames),
             "p50_ms": percentile_nearest_rank(frames, 0.50),
-            "p95_ms": percentile_nearest_rank(frames, 0.95),
+            "p95_ms": p95,
             "max_ms": frames[-1],
-            "meets_initial_30fps_p95_target": percentile_nearest_rank(frames, 0.95) <= 33.0,
+            "meets_initial_30fps_p95_target": p95 <= 33.0,
         }
     return {
         "evidence": {
