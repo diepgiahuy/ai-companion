@@ -1,21 +1,18 @@
 package agent
 
-import "strings"
+import "context"
 
 type ModelSelector interface {
-	Select(transcript string) string
+	Select(context.Context, string) string
 }
-type KeywordModelSelector struct{ Fast, Reasoning string }
 
-func (s KeywordModelSelector) Select(q string) string {
-	q = strings.ToLower(q)
-	for _, w := range []string{"phân tích", "so sánh", "tại sao", "kế hoạch", "tư vấn", "đánh giá", "review", "analyze", "compare", "reason", "optimize", "tối ưu"} {
-		if strings.Contains(q, w) && strings.TrimSpace(s.Reasoning) != "" {
-			return s.Reasoning
-		}
-	}
-	if strings.TrimSpace(s.Fast) != "" {
-		return s.Fast
-	}
-	return s.Reasoning
+// StaticModelSelector is the deterministic no-classifier policy. It is the
+// safe fallback when semantic routing is not configured; unlike the old
+// KeywordModelSelector it does not inspect user text with brittle substrings.
+type StaticModelSelector struct {
+	Model string
+}
+
+func (s StaticModelSelector) Select(_ context.Context, _ string) string {
+	return s.Model
 }
