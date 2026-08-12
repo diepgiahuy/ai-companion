@@ -1,0 +1,62 @@
+name: Infrastructure
+description: Propose a CI, tooling, release, security, or operational change
+title: "[Infrastructure] "
+body:
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Outcome
+      description: What reliable capability or risk reduction will exist?
+    validations:
+      required: true
+
+  - type: textarea
+    id: current_state
+    attributes:
+      label: Current state and evidence
+      description: Existing workflows, commands, files, failures, and security constraints.
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope and non-goals
+      description: Define what changes and what remains outside this issue.
+    validations:
+      required: true
+
+  - type: textarea
+    id: threat_model
+    attributes:
+      label: Threat model and failure modes
+      description: Untrusted inputs, credentials, runner access, false-positive paths, rollback, and blast radius.
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Include fail-closed behavior and observable artifacts.
+      placeholder: |
+        - [ ] A failed command fails the job.
+        - [ ] The result records the tested commit SHA.
+    validations:
+      required: true
+
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation plan
+      description: Commands, environment, integration proof, and any physical/manual gate.
+    validations:
+      required: true
+
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies, ownership, and rollout
+      description: Required access, responsible owner, rollout sequence, monitoring, and rollback.
+    validations:
+      required: true
