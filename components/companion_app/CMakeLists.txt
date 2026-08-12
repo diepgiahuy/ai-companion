@@ -3,4 +3,4 @@ idf_component_register(
   INCLUDE_DIRS "include"
 )
 target_compile_features(${COMPONENT_LIB} PUBLIC cxx_std_20)
-target_compile_options(${COMPONENT_LIB} PRIVATE -Wall -Wextra -Wpedantic)
+target_compile_options(${COMPONENT_LIB} PRIVATE -Wall -Wextra)

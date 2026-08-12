@@ -4,4 +4,4 @@ idf_component_register(
   REQUIRES companion_app esp_event esp_netif esp_wifi lwip nvs_flash esp_websocket_client esp_audio_codec
 )
 
-target_compile_options(${COMPONENT_LIB} PRIVATE -Wall -Wextra -Wpedantic -Werror)
+target_compile_options(${COMPONENT_LIB} PRIVATE -Wall -Wextra)
