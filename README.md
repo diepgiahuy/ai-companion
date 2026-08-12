@@ -1,7 +1,7 @@
 # Companion Production v1 — Single-User AI Voice Device
 
 > **Status:** Production rewrite in controlled rollout  
-> **Checkpoint:** CP0 — baseline frozen + production plan established  
+> **Checkpoint:** CP5.1 — model gateway provider seam extracted + regression green
 > **Updated:** 2026-08-12  
 > **Source baseline:** `esp32-companion-poc-commercial-prod-shaped-20260811`  
 > **Rule:** a feature is never marked ✅ until its stated test gate passes. Research choice ≠ implemented. Source-complete ≠ hardware-proven.
@@ -19,11 +19,11 @@ Legend: ✅ passed gate · 🟡 in progress / partial · 🔴 not started · �
 | Checkpoint | Scope | Status | Exit gate |
 |---|---|---:|---|
 | CP0 | Freeze baseline + production README + current tests | ✅ | Baseline archived; host + offline backend regression pass; no false production claims |
-| CP1 | Physical hardware stabilization | 🟡 ⚠️ | Mic + speaker + power + display SKU proven simultaneously on bench |
+| CP1 | Physical hardware stabilization | 🟡 ⚠️ deferred | Mic + speaker + power + display SKU proven simultaneously on bench |
 | CP2 | Production firmware foundation | 🔴 | ESP-IDF build/flash/HIL passes; Arduino removed from production path |
 | CP3 | Audio front-end / hands-free | 🔴 ⚠️ | AFE/AEC/VADNet/WakeNet tuned; measured hands-free barge-in works |
 | CP4 | Realtime session + transport | 🔴 | WSS baseline retained; WebRTC benchmark passes; cancel/backpressure/late-frame tests pass |
-| CP5 | Go production platform | 🔴 | Go 1.26.x + ADK Go integration + provider/model seam passes tests |
+| CP5 | Go production platform | 🟡 | Go 1.26.x + ADK Go integration + provider/model seam passes tests |
 | CP6 | Product domain + data layer | 🔴 | PostgreSQL + Ent + Atlas + River migration passes parity + recovery tests |
 | CP7 | Agent/tools/context | 🔴 | ADK workflow replaces custom router/tool loop without feature regression |
 | CP8 | Local AI runtime | 🔴 | Vietnamese ASR + local model + streaming TTS meet quality/latency gates |
@@ -960,9 +960,52 @@ No checkpoint can skip directly to L7 and be considered production-ready if lowe
 
 ---
 
-# 18. Checkpoint update template
+# 18. Checkpoint log
 
-Every implementation checkpoint adds an entry here and updates the dashboard.
+Every implementation checkpoint adds an entry here and updates the dashboard. Every PASS checkpoint also has a Git tag/snapshot so it can be restored without reconstructing changes manually.
+
+## 2026-08-12 — CP5.1 Model gateway extraction
+
+Status: PASS
+
+Changed:
+- Extracted a provider-neutral `ModelGateway` boundary from `agent.Qwen`.
+- Moved OpenAI-compatible HTTP request/response handling into `OpenAICompatibleGateway`.
+- Kept conversation history, context planning, policy, tool execution, idempotency and usage accounting in the agent/runtime layer rather than the provider adapter.
+- Added `WithModelGateway` injection for local/cloud/fake/future ADK model adapters.
+- Added deterministic model gateway tests for response policy, tool policy and provider error propagation.
+- Hardware work is explicitly deferred while software checkpoints proceed.
+
+Tests executed:
+- `GOTOOLCHAIN=local CGO_ENABLED=1 go test -race -count=1 -modfile=go.offline.mod ./internal/agent` -> PASS.
+- `bash scripts/e2e_offline.sh` -> PASS. Host C++ simulator `2/2`; partition/SRAM budget PASS; all backend packages exercised under race detector PASS.
+- `git diff --check` -> PASS.
+
+Measured:
+- No firmware binary/heap change: backend-only checkpoint.
+- Deterministic agent package race test: PASS.
+
+Problems found:
+- Current execution container is Go 1.23.2 and has no outbound network, so Go 1.26.5 toolchain and ADK v2 dependencies cannot be downloaded/compiled here yet.
+
+Root cause:
+- Sandbox network/toolchain availability, not source incompatibility.
+
+Solution:
+- Split CP5 into independently reversible sub-checkpoints. CP5.1 lands the provider seam using the existing offline dependency set; actual Go/ADK dependency migration remains a later gate and is not falsely marked complete.
+
+Trade-offs accepted:
+- The legacy type name `Qwen` remains temporarily to reduce migration risk; model/provider behavior is no longer hard-coupled to Qwen. Rename/removal can happen when the ADK runner owns orchestration.
+
+Rollback path:
+- Git tag `CP5.1-20260812` restores this exact checkpoint.
+- Git tag `CP0-20260812` restores the frozen production baseline before the provider seam.
+
+Next:
+- CP4.1 software-only realtime session state machine: bounded queues, generation invalidation, stale-frame rejection, cancel/barge-in tests.
+- CP5.2 toolchain/ADK integration proceeds when an environment can fetch/pin Go 1.26.5 + ADK Go v2.2.x and run its real compile gate.
+
+## Checkpoint update template
 
 ```markdown
 ## YYYY-MM-DD — CPx.y <name>
@@ -1072,4 +1115,6 @@ Research refreshed on **2026-08-12** from primary/project documentation. Version
 
 # 22. Next action
 
-**CP1 starts with the physical mic blocker.** Do not begin ADK/Postgres/WebRTC migration while the hardware audio input itself still produces a constant raw value. Once INMP441 + speaker simultaneous I2S is proven, CP2 begins the ESP-IDF production firmware migration while backend migration can proceed in a separate branch/checkpoint.
+**Software-first rollout is active. Hardware CP1/CP3 are deferred, not waived.** Continue deterministic backend/transport/platform checkpoints that can be fully verified without the physical ESP32. The immediate next checkpoint is CP4.1: introduce the production realtime session state machine with bounded queues, generation invalidation and stale-frame/cancel tests.
+
+Dependency-heavy CP5.2 (Go 1.26.5 + ADK Go v2.2.x) and CP6 (Postgres/Ent/Atlas/River) remain separate reversible checkpoints; they are promoted only in an environment that can fetch the pinned dependencies and execute the real compile/integration gates. Hardware validation resumes later at CP1/CP2/CP3 and remains mandatory before Production RC.
