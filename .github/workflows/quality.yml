@@ -1,0 +1,82 @@
+name: quality-security
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  evidence:
+    name: Evidence truth gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Validate production evidence claims
+        run: python3 scripts/check_evidence.py
+
+  backend-quality:
+    name: Go reproducibility, vet, race, vulnerabilities
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Build exact Go 1.26.5 test image
+        run: docker build --pull -f Dockerfile.test -t companion-quality .
+      - name: Module reproducibility and verification
+        run: |
+          docker run --rm companion-quality bash -lc '
+            set -euo pipefail
+            cd /src/backend
+            cp go.mod /tmp/go.mod.before
+            cp go.sum /tmp/go.sum.before
+            go mod tidy
+            cmp go.mod /tmp/go.mod.before
+            cmp go.sum /tmp/go.sum.before
+            go mod verify
+          '
+      - name: Vet and race tests
+        run: |
+          docker run --rm companion-quality bash -lc '
+            set -euo pipefail
+            cd /src/backend
+            go vet -tags "adk,nolibopusfile" ./...
+            go test -tags "adk,nolibopusfile" -race -count=1 ./...
+          '
+      - name: Go vulnerability reachability scan
+        run: |
+          docker run --rm companion-quality bash -lc '
+            set -euo pipefail
+            export GOBIN=/tmp/go-tools
+            go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
+            cd /src/backend
+            /tmp/go-tools/govulncheck -tags=adk,nolibopusfile -test ./...
+          '
+      - name: Diff hygiene
+        run: git diff --check
+
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Review dependency changes
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: moderate
+          comment-summary-in-pr: always
