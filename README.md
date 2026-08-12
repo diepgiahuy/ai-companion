@@ -29,7 +29,7 @@ The table below distinguishes **implemented** from **production-proven**. A gree
 | PostgreSQL + Atlas/Ent + River | ⚪ unproven | Migration/job/backup/restart gates pending |
 | External MCP interoperability | ⚪ unproven | SDK bridge compiles; real external MCP contract test pending |
 | WebRTC real-network latency | ⚪ unproven | Must measure p50/p95 first-audio, loss recovery and barge-in |
-| Protocol v2 negotiation | ⚪ unproven | Capability/version negotiation not production-proven |
+| Canonical protocol v2 | 🟡 implemented | Backend, firmware, host tests and golden fixture use one v2 envelope; physical-device evidence remains pending |
 | Security default-deny | ⚪ unproven | Security hardening is active work; requires adversarial integration evidence |
 | Privacy explicit consent | ⚪ unproven | Retention/memory consent workflow needs end-to-end proof |
 | 24h real-device soak | ⚪ unproven | Hardware-in-the-loop soak pending |
@@ -64,7 +64,7 @@ ESP32-S3
         │
         ▼
 Realtime transport
-  ├─ WebSocket (current compatibility path)
+  ├─ WebSocket (current v2 control + binary Opus transport)
   └─ WebRTC / Opus (parallel foundation; real-network proof pending)
         │
         ▼

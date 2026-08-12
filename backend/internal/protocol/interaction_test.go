@@ -2,7 +2,6 @@ package protocol
 
 import (
 	"encoding/json"
-	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -11,13 +10,13 @@ import (
 
 var interactionTestTime = time.Date(2026, time.August, 13, 10, 0, 0, 0, time.UTC)
 
-func interactionEnvelope(kind InteractionType) InteractionEnvelope {
-	return InteractionEnvelope{
+func interactionEnvelope(kind InteractionType) Envelope {
+	return Envelope{
 		Type:           kind,
-		Version:        InteractionVersion,
-		ID:             "event-001",
+		Version:        Version,
+		MessageID:      "event-001",
 		IdempotencyKey: "idem-001",
-		OccurredAt:     interactionTestTime,
+		OccurredAt:     interactionTestTime.Format(time.RFC3339),
 	}
 }
 
@@ -58,7 +57,7 @@ func TestInteractionRoundTripForEveryPayload(t *testing.T) {
 			if err != nil {
 				t.Fatalf("DecodeInteraction() error = %v", err)
 			}
-			if gotEnvelope.Type != tc.kind || gotEnvelope.Version != InteractionVersion {
+			if gotEnvelope.Type != tc.kind || gotEnvelope.Version != Version {
 				t.Fatalf("decoded envelope = %+v", gotEnvelope)
 			}
 			if !reflect.DeepEqual(reflect.ValueOf(tc.body).Interface(), reflect.ValueOf(gotBody).Elem().Interface()) {
@@ -68,15 +67,16 @@ func TestInteractionRoundTripForEveryPayload(t *testing.T) {
 	}
 }
 
-func TestDecodeInteractionRejectsUnknownAndUnsupportedVersions(t *testing.T) {
+func TestDecodeInteractionUsesEnvelopeV2ErrorCodes(t *testing.T) {
 	cases := []struct {
-		name string
-		wire string
-		want error
+		name     string
+		wire     string
+		wantCode string
 	}{
-		{"unknown type", `{"type":"future.event","version":1,"id":"event-001","idempotency_key":"idem-001","occurred_at":"2026-08-13T10:00:00Z","payload":{}}`, ErrUnknownInteractionType},
-		{"unsupported version", `{"type":"gesture.notification","version":2,"id":"event-001","idempotency_key":"idem-001","occurred_at":"2026-08-13T10:00:00Z","payload":{}}`, ErrUnsupportedInteractionVersion},
-		{"malformed JSON", `{"type":`, nil},
+		{"v1 flat message", `{"version":1,"type":"gesture.notification","id":"event-001","gesture":"pat"}`, UnsupportedProtocolVersionCode},
+		{"unknown type", `{"version":2,"type":"future.event","message_id":"event-001","idempotency_key":"idem-001","occurred_at":"2026-08-13T10:00:00Z","payload":{}}`, UnknownMessageTypeCode},
+		{"non-interaction type", `{"version":2,"type":"session.ping","message_id":"event-001","idempotency_key":"idem-001","occurred_at":"2026-08-13T10:00:00Z","payload":{}}`, UnknownMessageTypeCode},
+		{"malformed JSON", `{"version":2,"type":`, InvalidEnvelopeCode},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -84,21 +84,10 @@ func TestDecodeInteractionRejectsUnknownAndUnsupportedVersions(t *testing.T) {
 			if err == nil {
 				t.Fatal("DecodeInteraction() succeeded")
 			}
-			if tc.want != nil && !errors.Is(err, tc.want) {
-				t.Fatalf("error = %v, want %v", err, tc.want)
+			if got := ErrorCode(err); got != tc.wantCode {
+				t.Fatalf("ErrorCode(%v) = %q, want %q", err, got, tc.wantCode)
 			}
 		})
-	}
-}
-
-func TestDecodeInteractionAllowsFutureOptionalPayloadFields(t *testing.T) {
-	wire := `{"type":"gesture.notification","version":1,"id":"event-001","idempotency_key":"idem-001","occurred_at":"2026-08-13T10:00:00Z","payload":{"gesture":"pat","sender_device_id":"device-a","future_hint":"ignore"}}`
-	_, body, err := DecodeInteraction([]byte(wire))
-	if err != nil {
-		t.Fatalf("DecodeInteraction() error = %v", err)
-	}
-	if got := body.(*GestureNotification).Gesture; got != "pat" {
-		t.Fatalf("gesture = %q, want pat", got)
 	}
 }
 
@@ -111,6 +100,9 @@ func TestInteractionValidationRejectsMalformedPayload(t *testing.T) {
 	if err == nil {
 		t.Fatal("EncodeInteraction() succeeded for invalid duration")
 	}
+	if got := ErrorCode(err); got != InvalidEnvelopeCode {
+		t.Fatalf("ErrorCode(%v) = %q, want %q", err, got, InvalidEnvelopeCode)
+	}
 
 	_, err = EncodeInteraction(interactionEnvelope(PairingConfirmationType), PairingConfirmation{
 		SessionID: "session-1", Participant: testParticipant("owner-a", "device-a"),
@@ -121,21 +113,78 @@ func TestInteractionValidationRejectsMalformedPayload(t *testing.T) {
 	}
 }
 
-func TestLegacyMessageRemainsCompatible(t *testing.T) {
-	before := Message{Type: "ui_state", Emotion: UIEmotionIdle}
-	wire, err := json.Marshal(before)
-	if err != nil {
-		t.Fatal(err)
+func TestDecodeInteractionRejectsBadPayloadAndMetadata(t *testing.T) {
+	valid := interactionEnvelope(GestureNotificationType)
+	valid.Payload = json.RawMessage(`{"gesture":"pat","sender_device_id":"device-a"}`)
+
+	cases := []struct {
+		name     string
+		mutate   func(*Envelope)
+		wantCode string
+	}{
+		{
+			name: "bad checksum",
+			mutate: func(e *Envelope) {
+				e.Type = VoiceMailAvailableType
+				e.Payload = json.RawMessage(`{"voice_mail_id":"voice-1","from_device_id":"device-a","media_format":"ogg_opus","duration_ms":1000,"size_bytes":2000,"checksum_sha256":"not-a-checksum","expires_at":"2026-08-13T11:00:00Z","policy":"ephemeral"}`)
+			},
+			wantCode: InvalidEnvelopeCode,
+		},
+		{
+			name: "unknown payload field",
+			mutate: func(e *Envelope) {
+				e.Payload = json.RawMessage(`{"gesture":"pat","sender_device_id":"device-a","future_hint":"reject"}`)
+			},
+			wantCode: InvalidEnvelopeCode,
+		},
+		{
+			name: "missing idempotency key",
+			mutate: func(e *Envelope) {
+				e.IdempotencyKey = ""
+			},
+			wantCode: InvalidEnvelopeCode,
+		},
+		{
+			name: "missing message id",
+			mutate: func(e *Envelope) {
+				e.MessageID = ""
+			},
+			wantCode: InvalidEnvelopeCode,
+		},
+		{
+			name: "non RFC3339 occurred at",
+			mutate: func(e *Envelope) {
+				e.OccurredAt = "13-08-2026"
+			},
+			wantCode: InvalidEnvelopeCode,
+		},
 	}
-	var after Message
-	if err := json.Unmarshal(wire, &after); err != nil {
-		t.Fatal(err)
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := valid
+			tc.mutate(&e)
+			wire, err := json.Marshal(e)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _, err = DecodeInteraction(wire)
+			if err == nil {
+				t.Fatal("DecodeInteraction() succeeded")
+			}
+			if got := ErrorCode(err); got != tc.wantCode {
+				t.Fatalf("ErrorCode(%v) = %q, want %q", err, got, tc.wantCode)
+			}
+		})
 	}
-	if err := ValidateUIState(after); err != nil {
-		t.Fatalf("ValidateUIState() error = %v", err)
-	}
-	if strings.Contains(string(wire), "payload") || !reflect.DeepEqual(before, after) {
-		t.Fatalf("legacy wire changed: %s", wire)
+}
+
+func TestEncodeInteractionRejectsNonV2Envelope(t *testing.T) {
+	e := interactionEnvelope(GestureNotificationType)
+	e.Version = 1
+	_, err := EncodeInteraction(e, GestureNotification{Gesture: "pat", SenderDeviceID: "device-a"})
+	if got := ErrorCode(err); got != UnsupportedProtocolVersionCode {
+		t.Fatalf("ErrorCode(%v) = %q, want %q", err, got, UnsupportedProtocolVersionCode)
 	}
 }
 

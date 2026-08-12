@@ -2,9 +2,13 @@
 
 Toolchain: **Go 1.26.5** (`go.mod` + container gate).
 
-This server implements the Xiaozhi-compatible subset used by the ESP32 POC:
+This server implements the canonical protocol v2 used by the ESP32 POC:
 
-- JSON control messages: `hello`, `listen`, `stt`, `tts`, `abort`, `error`.
+- JSON control uses the typed v2 envelope on `/v2/device`, including
+  `session.hello`, `turn.listen`, `transcript.final`, `tts.lifecycle`,
+  `turn.abort`, and `protocol.error`.
+- Version 1 fails with `unsupported_protocol_version`; a flat v2 control fails
+  with `invalid_envelope`. There is no dual-read or dual-write path.
 - Binary raw Opus (no Ogg container), one 60 ms packet per WebSocket message.
 - Device uplink: 16 kHz mono; server downlink: 24 kHz mono.
 - The server decodes Opus to PCM before ASR and encodes PCM after TTS.
@@ -93,7 +97,7 @@ single expense compatibility, `expense.log` batch writes, persisted summaries,
 voice-memo WAV save/metadata, and idempotent retries. Capability tests additionally
 cover registry discovery/execution and native resource URIs; future MCP adapters must
 register into these same ports instead of adding a second agent execution path. Server/store tests also
-cover deterministic relative timer creation, reminder claim/recover/fire and device-targeted `alarm` delivery.
+cover deterministic relative timer creation, reminder claim/recover/fire and device-targeted `alarm.fired` delivery.
 
 This delivery sandbox has Go 1.23.2 while `go.mod` requires Go 1.26.5 and network
 toolchain download is blocked, so the modified Go suite must be rerun with the

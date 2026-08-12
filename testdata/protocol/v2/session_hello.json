@@ -1,0 +1,1 @@
+{"version":2,"type":"session.hello","message_id":"firmware-1","payload":{"transport":"websocket","audio_params":{"format":"opus","sample_rate":16000,"channels":1,"frame_duration":60}}}

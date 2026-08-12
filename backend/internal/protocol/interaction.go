@@ -1,28 +1,15 @@
 package protocol
 
 import (
+	"bytes"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
 )
 
-// InteractionVersion is independent from the legacy Message version. New
-// interaction messages are additive; existing peers continue to use Message.
-const (
-	InteractionVersion               = 1
-	MaximumInteractionEnvelopeBytes = 8192
-	MaximumInteractionPayloadBytes  = 4096
-)
-
-var (
-	ErrUnknownInteractionType        = errors.New("unknown interaction message type")
-	ErrUnsupportedInteractionVersion = errors.New("unsupported interaction protocol version")
-)
-
-type InteractionType string
+type InteractionType = MessageType
 
 const (
 	GestureNotificationType     InteractionType = "gesture.notification"
@@ -40,113 +27,101 @@ const (
 	PairingExpiredType          InteractionType = "pairing.expired"
 )
 
-// InteractionEnvelope is a versioned, transport-independent envelope. Its IDs are
-// opaque identifiers, never credentials. Backend authorization remains required.
-type InteractionEnvelope struct {
-	Type           InteractionType `json:"type"`
-	Version        int             `json:"version"`
-	ID             string          `json:"id"`
-	IdempotencyKey string          `json:"idempotency_key"`
-	OccurredAt     time.Time       `json:"occurred_at"`
-	Payload        json.RawMessage `json:"payload"`
-}
-
 type InteractionPayload interface{ Validate() error }
 
-func (e InteractionEnvelope) Validate() error {
-	if !e.Type.Valid() {
-		return fmt.Errorf("%w: %q", ErrUnknownInteractionType, e.Type)
-	}
-	if e.Version != InteractionVersion {
-		return fmt.Errorf("%w: %d", ErrUnsupportedInteractionVersion, e.Version)
-	}
-	if err := validateOpaqueID("id", e.ID, 128); err != nil {
+func validateInteractionEnvelope(e Envelope) error {
+	if err := e.Validate(); err != nil {
 		return err
+	}
+	return validateInteractionMetadata(e)
+}
+
+func validateInteractionMetadata(e Envelope) error {
+	if _, err := interactionPayloadForType(e.Type); err != nil {
+		return &ProtocolError{Code: UnknownMessageTypeCode, Detail: err.Error()}
+	}
+	if err := validateOpaqueID("message_id", e.MessageID, 128); err != nil {
+		return &ProtocolError{Code: InvalidEnvelopeCode, Detail: err.Error()}
 	}
 	if err := validateOpaqueID("idempotency_key", e.IdempotencyKey, 128); err != nil {
-		return err
+		return &ProtocolError{Code: InvalidEnvelopeCode, Detail: err.Error()}
 	}
-	if e.OccurredAt.IsZero() {
-		return fmt.Errorf("occurred_at is required")
+	if strings.TrimSpace(e.OccurredAt) == "" {
+		return &ProtocolError{Code: InvalidEnvelopeCode, Detail: "occurred_at is required"}
 	}
-	if len(e.Payload) == 0 {
-		return fmt.Errorf("payload is required")
-	}
-	if len(e.Payload) > MaximumInteractionPayloadBytes {
-		return fmt.Errorf("payload exceeds %d bytes", MaximumInteractionPayloadBytes)
+	if _, err := time.Parse(time.RFC3339Nano, e.OccurredAt); err != nil {
+		return &ProtocolError{Code: InvalidEnvelopeCode, Detail: "occurred_at must be RFC3339: " + err.Error()}
 	}
 	return nil
 }
 
-func (t InteractionType) Valid() bool {
-	switch t {
-	case GestureNotificationType,
-		VoiceMailAvailableType, VoiceMailClaimType, VoiceMailClaimedType,
-		VoiceMailPlaybackResultType, VoiceMailConsumedType, VoiceMailExpiredType,
-		PairingSessionCreateType, PairingSessionCreatedType, PairingConfirmationType,
-		PairingSucceededType, PairingRejectedType, PairingExpiredType:
-		return true
-	default:
-		return false
-	}
-}
-
 // EncodeInteraction validates and serializes a concrete interaction payload.
-func EncodeInteraction(e InteractionEnvelope, p InteractionPayload) ([]byte, error) {
+func EncodeInteraction(e Envelope, p InteractionPayload) ([]byte, error) {
 	if p == nil {
-		return nil, fmt.Errorf("payload is required")
+		return nil, &ProtocolError{Code: InvalidEnvelopeCode, Detail: "payload is required"}
+	}
+	if e.Version != Version {
+		return nil, &ProtocolError{
+			Code:   UnsupportedProtocolVersionCode,
+			Detail: fmt.Sprintf("got %d, want %d", e.Version, Version),
+		}
+	}
+	if !e.Type.Valid() {
+		return nil, &ProtocolError{Code: UnknownMessageTypeCode, Detail: fmt.Sprintf("%q", e.Type)}
 	}
 	want, err := interactionTypeForPayload(p)
 	if err != nil {
-		return nil, err
+		return nil, &ProtocolError{Code: InvalidEnvelopeCode, Detail: err.Error()}
 	}
 	if e.Type != want {
-		return nil, fmt.Errorf("payload %T does not match interaction type %q", p, e.Type)
+		return nil, &ProtocolError{Code: InvalidEnvelopeCode, Detail: fmt.Sprintf("payload %T does not match interaction type %q", p, e.Type)}
 	}
 	if err := p.Validate(); err != nil {
+		return nil, &ProtocolError{Code: InvalidEnvelopeCode, Detail: err.Error()}
+	}
+	if err := validateInteractionMetadata(e); err != nil {
 		return nil, err
 	}
-	raw, err := json.Marshal(p)
-	if err != nil {
-		return nil, fmt.Errorf("marshal interaction payload: %w", err)
-	}
-	e.Payload = raw
-	if err := e.Validate(); err != nil {
-		return nil, err
-	}
-	return json.Marshal(e)
+	return Encode(e.Type, Metadata{
+		MessageID:      e.MessageID,
+		CorrelationID:  e.CorrelationID,
+		SessionID:      e.SessionID,
+		TurnID:         e.TurnID,
+		GenerationID:   e.GenerationID,
+		IdempotencyKey: e.IdempotencyKey,
+		OccurredAt:     e.OccurredAt,
+	}, p)
 }
 
-// DecodeInteraction returns a concrete validated payload. Unknown optional JSON
-// fields are ignored for additive evolution; unknown types and versions fail closed.
-func DecodeInteraction(data []byte) (InteractionEnvelope, InteractionPayload, error) {
-	if len(data) == 0 {
-		return InteractionEnvelope{}, nil, fmt.Errorf("interaction envelope is required")
+// DecodeInteraction returns a concrete validated interaction payload from an
+// Envelope v2. Envelope failures use the stable protocol error codes from envelope.go.
+func DecodeInteraction(data []byte) (Envelope, InteractionPayload, error) {
+	e, err := Decode(data)
+	if err != nil {
+		return Envelope{}, nil, err
 	}
-	if len(data) > MaximumInteractionEnvelopeBytes {
-		return InteractionEnvelope{}, nil, fmt.Errorf("interaction envelope exceeds %d bytes", MaximumInteractionEnvelopeBytes)
-	}
-	var e InteractionEnvelope
-	if err := json.Unmarshal(data, &e); err != nil {
-		return InteractionEnvelope{}, nil, fmt.Errorf("decode interaction envelope: %w", err)
-	}
-	if err := e.Validate(); err != nil {
-		return InteractionEnvelope{}, nil, err
+	if err := validateInteractionEnvelope(e); err != nil {
+		return Envelope{}, nil, err
 	}
 	p, err := interactionPayloadForType(e.Type)
 	if err != nil {
-		return InteractionEnvelope{}, nil, err
+		return Envelope{}, nil, &ProtocolError{Code: UnknownMessageTypeCode, Detail: err.Error()}
 	}
-	if err := json.Unmarshal(e.Payload, p); err != nil {
-		return InteractionEnvelope{}, nil, fmt.Errorf("decode %s payload: %w", e.Type, err)
+	decoder := json.NewDecoder(bytes.NewReader(e.Payload))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(p); err != nil {
+		return Envelope{}, nil, &ProtocolError{Code: InvalidEnvelopeCode, Detail: fmt.Sprintf("decode %s payload: %v", e.Type, err)}
+	}
+	if err := ensureJSONEOF(decoder); err != nil {
+		return Envelope{}, nil, &ProtocolError{Code: InvalidEnvelopeCode, Detail: err.Error()}
 	}
 	if err := p.Validate(); err != nil {
-		return InteractionEnvelope{}, nil, err
+		return Envelope{}, nil, &ProtocolError{Code: InvalidEnvelopeCode, Detail: err.Error()}
 	}
 	return e, p, nil
 }
 
-func interactionTypeForPayload(p InteractionPayload) (InteractionType, error) {
+func interactionTypeForPayload(p InteractionPayload) (MessageType, error) {
 	switch p.(type) {
 	case GestureNotification:
 		return GestureNotificationType, nil
@@ -205,7 +180,7 @@ func interactionTypeForPayload(p InteractionPayload) (InteractionType, error) {
 	}
 }
 
-func interactionPayloadForType(t InteractionType) (InteractionPayload, error) {
+func interactionPayloadForType(t MessageType) (InteractionPayload, error) {
 	switch t {
 	case GestureNotificationType:
 		return &GestureNotification{}, nil
@@ -234,15 +209,8 @@ func interactionPayloadForType(t InteractionType) (InteractionPayload, error) {
 	case PairingExpiredType:
 		return &PairingExpired{}, nil
 	default:
-		return nil, fmt.Errorf("%w: %q", ErrUnknownInteractionType, t)
+		return nil, fmt.Errorf("unknown interaction message type %q", t)
 	}
-}
-
-func validateOpaqueID(name, value string, max int) error {
-	if strings.TrimSpace(value) == "" || len(value) > max {
-		return fmt.Errorf("%s must be 1..%d bytes", name, max)
-	}
-	return nil
 }
 
 // Gesture delivery is best-effort over the active device session. Idempotency lets a
@@ -392,9 +360,13 @@ func (p VoiceMailConsumed) Validate() error {
 	return nil
 }
 
-type VoiceMailExpired struct { VoiceMailID string `json:"voice_mail_id"` }
+type VoiceMailExpired struct {
+	VoiceMailID string `json:"voice_mail_id"`
+}
 
-func (p VoiceMailExpired) Validate() error { return validateOpaqueID("voice_mail_id", p.VoiceMailID, 128) }
+func (p VoiceMailExpired) Validate() error {
+	return validateOpaqueID("voice_mail_id", p.VoiceMailID, 128)
+}
 
 type VoiceMailState string
 type VoiceMailEvent string
@@ -564,7 +536,9 @@ func (p PairingRejected) Validate() error {
 	}
 }
 
-type PairingExpired struct { SessionID string `json:"session_id"` }
+type PairingExpired struct {
+	SessionID string `json:"session_id"`
+}
 
 func (p PairingExpired) Validate() error { return validateOpaqueID("session_id", p.SessionID, 128) }
 

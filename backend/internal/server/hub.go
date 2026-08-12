@@ -91,9 +91,8 @@ func (h *sessionHub) targets(userID, deviceID string) []*session {
 func (h *sessionHub) pushAlarm(ctx context.Context, reminder domain.ScheduledItem) int {
 	sent := 0
 	for _, target := range h.targets(reminder.UserID, reminder.DeviceID) {
-		if err := target.sendJSON(ctx, protocol.Message{
-			Type:    "alarm",
-			ID:      fmt.Sprintf("reminder-%d", reminder.ID),
+		if err := target.sendJSON(ctx, protocol.AlarmFiredType, protocol.AlarmFiredPayload{
+			AlarmID: fmt.Sprintf("reminder-%d", reminder.ID),
 			Message: oledText(reminder.Title),
 			FireAt:  reminder.FireAt.UTC().Format(time.RFC3339),
 		}); err == nil {
@@ -106,8 +105,8 @@ func (h *sessionHub) pushAlarm(ctx context.Context, reminder domain.ScheduledIte
 func (h *sessionHub) pushSchedule(ctx context.Context, userID, deviceID, summary, fireAt string) int {
 	sent := 0
 	for _, target := range h.targets(userID, deviceID) {
-		if err := target.sendJSON(ctx, protocol.Message{
-			Type: "schedule", Message: oledText(summary), FireAt: fireAt,
+		if err := target.sendJSON(ctx, protocol.ScheduleUpdatedType, protocol.ScheduleUpdatedPayload{
+			Message: oledText(summary), FireAt: fireAt,
 		}); err == nil {
 			sent++
 		}

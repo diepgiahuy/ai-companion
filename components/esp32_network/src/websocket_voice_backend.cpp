@@ -1,8 +1,10 @@
 #include "companion/websocket_voice_backend.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <initializer_list>
 
 #include "cJSON.h"
 #include "esp_log.h"
@@ -19,26 +21,217 @@ std::string_view json_string(const cJSON* object, const char* key) {
   return item->valuestring;
 }
 
-bool parse_runtime_config(const cJSON* root, RuntimeConfigPatch& out) {
-  const cJSON* version = cJSON_GetObjectItemCaseSensitive(root, "config_version");
-  const cJSON* config = cJSON_GetObjectItemCaseSensitive(root, "config");
-  if (!cJSON_IsNumber(version) || !cJSON_IsObject(config) || version->valuedouble < 0) return false;
+bool has_only_fields(const cJSON* object,
+                     std::initializer_list<std::string_view> allowed);
+
+bool parse_uint32(const cJSON* value, uint32_t& output) {
+  if (!cJSON_IsNumber(value) || value->valuedouble < 0 ||
+      value->valuedouble > UINT32_MAX) {
+    return false;
+  }
+  const auto parsed = static_cast<uint32_t>(value->valuedouble);
+  if (value->valuedouble != static_cast<double>(parsed)) return false;
+  output = parsed;
+  return true;
+}
+
+bool parse_uint64(const cJSON* value, uint64_t& output) {
+  constexpr double kMaximumExactJSONInteger = 9'007'199'254'740'991.0;
+  if (!cJSON_IsNumber(value) || value->valuedouble < 0 ||
+      value->valuedouble > kMaximumExactJSONInteger) {
+    return false;
+  }
+  const auto parsed = static_cast<uint64_t>(value->valuedouble);
+  if (value->valuedouble != static_cast<double>(parsed)) return false;
+  output = parsed;
+  return true;
+}
+
+bool optional_bounded_string(const cJSON* object, const char* key,
+                             size_t maximum_size) {
+  const cJSON* value = cJSON_GetObjectItemCaseSensitive(object, key);
+  return value == nullptr ||
+         (cJSON_IsString(value) && value->valuestring != nullptr &&
+          std::strlen(value->valuestring) <= maximum_size);
+}
+
+bool parse_runtime_config(const cJSON* payload, RuntimeConfigPatch& out) {
+  const cJSON* version = cJSON_GetObjectItemCaseSensitive(payload, "config_version");
+  const cJSON* config = cJSON_GetObjectItemCaseSensitive(payload, "config");
+  uint64_t parsed_version = 0;
+  if (!parse_uint64(version, parsed_version) || !cJSON_IsObject(config) ||
+      !has_only_fields(config, {"smart_vad_enabled", "vad_threshold",
+                                "vad_silence_ms", "vad_min_speech_ms",
+                                "idle_after_ms", "alarm_visible_ms", "locale",
+                                "timezone", "voice_key"}) ||
+      !optional_bounded_string(config, "locale", 64) ||
+      !optional_bounded_string(config, "timezone", 64) ||
+      !optional_bounded_string(config, "voice_key", 128)) return false;
   const cJSON* smart = cJSON_GetObjectItemCaseSensitive(config, "smart_vad_enabled");
   const cJSON* threshold = cJSON_GetObjectItemCaseSensitive(config, "vad_threshold");
   const cJSON* silence = cJSON_GetObjectItemCaseSensitive(config, "vad_silence_ms");
   const cJSON* min_speech = cJSON_GetObjectItemCaseSensitive(config, "vad_min_speech_ms");
   const cJSON* idle = cJSON_GetObjectItemCaseSensitive(config, "idle_after_ms");
   const cJSON* alarm = cJSON_GetObjectItemCaseSensitive(config, "alarm_visible_ms");
-  if (!cJSON_IsBool(smart) || !cJSON_IsNumber(threshold) || !cJSON_IsNumber(silence) ||
-      !cJSON_IsNumber(min_speech) || !cJSON_IsNumber(idle) || !cJSON_IsNumber(alarm)) return false;
-  out.version = static_cast<uint64_t>(version->valuedouble);
+  uint32_t parsed_threshold = 0;
+  uint32_t parsed_silence = 0;
+  uint32_t parsed_min_speech = 0;
+  uint32_t parsed_idle = 0;
+  uint32_t parsed_alarm = 0;
+  if (!cJSON_IsBool(smart) || !parse_uint32(threshold, parsed_threshold) ||
+      !parse_uint32(silence, parsed_silence) ||
+      !parse_uint32(min_speech, parsed_min_speech) ||
+      !parse_uint32(idle, parsed_idle) || !parse_uint32(alarm, parsed_alarm) ||
+      parsed_threshold < 1 || parsed_threshold > 65'535 ||
+      parsed_silence < 100 || parsed_silence > 5'000 ||
+      parsed_min_speech < 50 || parsed_min_speech > 5'000 ||
+      parsed_idle < 1'000 || parsed_idle > 3'600'000 ||
+      parsed_alarm < 1'000 || parsed_alarm > 3'600'000) return false;
+  out.version = parsed_version;
   out.smart_vad_enabled = cJSON_IsTrue(smart);
-  out.vad_threshold = static_cast<uint32_t>(threshold->valuedouble);
-  out.vad_silence_ms = static_cast<uint32_t>(silence->valuedouble);
-  out.vad_min_speech_ms = static_cast<uint32_t>(min_speech->valuedouble);
-  out.idle_after_ms = static_cast<uint32_t>(idle->valuedouble);
-  out.alarm_visible_ms = static_cast<uint32_t>(alarm->valuedouble);
+  out.vad_threshold = parsed_threshold;
+  out.vad_silence_ms = parsed_silence;
+  out.vad_min_speech_ms = parsed_min_speech;
+  out.idle_after_ms = parsed_idle;
+  out.alarm_visible_ms = parsed_alarm;
   return true;
+}
+
+bool optional_features_valid(const cJSON* payload) {
+  const cJSON* features = cJSON_GetObjectItemCaseSensitive(payload, "features");
+  if (features == nullptr) return true;
+  if (!has_only_fields(features, {"streaming_tts", "button_barge_in"})) return false;
+  for (const char* key : {"streaming_tts", "button_barge_in"}) {
+    const cJSON* value = cJSON_GetObjectItemCaseSensitive(features, key);
+    if (value != nullptr && !cJSON_IsBool(value)) return false;
+  }
+  return true;
+}
+
+const cJSON* json_object(const cJSON* object, const char* key) {
+  const cJSON* item = cJSON_GetObjectItemCaseSensitive(object, key);
+  return cJSON_IsObject(item) ? item : nullptr;
+}
+
+bool has_only_fields(const cJSON* object,
+                     std::initializer_list<std::string_view> allowed) {
+  if (!cJSON_IsObject(object)) return false;
+  for (const cJSON* item = object->child; item != nullptr; item = item->next) {
+    if (item->string == nullptr) return false;
+    const std::string_view name = item->string;
+    if (std::find(allowed.begin(), allowed.end(), name) == allowed.end()) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool json_integer_equals(const cJSON* value, int expected) {
+  return cJSON_IsNumber(value) && value->valuedouble == expected &&
+         value->valueint == expected;
+}
+
+bool payload_fields_valid(protocol::ControlType type, const cJSON* payload) {
+  using protocol::ControlType;
+  switch (type) {
+  case ControlType::session_ready:
+    return has_only_fields(payload, {"transport", "audio_params", "features",
+                                     "config", "config_version"});
+  case ControlType::session_ping:
+  case ControlType::session_pong:
+    return has_only_fields(payload, {});
+  case ControlType::turn_abort:
+    return has_only_fields(payload, {"reason"});
+  case ControlType::turn_state:
+    return has_only_fields(payload, {"state", "reason"});
+  case ControlType::transcript_final:
+    return has_only_fields(payload, {"text"});
+  case ControlType::tts_lifecycle:
+    return has_only_fields(payload, {"state", "text"});
+  case ControlType::agent_status:
+    return has_only_fields(payload, {"state"});
+  case ControlType::ui_card:
+    return has_only_fields(payload, {"ui"});
+  case ControlType::ui_state:
+    return has_only_fields(payload, {"emotion", "tool_name"});
+  case ControlType::alarm_fired:
+    return has_only_fields(payload, {"alarm_id", "message", "fire_at"});
+  case ControlType::schedule_updated:
+    return has_only_fields(payload, {"message", "fire_at"});
+  case ControlType::config_update:
+    return has_only_fields(payload, {"config_version", "config"});
+  case ControlType::protocol_error:
+    return has_only_fields(payload, {"code", "message"});
+  default:
+    return true;
+  }
+}
+
+bool payload_semantics_valid(protocol::ControlType type, const cJSON* payload) {
+  using protocol::ControlType;
+  const auto nonempty = [payload](const char* field) {
+    return !json_string(payload, field).empty();
+  };
+  switch (type) {
+  case ControlType::session_ready: {
+    if (!optional_features_valid(payload)) return false;
+    const cJSON* version = cJSON_GetObjectItemCaseSensitive(payload, "config_version");
+    const cJSON* config = cJSON_GetObjectItemCaseSensitive(payload, "config");
+    uint64_t ignored_version = 0;
+    if (!parse_uint64(version, ignored_version)) return false;
+    if (config == nullptr) return true;
+    RuntimeConfigPatch ignored{};
+    return parse_runtime_config(payload, ignored);
+  }
+  case ControlType::session_ping:
+  case ControlType::session_pong:
+    return true;
+  case ControlType::turn_abort:
+    return nonempty("reason");
+  case ControlType::turn_state:
+    return nonempty("state");
+  case ControlType::transcript_final:
+    return nonempty("text");
+  case ControlType::tts_lifecycle: {
+    const std::string_view state = json_string(payload, "state");
+    return state == "start" || state == "stop" ||
+           ((state == "sentence_start" || state == "sentence_end") &&
+            nonempty("text"));
+  }
+  case ControlType::agent_status:
+    return nonempty("state");
+  case ControlType::ui_card:
+    return json_object(payload, "ui") != nullptr;
+  case ControlType::ui_state:
+    return nonempty("emotion");
+  case ControlType::alarm_fired:
+    return nonempty("alarm_id") && nonempty("message") && nonempty("fire_at");
+  case ControlType::schedule_updated:
+    return nonempty("message") && nonempty("fire_at");
+  case ControlType::config_update: {
+    RuntimeConfigPatch ignored{};
+    return parse_runtime_config(payload, ignored);
+  }
+  case ControlType::protocol_error:
+    return nonempty("code") && nonempty("message");
+  default:
+    return true;
+  }
+}
+
+enum class VersionStatus : uint8_t { valid, unsupported, malformed };
+
+VersionStatus protocol_version_status(const cJSON* root) {
+  constexpr double kMaximumExactJSONInteger = 9'007'199'254'740'991.0;
+  const cJSON* version = cJSON_GetObjectItemCaseSensitive(root, "version");
+  if (!cJSON_IsNumber(version) ||
+      std::abs(version->valuedouble) > kMaximumExactJSONInteger ||
+      std::trunc(version->valuedouble) != version->valuedouble) {
+    return VersionStatus::malformed;
+  }
+  return version->valuedouble == static_cast<double>(protocol::kVersion)
+             ? VersionStatus::valid
+             : VersionStatus::unsupported;
 }
 
 template <size_t N>
@@ -85,7 +278,7 @@ bool WebSocketVoiceBackend::initialize(std::string_view url,
   }
   const int header_size = std::snprintf(
       headers_.data(), headers_.size(),
-      "Authorization: Bearer %.*s\r\nProtocol-Version: 1\r\n"
+      "Authorization: Bearer %.*s\r\nProtocol-Version: 2\r\n"
       "Device-Id: %s\r\nClient-Id: %s\r\n",
       static_cast<int>(token.size()), token.data(), device_id_.data(),
       client_id_.data());
@@ -149,13 +342,19 @@ bool WebSocketVoiceBackend::start(uint64_t) {
 void WebSocketVoiceBackend::tick(uint64_t) {}
 
 bool WebSocketVoiceBackend::begin_turn(uint64_t, ListenMode mode) {
-  if (!protocol_connected_.load() || turn_active_.exchange(true)) return false;
-  reset_turn_queues();
-  const int length = std::snprintf(active_turn_id_.data(), active_turn_id_.size(),
+  if (!protocol_connected_.load()) return false;
+  std::array<char, 40> turn_id{};
+  const int length = std::snprintf(turn_id.data(), turn_id.size(),
                                    "turn-%llu",
                                    static_cast<unsigned long long>(++turn_sequence_));
-  if (length < 0 || static_cast<size_t>(length) >= active_turn_id_.size() ||
-      !enqueue_command(CommandType::listen_start, active_turn_id_.data(), mode)) {
+  if (length < 0 || static_cast<size_t>(length) >= turn_id.size()) return false;
+  taskENTER_CRITICAL(&turn_id_lock_);
+  const bool already_active = turn_active_.exchange(true);
+  if (!already_active) active_turn_id_ = turn_id;
+  taskEXIT_CRITICAL(&turn_id_lock_);
+  if (already_active) return false;
+  reset_turn_queues();
+  if (!enqueue_command(CommandType::listen_start, turn_id.data(), mode)) {
     turn_active_.store(false);
     return false;
   }
@@ -166,6 +365,15 @@ bool WebSocketVoiceBackend::send_audio(std::span<const int16_t> pcm) {
   if (!turn_active_.load() || pcm.empty()) return false;
   size_t source_offset = 0;
   while (source_offset < pcm.size()) {
+    std::array<int16_t, kOpusFrameSamples> frame{};
+    bool frame_ready = false;
+    uint64_t generation = 0;
+    taskENTER_CRITICAL(&media_buffer_lock_);
+    if (!turn_active_.load()) {
+      taskEXIT_CRITICAL(&media_buffer_lock_);
+      return false;
+    }
+    generation = media_generation_.load();
     const size_t count = std::min(pcm.size() - source_offset,
                                   kOpusFrameSamples - upload_payload_size_);
     std::copy_n(pcm.begin() + source_offset, count,
@@ -173,30 +381,55 @@ bool WebSocketVoiceBackend::send_audio(std::span<const int16_t> pcm) {
     source_offset += count;
     upload_payload_size_ += count;
     if (upload_payload_size_ == kOpusFrameSamples) {
-      if (!encode_and_enqueue(upload_payload_)) return false;
-      upload_payload_.fill(0);
+      frame = upload_payload_;
+      upload_payload_ = {};
       upload_payload_size_ = 0;
+      frame_ready = true;
     }
+    taskEXIT_CRITICAL(&media_buffer_lock_);
+    if (frame_ready &&
+        (!turn_active_.load() || generation != media_generation_.load() ||
+         !encode_and_enqueue(frame, generation))) return false;
   }
-  return true;
+  return turn_active_.load();
 }
 
 bool WebSocketVoiceBackend::finish_turn(uint64_t) {
   if (!turn_active_.load()) return false;
-  if (upload_payload_size_ != 0) {
-    std::fill(upload_payload_.begin() + upload_payload_size_,
-              upload_payload_.end(), 0);
-    if (!encode_and_enqueue(upload_payload_)) return false;
-    upload_payload_.fill(0);
-    upload_payload_size_ = 0;
+  std::array<int16_t, kOpusFrameSamples> frame{};
+  bool frame_ready = false;
+  uint64_t generation = 0;
+  taskENTER_CRITICAL(&media_buffer_lock_);
+  if (!turn_active_.load()) {
+    taskEXIT_CRITICAL(&media_buffer_lock_);
+    return false;
   }
-  return enqueue_command(CommandType::listen_stop, active_turn_id_.data());
+  generation = media_generation_.load();
+  if (upload_payload_size_ != 0) {
+    std::copy_n(upload_payload_.begin(), upload_payload_size_, frame.begin());
+    upload_payload_ = {};
+    upload_payload_size_ = 0;
+    frame_ready = true;
+  }
+  taskEXIT_CRITICAL(&media_buffer_lock_);
+  if (frame_ready &&
+      (!turn_active_.load() || generation != media_generation_.load() ||
+       !encode_and_enqueue(frame, generation))) return false;
+  if (!turn_active_.load() || generation != media_generation_.load()) return false;
+  const std::array<char, 40> turn_id = active_turn_id_snapshot();
+  return enqueue_command(CommandType::listen_stop, turn_id.data());
 }
 
 void WebSocketVoiceBackend::cancel_turn() {
-  if (turn_active_.exchange(false) || tts_active_.exchange(false)) {
+  taskENTER_CRITICAL(&turn_id_lock_);
+  const bool was_turn_active = turn_active_.exchange(false);
+  const bool was_tts_active = tts_active_.exchange(false);
+  const bool had_active_turn = was_turn_active || was_tts_active;
+  const std::array<char, 40> turn_id = active_turn_id_;
+  taskEXIT_CRITICAL(&turn_id_lock_);
+  if (had_active_turn) {
     xQueueReset(outbound_queue_);
-    enqueue_command(CommandType::abort, active_turn_id_.data());
+    enqueue_command(CommandType::abort, turn_id.data());
   }
   reset_turn_queues();
 }
@@ -241,14 +474,21 @@ void WebSocketVoiceBackend::on_event(int32_t event_id,
   switch (event_id) {
   case WEBSOCKET_EVENT_CONNECTED:
     socket_connected_.store(true);
+    protocol_connected_.store(false);
+    clear_session_id();
+    reset_turn_queues();
     enqueue_command(CommandType::hello);
     break;
   case WEBSOCKET_EVENT_DISCONNECTED:
     socket_connected_.store(false);
     protocol_connected_.store(false);
+    clear_session_id();
+    taskENTER_CRITICAL(&turn_id_lock_);
     turn_active_.store(false);
     tts_active_.store(false);
+    taskEXIT_CRITICAL(&turn_id_lock_);
     xQueueReset(outbound_queue_);
+    reset_turn_queues();
     enqueue_event(BackendEventType::disconnected);
     break;
   case WEBSOCKET_EVENT_DATA:
@@ -287,41 +527,59 @@ void WebSocketVoiceBackend::writer_loop() {
     if (xQueueReceive(outbound_queue_, &outbound, portMAX_DELAY) != pdPASS) continue;
     if (outbound.type == OutboundType::control) {
       const Command& command = outbound.command;
-      char json[384]{};
+      char payload[384]{};
+      protocol::ControlType type{};
+      std::string_view turn_id;
+      std::string_view correlation_id;
       switch (command.type) {
       case CommandType::hello:
-        std::snprintf(json, sizeof(json),
-                      "{\"type\":\"hello\",\"version\":1,"
-                      "\"transport\":\"websocket\",\"audio_params\":{"
+        type = protocol::ControlType::session_hello;
+        std::snprintf(payload, sizeof(payload),
+                      "{\"transport\":\"websocket\",\"audio_params\":{"
                       "\"format\":\"opus\",\"sample_rate\":16000,"
-                      "\"channels\":1,\"frame_duration\":60}});
+                      "\"channels\":1,\"frame_duration\":60}}");
+        break;
+      case CommandType::session_pong:
+        type = protocol::ControlType::session_pong;
+        correlation_id = command.correlation_id.data();
+        std::snprintf(payload, sizeof(payload), "{}");
         break;
       case CommandType::listen_start: {
+        type = protocol::ControlType::turn_listen;
+        turn_id = command.turn_id.data();
         const char* mode = command.mode == ListenMode::auto_vad ? "auto_vad" : "manual";
-        std::snprintf(json, sizeof(json),
-                      "{\"type\":\"listen\",\"state\":\"start\","
-                      "\"mode\":\"%s\",\"turn_id\":\"%s\"}",
-                      mode, command.turn_id.data());
+        std::snprintf(payload, sizeof(payload),
+                      "{\"state\":\"start\",\"mode\":\"%s\"}", mode);
         break;
       }
       case CommandType::listen_stop:
-        std::snprintf(json, sizeof(json),
-                      "{\"type\":\"listen\",\"state\":\"stop\","
-                      "\"turn_id\":\"%s\"}", command.turn_id.data());
+        type = protocol::ControlType::turn_listen;
+        turn_id = command.turn_id.data();
+        std::snprintf(payload, sizeof(payload), "{\"state\":\"stop\"}");
         break;
       case CommandType::abort:
-        std::snprintf(json, sizeof(json),
-                      "{\"type\":\"abort\",\"reason\":\"button_barge_in\","
-                      "\"turn_id\":\"%s\"}", command.turn_id.data());
+        type = protocol::ControlType::turn_abort;
+        turn_id = command.turn_id.data();
+        std::snprintf(payload, sizeof(payload),
+                      "{\"reason\":\"button_barge_in\"}");
         break;
       case CommandType::alarm_ack:
-        std::snprintf(json, sizeof(json),
-                      "{\"type\":\"alarm_ack\",\"id\":\"%s\"}",
-                      command.turn_id.data());
+        type = protocol::ControlType::alarm_ack;
+        {
+          char alarm_id[128]{};
+          size_t alarm_id_size = 0;
+          if (!protocol::encode_json_string(command.turn_id.data(), alarm_id,
+                                            alarm_id_size) ||
+              std::snprintf(payload, sizeof(payload), "{\"alarm_id\":%.*s}",
+                            static_cast<int>(alarm_id_size), alarm_id) < 0) {
+            payload[0] = '\0';
+          }
+        }
         break;
       case CommandType::config_report:
-        std::snprintf(json, sizeof(json),
-          "{\"type\":\"config_report\",\"config_version\":%llu,\"applied\":%s,\"config\":{" 
+        type = protocol::ControlType::config_report;
+        std::snprintf(payload, sizeof(payload),
+          "{\"config_version\":%llu,\"applied\":%s,\"config\":{"
           "\"smart_vad_enabled\":%s,\"vad_threshold\":%lu,\"vad_silence_ms\":%lu,"
           "\"vad_min_speech_ms\":%lu,\"idle_after_ms\":%lu,\"alarm_visible_ms\":%lu}}",
           static_cast<unsigned long long>(command.config.version), command.applied ? "true" : "false",
@@ -332,9 +590,59 @@ void WebSocketVoiceBackend::writer_loop() {
           static_cast<unsigned long>(command.config.idle_after_ms),
           static_cast<unsigned long>(command.config.alarm_visible_ms));
         break;
+      case CommandType::protocol_error:
+        type = protocol::ControlType::protocol_error;
+        {
+          char code[256]{};
+          char message[256]{};
+          size_t code_size = 0;
+          size_t message_size = 0;
+          if (!protocol::encode_json_string(command.code.data(), code, code_size) ||
+              !protocol::encode_json_string(command.message.data(), message,
+                                            message_size)) {
+            payload[0] = '\0';
+            break;
+          }
+          const int payload_size = std::snprintf(
+              payload, sizeof(payload), "{\"code\":%.*s,\"message\":%.*s}",
+              static_cast<int>(code_size), code,
+              static_cast<int>(message_size), message);
+          if (payload_size < 0 ||
+              static_cast<size_t>(payload_size) >= sizeof(payload)) {
+            payload[0] = '\0';
+          }
+        }
+        break;
       }
-      if (!send_text(json)) ESP_LOGW(kTag, "control send failed");
-    } else if (socket_connected_.load()) {
+      if (std::strlen(payload) >= sizeof(payload)) {
+        ESP_LOGW(kTag, "control payload too large");
+        continue;
+      }
+      char message_id[32]{};
+      const int message_id_size = std::snprintf(
+          message_id, sizeof(message_id), "firmware-%llu",
+          static_cast<unsigned long long>(message_sequence_.fetch_add(1) + 1));
+      char json[768]{};
+      size_t json_size = 0;
+      const std::array<char, 64> session_id = session_id_snapshot();
+      const protocol::Envelope envelope{
+          .type = type,
+          .message_id = message_id_size > 0 &&
+                        static_cast<size_t>(message_id_size) < sizeof(message_id)
+                            ? std::string_view(message_id)
+                            : std::string_view{},
+          .payload_json = payload,
+          .correlation_id = correlation_id,
+          .session_id = session_id.data(),
+          .turn_id = turn_id,
+      };
+      if (!protocol::encode(envelope, json, json_size)) {
+        ESP_LOGW(kTag, "control envelope encode failed");
+        continue;
+      }
+      if (!send_text({json, json_size})) ESP_LOGW(kTag, "control send failed");
+    } else if (socket_connected_.load() &&
+               outbound.media_generation == media_generation_.load()) {
       const int bytes = static_cast<int>(outbound.audio.count);
       const int written = esp_websocket_client_send_bin(
           client_, reinterpret_cast<const char*>(outbound.audio.bytes.data()), bytes,
@@ -352,58 +660,205 @@ void WebSocketVoiceBackend::handle_text(std::string_view json) {
     enqueue_event(BackendEventType::error, "INVALID CONTROL");
     return;
   }
-  const std::string_view type = json_string(root, "type");
-  if (type == "hello") {
-    const cJSON* params = cJSON_GetObjectItemCaseSensitive(root, "audio_params");
+  if (!cJSON_IsObject(root)) {
+    enqueue_protocol_error("invalid_envelope", "control envelope must be an object");
+    enqueue_event(BackendEventType::error, "INVALID CONTROL ENVELOPE");
+    cJSON_Delete(root);
+    return;
+  }
+  if (!has_only_fields(root, {"version", "type", "message_id",
+                              "correlation_id", "session_id", "turn_id",
+                              "generation_id", "idempotency_key",
+                              "occurred_at", "payload"})) {
+    enqueue_protocol_error("invalid_envelope", "control envelope has unknown fields");
+    enqueue_event(BackendEventType::error, "UNKNOWN CONTROL FIELD");
+    cJSON_Delete(root);
+    return;
+  }
+  const VersionStatus version_status = protocol_version_status(root);
+  if (version_status != VersionStatus::valid) {
+    const bool unsupported = version_status == VersionStatus::unsupported;
+    enqueue_protocol_error(unsupported ? "unsupported_protocol_version" : "invalid_envelope",
+                           unsupported ? "only protocol version 2 is supported"
+                                       : "version must be an integer");
+    enqueue_event(BackendEventType::error,
+                  unsupported ? "UNSUPPORTED PROTOCOL VERSION"
+                              : "INVALID CONTROL VERSION");
+    cJSON_Delete(root);
+    return;
+  }
+  const std::string_view message_id = json_string(root, "message_id");
+  const std::string_view type_name = json_string(root, "type");
+  const cJSON* payload = json_object(root, "payload");
+  protocol::ControlType type{};
+  if (message_id.empty() || type_name.empty() || payload == nullptr ||
+      message_id.size() >= Command{}.correlation_id.size()) {
+    enqueue_protocol_error("invalid_envelope", "message_id, type, and payload object are required");
+    enqueue_event(BackendEventType::error, "INVALID CONTROL ENVELOPE");
+    cJSON_Delete(root);
+    return;
+  }
+  if (!protocol::parse_type(type_name, type)) {
+    enqueue_protocol_error("unknown_message_type", "control type is not supported");
+    enqueue_event(BackendEventType::error, "UNKNOWN CONTROL TYPE");
+    cJSON_Delete(root);
+    return;
+  }
+  if (!payload_fields_valid(type, payload)) {
+    enqueue_protocol_error("invalid_envelope", "control payload has unknown fields");
+    enqueue_event(BackendEventType::error, "UNKNOWN CONTROL PAYLOAD FIELD");
+    cJSON_Delete(root);
+    return;
+  }
+  if (!payload_semantics_valid(type, payload)) {
+    enqueue_protocol_error("invalid_envelope", "control payload is malformed");
+    enqueue_event(BackendEventType::error, "INVALID CONTROL PAYLOAD");
+    cJSON_Delete(root);
+    return;
+  }
+
+  if (!protocol_connected_.load() &&
+      type != protocol::ControlType::session_ready &&
+      type != protocol::ControlType::protocol_error) {
+    enqueue_protocol_error("invalid_envelope", "session.ready is required first");
+    enqueue_event(BackendEventType::error, "CONTROL BEFORE SESSION READY");
+    cJSON_Delete(root);
+    return;
+  }
+
+  if (type != protocol::ControlType::session_ready && protocol_connected_.load()) {
+    const std::array<char, 64> expected_session = session_id_snapshot();
+    if (json_string(root, "session_id") != expected_session.data()) {
+      enqueue_protocol_error("invalid_envelope", "session_id does not match");
+      enqueue_event(BackendEventType::error, "INVALID CONTROL SESSION");
+      cJSON_Delete(root);
+      return;
+    }
+  }
+
+  const bool turn_scoped =
+      type == protocol::ControlType::turn_abort ||
+      type == protocol::ControlType::turn_state ||
+      type == protocol::ControlType::transcript_final ||
+      type == protocol::ControlType::tts_lifecycle ||
+      type == protocol::ControlType::agent_status ||
+      type == protocol::ControlType::ui_card ||
+      type == protocol::ControlType::ui_state;
+  const std::string_view incoming_turn_id = json_string(root, "turn_id");
+  if (turn_scoped && incoming_turn_id.empty()) {
+    enqueue_protocol_error("invalid_envelope", "turn-scoped control requires turn_id");
+    enqueue_event(BackendEventType::error, "MISSING CONTROL TURN");
+    cJSON_Delete(root);
+    return;
+  }
+  if (turn_scoped ||
+      (type == protocol::ControlType::protocol_error && !incoming_turn_id.empty())) {
+    if (!active_turn_matches(incoming_turn_id)) {
+      cJSON_Delete(root);
+      return; // A delayed terminal/control from an older turn is harmless.
+    }
+  }
+
+  if (type == protocol::ControlType::session_ready) {
+    if (protocol_connected_.load()) {
+      enqueue_protocol_error("invalid_envelope", "session.ready was already accepted");
+      enqueue_event(BackendEventType::error, "DUPLICATE SESSION READY");
+      cJSON_Delete(root);
+      return;
+    }
+    const std::string_view session_id = json_string(root, "session_id");
+    const std::string_view transport = json_string(payload, "transport");
+    const cJSON* params = cJSON_GetObjectItemCaseSensitive(payload, "audio_params");
+    const std::string_view format = params == nullptr ? std::string_view{} :
+        json_string(params, "format");
     const cJSON* rate = params == nullptr ? nullptr :
         cJSON_GetObjectItemCaseSensitive(params, "sample_rate");
+    const cJSON* channels = params == nullptr ? nullptr :
+        cJSON_GetObjectItemCaseSensitive(params, "channels");
     const cJSON* duration = params == nullptr ? nullptr :
         cJSON_GetObjectItemCaseSensitive(params, "frame_duration");
-    if (!cJSON_IsNumber(rate) || !cJSON_IsNumber(duration) ||
-        (rate->valueint != 16'000 && rate->valueint != 24'000) ||
-        duration->valueint != 60 || !configure_decoder(rate->valueint)) {
+    if (transport != "websocket" || format != "opus" ||
+        !has_only_fields(params, {"format", "sample_rate", "channels",
+                                  "frame_duration"}) ||
+        !json_integer_equals(rate, 24'000) ||
+        !json_integer_equals(channels, 1) ||
+        !json_integer_equals(duration, 60) || !configure_decoder(24'000)) {
+      enqueue_protocol_error("invalid_envelope", "unsupported session.ready transport or audio parameters");
       cJSON_Delete(root);
       enqueue_event(BackendEventType::error, "UNSUPPORTED OPUS HELLO");
       return;
     }
     playback_sample_rate_hz_.store(static_cast<uint32_t>(rate->valueint));
+    if (session_id.empty() || !set_session_id(session_id)) {
+      cJSON_Delete(root);
+      enqueue_protocol_error("invalid_envelope", "session.ready requires a bounded session_id");
+      enqueue_event(BackendEventType::error, "INVALID SESSION READY");
+      return;
+    }
     protocol_connected_.store(true);
     RuntimeConfigPatch config{};
-    if (parse_runtime_config(root, config)) enqueue_config_event(config);
+    if (parse_runtime_config(payload, config)) enqueue_config_event(config);
     enqueue_event(BackendEventType::connected);
-  } else if (type == "config") {
+  } else if (type == protocol::ControlType::config_update) {
     RuntimeConfigPatch config{};
-    if (!parse_runtime_config(root, config) || !enqueue_config_event(config))
+    if (!parse_runtime_config(payload, config) || !enqueue_config_event(config))
       enqueue_event(BackendEventType::error, "INVALID CONFIG");
-  } else if (type == "stt") {
-    enqueue_event(BackendEventType::transcript, json_string(root, "text"));
-  } else if (type == "tts") {
-    const std::string_view state = json_string(root, "state");
+  } else if (type == protocol::ControlType::transcript_final) {
+    enqueue_event(BackendEventType::transcript, json_string(payload, "text"));
+  } else if (type == protocol::ControlType::tts_lifecycle) {
+    const std::string_view state = json_string(payload, "state");
     if (state == "start") {
-      tts_active_.store(true);
-      enqueue_event(BackendEventType::tts_started);
+      if (activate_tts_for_matching_turn(incoming_turn_id))
+        enqueue_event(BackendEventType::tts_started);
     } else if (state == "sentence_start") {
-      enqueue_event(BackendEventType::tts_sentence, json_string(root, "text"));
+      enqueue_event(BackendEventType::tts_sentence, json_string(payload, "text"));
     } else if (state == "stop") {
-      tts_active_.store(false);
-      turn_active_.store(false);
-      enqueue_event(BackendEventType::tts_finished);
+      if (deactivate_matching_turn(incoming_turn_id))
+        enqueue_event(BackendEventType::tts_finished);
     }
-  } else if (type == "alarm") {
-    const std::string_view alarm_id = json_string(root, "id");
-    enqueue_event(BackendEventType::alarm, json_string(root, "message"));
+  } else if (type == protocol::ControlType::alarm_fired) {
+    const std::string_view alarm_id = json_string(payload, "alarm_id");
+    enqueue_event(BackendEventType::alarm, json_string(payload, "message"));
     if (!alarm_id.empty()) enqueue_command(CommandType::alarm_ack, alarm_id);
-  } else if (type == "schedule") {
-    enqueue_event(BackendEventType::schedule, json_string(root, "message"));
-  } else if (type == "ui") {
-    const cJSON* ui = cJSON_GetObjectItemCaseSensitive(root, "ui");
+  } else if (type == protocol::ControlType::schedule_updated) {
+    enqueue_event(BackendEventType::schedule, json_string(payload, "message"));
+  } else if (type == protocol::ControlType::ui_card) {
+    const cJSON* ui = cJSON_GetObjectItemCaseSensitive(payload, "ui");
     if (cJSON_IsObject(ui)) {
       enqueue_event(BackendEventType::ui_card, json_string(ui, "primary"));
     }
-  } else if (type == "error") {
-    turn_active_.store(false);
-    tts_active_.store(false);
-    enqueue_event(BackendEventType::error, json_string(root, "code"));
+  } else if (type == protocol::ControlType::ui_state) {
+    enqueue_event(BackendEventType::ui_card, json_string(payload, "emotion"));
+  } else if (type == protocol::ControlType::agent_status) {
+    enqueue_event(BackendEventType::ui_card, json_string(payload, "state"));
+  } else if (type == protocol::ControlType::turn_state) {
+    if (json_string(payload, "state") == "interrupted" &&
+        deactivate_matching_turn(incoming_turn_id)) {
+      reset_turn_queues();
+    }
+  } else if (type == protocol::ControlType::session_ping) {
+    enqueue_pong(message_id);
+  } else if (type == protocol::ControlType::session_pong) {
+    // No state transition is associated with a pong.
+  } else if (type == protocol::ControlType::turn_abort) {
+    if (deactivate_matching_turn(incoming_turn_id)) reset_turn_queues();
+  } else if (type == protocol::ControlType::protocol_error) {
+    bool applies = true;
+    if (!incoming_turn_id.empty()) {
+      applies = deactivate_matching_turn(incoming_turn_id);
+    } else {
+      taskENTER_CRITICAL(&turn_id_lock_);
+      turn_active_.store(false);
+      tts_active_.store(false);
+      taskEXIT_CRITICAL(&turn_id_lock_);
+    }
+    if (applies) {
+      reset_turn_queues();
+      enqueue_event(BackendEventType::error, json_string(payload, "code"));
+    }
+  } else {
+    enqueue_protocol_error("invalid_envelope", "control type is invalid in this direction");
+    enqueue_event(BackendEventType::error, "INVALID CONTROL DIRECTION");
   }
   cJSON_Delete(root);
 }
@@ -416,20 +871,41 @@ void WebSocketVoiceBackend::handle_binary(
   const size_t expected = static_cast<size_t>(data.payload_len);
   if (expected == 0 || expected > kMaximumOpusPacketBytes ||
       offset + length > expected) {
+    taskENTER_CRITICAL(&media_buffer_lock_);
+    binary_payload_ = {};
+    taskEXIT_CRITICAL(&media_buffer_lock_);
     enqueue_event(BackendEventType::error, "INVALID TTS FRAME");
     return;
   }
-  std::memcpy(binary_payload_.bytes.data() + offset, data.data_ptr, length);
-  if (offset + length == expected) {
-    binary_payload_.count = static_cast<uint16_t>(expected);
-    if (!decode_and_enqueue(binary_payload_))
-      enqueue_event(BackendEventType::error, "OPUS DECODE FAILED");
+  OpusPacket packet{};
+  bool packet_ready = false;
+  uint64_t generation = 0;
+  taskENTER_CRITICAL(&media_buffer_lock_);
+  if (offset == 0) binary_payload_ = {};
+  if (offset != binary_payload_.count) {
     binary_payload_ = {};
+    taskEXIT_CRITICAL(&media_buffer_lock_);
+    enqueue_event(BackendEventType::error, "OUT OF ORDER TTS FRAME");
+    return;
   }
+  std::memcpy(binary_payload_.bytes.data() + offset, data.data_ptr, length);
+  binary_payload_.count = static_cast<uint16_t>(offset + length);
+  if (offset + length == expected) {
+    packet = binary_payload_;
+    binary_payload_ = {};
+    packet_ready = true;
+    generation = media_generation_.load();
+  }
+  taskEXIT_CRITICAL(&media_buffer_lock_);
+  if (packet_ready && tts_active_.load() &&
+      generation == media_generation_.load() &&
+      !decode_and_enqueue(packet, generation))
+    enqueue_event(BackendEventType::error, "OPUS DECODE FAILED");
 }
 
 bool WebSocketVoiceBackend::encode_and_enqueue(
-    std::span<const int16_t, kOpusFrameSamples> pcm) {
+    std::span<const int16_t, kOpusFrameSamples> pcm,
+    uint64_t media_generation) {
   if (opus_encoder_ == nullptr) return false;
   OpusPacket packet{};
   esp_audio_enc_in_frame_t input{
@@ -446,7 +922,7 @@ bool WebSocketVoiceBackend::encode_and_enqueue(
     return false;
   }
   packet.count = static_cast<uint16_t>(output.encoded_bytes);
-  return enqueue_audio(packet);
+  return enqueue_audio(packet, media_generation);
 }
 
 bool WebSocketVoiceBackend::configure_decoder(uint32_t sample_rate_hz) {
@@ -467,7 +943,8 @@ bool WebSocketVoiceBackend::configure_decoder(uint32_t sample_rate_hz) {
          opus_decoder_ != nullptr;
 }
 
-bool WebSocketVoiceBackend::decode_and_enqueue(const OpusPacket& packet) {
+bool WebSocketVoiceBackend::decode_and_enqueue(const OpusPacket& packet,
+                                               uint64_t media_generation) {
   if (opus_decoder_ == nullptr || packet.count == 0) return false;
   std::array<int16_t, kMaximumDecodedSamples> decoded{};
   esp_audio_dec_in_raw_t input{
@@ -493,7 +970,14 @@ bool WebSocketVoiceBackend::decode_and_enqueue(const OpusPacket& packet) {
     frame.count = static_cast<uint16_t>(
         std::min(kAudioFrameSamples, decoded_samples - offset));
     std::copy_n(decoded.begin() + offset, frame.count, frame.samples.begin());
-    if (xQueueSend(playback_queue_, &frame, 0) != pdPASS) return false;
+    taskENTER_CRITICAL(&media_buffer_lock_);
+    const bool still_current = tts_active_.load() &&
+                               media_generation == media_generation_.load();
+    const bool queued = still_current &&
+                        xQueueSend(playback_queue_, &frame, 0) == pdPASS;
+    taskEXIT_CRITICAL(&media_buffer_lock_);
+    if (!still_current) return true;
+    if (!queued) return false;
     offset += frame.count;
   }
   return true;
@@ -510,10 +994,31 @@ bool WebSocketVoiceBackend::enqueue_command(CommandType type,
   return xQueueSend(outbound_queue_, &outbound, 0) == pdPASS;
 }
 
-bool WebSocketVoiceBackend::enqueue_audio(const OpusPacket& frame) {
+bool WebSocketVoiceBackend::enqueue_pong(std::string_view correlation_id) {
+  Outbound outbound{};
+  outbound.type = OutboundType::control;
+  outbound.command.type = CommandType::session_pong;
+  if (!copy_string(outbound.command.correlation_id, correlation_id)) return false;
+  return xQueueSend(outbound_queue_, &outbound, 0) == pdPASS;
+}
+
+bool WebSocketVoiceBackend::enqueue_protocol_error(std::string_view code,
+                                                    std::string_view message) {
+  Outbound outbound{};
+  outbound.type = OutboundType::control;
+  outbound.command.type = CommandType::protocol_error;
+  if (!copy_string(outbound.command.code, code) ||
+      !copy_string(outbound.command.message, message)) return false;
+  return xQueueSend(outbound_queue_, &outbound, 0) == pdPASS;
+}
+
+bool WebSocketVoiceBackend::enqueue_audio(const OpusPacket& frame,
+                                          uint64_t media_generation) {
+  if (!turn_active_.load() || media_generation != media_generation_.load()) return false;
   Outbound outbound{};
   outbound.type = OutboundType::audio;
   outbound.audio = frame;
+  outbound.media_generation = media_generation;
   return xQueueSend(outbound_queue_, &outbound, 0) == pdPASS;
 }
 
@@ -539,11 +1044,73 @@ bool WebSocketVoiceBackend::send_text(std::string_view text) {
   return written == static_cast<int>(text.size());
 }
 
+bool WebSocketVoiceBackend::set_session_id(std::string_view session_id) {
+  taskENTER_CRITICAL(&session_id_lock_);
+  const bool copied = copy_string(session_id_, session_id);
+  taskEXIT_CRITICAL(&session_id_lock_);
+  return copied;
+}
+
+void WebSocketVoiceBackend::clear_session_id() {
+  taskENTER_CRITICAL(&session_id_lock_);
+  session_id_.fill('\0');
+  taskEXIT_CRITICAL(&session_id_lock_);
+}
+
+std::array<char, 64> WebSocketVoiceBackend::session_id_snapshot() {
+  std::array<char, 64> session_id{};
+  taskENTER_CRITICAL(&session_id_lock_);
+  session_id = session_id_;
+  taskEXIT_CRITICAL(&session_id_lock_);
+  return session_id;
+}
+
+std::array<char, 40> WebSocketVoiceBackend::active_turn_id_snapshot() {
+  std::array<char, 40> turn_id{};
+  taskENTER_CRITICAL(&turn_id_lock_);
+  turn_id = active_turn_id_;
+  taskEXIT_CRITICAL(&turn_id_lock_);
+  return turn_id;
+}
+
+bool WebSocketVoiceBackend::active_turn_matches(std::string_view turn_id) {
+  taskENTER_CRITICAL(&turn_id_lock_);
+  const bool matches = (turn_active_.load() || tts_active_.load()) &&
+                       turn_id == active_turn_id_.data();
+  taskEXIT_CRITICAL(&turn_id_lock_);
+  return matches;
+}
+
+bool WebSocketVoiceBackend::activate_tts_for_matching_turn(
+    std::string_view turn_id) {
+  taskENTER_CRITICAL(&turn_id_lock_);
+  const bool matches = turn_active_.load() &&
+                       turn_id == active_turn_id_.data();
+  if (matches) tts_active_.store(true);
+  taskEXIT_CRITICAL(&turn_id_lock_);
+  return matches;
+}
+
+bool WebSocketVoiceBackend::deactivate_matching_turn(std::string_view turn_id) {
+  taskENTER_CRITICAL(&turn_id_lock_);
+  const bool matches = (turn_active_.load() || tts_active_.load()) &&
+                       turn_id == active_turn_id_.data();
+  if (matches) {
+    turn_active_.store(false);
+    tts_active_.store(false);
+  }
+  taskEXIT_CRITICAL(&turn_id_lock_);
+  return matches;
+}
+
 void WebSocketVoiceBackend::reset_turn_queues() {
+  taskENTER_CRITICAL(&media_buffer_lock_);
+  media_generation_.fetch_add(1);
   xQueueReset(playback_queue_);
   binary_payload_ = {};
   upload_payload_ = {};
   upload_payload_size_ = 0;
+  taskEXIT_CRITICAL(&media_buffer_lock_);
 }
 
 } // namespace companion

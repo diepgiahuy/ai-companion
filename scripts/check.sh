@@ -12,8 +12,8 @@ if command -v cmake >/dev/null 2>&1; then
 else
   CXX="${CXX:-g++}"
   FLAGS=(-std=c++20 -O2 -Wall -Wextra -Wpedantic -Werror -I"$ROOT/components/companion_app/include")
-  SOURCES=("$ROOT/components/companion_app/src/app.cpp" "$ROOT/components/companion_app/src/mock_backend.cpp")
-  "$CXX" "${FLAGS[@]}" "${SOURCES[@]}" "$ROOT/host/tests/tests.cpp" -o "$BUILD/companion_tests"
+  SOURCES=("$ROOT/components/companion_app/src/app.cpp" "$ROOT/components/companion_app/src/mock_backend.cpp" "$ROOT/components/companion_app/src/wire_protocol.cpp")
+	"$CXX" "${FLAGS[@]}" -DCOMPANION_SOURCE_DIR=\"$ROOT\" "${SOURCES[@]}" "$ROOT/host/tests/tests.cpp" -o "$BUILD/companion_tests"
   "$CXX" "${FLAGS[@]}" "${SOURCES[@]}" "$ROOT/host/src/sim.cpp" -o "$BUILD/companion_sim"
   "$CXX" -std=c++20 -O2 -Wall -Wextra -Wpedantic -Werror \
     "$ROOT/host/tests/opus_probe.cpp" -ldl -o "$BUILD/opus_probe"

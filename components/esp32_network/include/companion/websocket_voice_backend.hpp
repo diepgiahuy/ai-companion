@@ -1,6 +1,7 @@
 #pragma once
 
 #include "companion/app.hpp"
+#include "companion/wire_protocol.hpp"
 
 #include <array>
 #include <atomic>
@@ -52,11 +53,23 @@ private:
   static constexpr size_t kMaximumOpusPacketBytes = 1'275;
   static constexpr size_t kMaximumDecodedSamples = 1'440; // 60 ms at 24 kHz.
 
-  enum class CommandType : uint8_t { hello, listen_start, listen_stop, abort, alarm_ack, config_report };
+  enum class CommandType : uint8_t {
+    hello,
+    session_pong,
+    listen_start,
+    listen_stop,
+    abort,
+    alarm_ack,
+    config_report,
+    protocol_error,
+  };
   struct Command {
     CommandType type{};
     ListenMode mode{ListenMode::manual};
     std::array<char, 40> turn_id{};
+    std::array<char, 48> correlation_id{};
+    std::array<char, 40> code{};
+    std::array<char, 96> message{};
     RuntimeConfigPatch config{};
     bool applied{};
   };
@@ -73,6 +86,7 @@ private:
     OutboundType type{};
     Command command{};
     OpusPacket audio{};
+    uint64_t media_generation{};
   };
 
   esp_websocket_client_handle_t client_{};
@@ -82,19 +96,25 @@ private:
   std::atomic<bool> turn_active_{false};
   std::atomic<bool> tts_active_{false};
   std::atomic<uint32_t> playback_sample_rate_hz_{24'000};
+  std::atomic<uint64_t> media_generation_{};
   uint64_t turn_sequence_{};
+  std::atomic<uint64_t> message_sequence_{};
 
   std::array<char, 192> url_{};
   std::array<char, 256> headers_{};
   std::array<char, 40> device_id_{};
   std::array<char, 40> client_id_{};
+  std::array<char, 64> session_id_{};
+  portMUX_TYPE session_id_lock_ = portMUX_INITIALIZER_UNLOCKED;
   std::array<char, 40> active_turn_id_{};
-  std::array<char, 768> text_payload_{};
+  portMUX_TYPE turn_id_lock_ = portMUX_INITIALIZER_UNLOCKED;
+  std::array<char, 8'193> text_payload_{};
   size_t text_payload_size_{};
   int receive_opcode_{};
   OpusPacket binary_payload_{};
   std::array<int16_t, kOpusFrameSamples> upload_payload_{};
   size_t upload_payload_size_{};
+  portMUX_TYPE media_buffer_lock_ = portMUX_INITIALIZER_UNLOCKED;
   void* opus_encoder_{};
   void* opus_decoder_{};
   int encoder_output_bytes_{};
@@ -121,13 +141,23 @@ private:
   void handle_text(std::string_view json);
   void handle_binary(const esp_websocket_event_data_t& data);
   bool enqueue_command(CommandType type, std::string_view turn = {}, ListenMode mode = ListenMode::manual);
-  bool encode_and_enqueue(std::span<const int16_t, kOpusFrameSamples> pcm);
+  bool enqueue_pong(std::string_view correlation_id);
+  bool enqueue_protocol_error(std::string_view code, std::string_view message);
+  bool encode_and_enqueue(std::span<const int16_t, kOpusFrameSamples> pcm,
+                          uint64_t media_generation);
   bool configure_decoder(uint32_t sample_rate_hz);
-  bool decode_and_enqueue(const OpusPacket& packet);
-  bool enqueue_audio(const OpusPacket& frame);
+  bool decode_and_enqueue(const OpusPacket& packet, uint64_t media_generation);
+  bool enqueue_audio(const OpusPacket& frame, uint64_t media_generation);
   bool enqueue_event(BackendEventType type, std::string_view text = {});
   bool enqueue_config_event(const RuntimeConfigPatch& config);
   bool send_text(std::string_view text);
+  bool set_session_id(std::string_view session_id);
+  void clear_session_id();
+  std::array<char, 64> session_id_snapshot();
+  std::array<char, 40> active_turn_id_snapshot();
+  bool active_turn_matches(std::string_view turn_id);
+  bool activate_tts_for_matching_turn(std::string_view turn_id);
+  bool deactivate_matching_turn(std::string_view turn_id);
   void reset_turn_queues();
 };
 

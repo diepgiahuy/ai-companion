@@ -47,16 +47,12 @@ func (s *session) processStreamingReply(current *turn, agentCtx context.Context,
 
 		err := agent.Stream(agentCtx, current.id, transcript, func(event pipeline.AgentStreamEvent) error {
 			if event.UI != nil {
-				if err := s.sendTurnJSON(current.ctx, current, protocol.Message{
-					Type: "ui", SessionID: s.id, TurnID: current.id, UI: event.UI,
-				}); err != nil {
+				if err := s.sendTurnJSON(current.ctx, current, protocol.UICardType, protocol.UICardPayload{UI: event.UI}); err != nil {
 					return err
 				}
 			}
 			if strings.TrimSpace(event.Status) != "" {
-				if err := s.sendTurnJSON(current.ctx, current, protocol.Message{
-					Type: "agent_status", SessionID: s.id, TurnID: current.id, State: event.Status,
-				}); err != nil {
+				if err := s.sendTurnJSON(current.ctx, current, protocol.AgentStatusType, protocol.AgentStatusPayload{State: event.Status}); err != nil {
 					return err
 				}
 				if event.Status == "tool_running" && strings.TrimSpace(event.ToolName) != "" {
@@ -115,18 +111,14 @@ func (s *session) processStreamingReply(current *turn, agentCtx context.Context,
 					_ = waitAgentDone(agentDone)
 					return metrics, err
 				}
-				if err := s.sendTurnMediaJSON(current.ctx, current, protocol.Message{
-					Type: "tts", State: "start", SessionID: s.id, TurnID: current.id,
-				}); err != nil {
+				if err := s.sendTurnMediaJSON(current.ctx, current, protocol.TTSLifecycleType, protocol.TTSLifecyclePayload{State: "start"}); err != nil {
 					current.cancel()
 					_ = waitAgentDone(agentDone)
 					return metrics, err
 				}
 			}
 			segmentsSeen++
-			if err := s.sendTurnMediaJSON(current.ctx, current, protocol.Message{
-				Type: "tts", State: "sentence_start", SessionID: s.id, TurnID: current.id, Text: segment,
-			}); err != nil {
+			if err := s.sendTurnMediaJSON(current.ctx, current, protocol.TTSLifecycleType, protocol.TTSLifecyclePayload{State: "sentence_start", Text: segment}); err != nil {
 				current.cancel()
 				_ = waitAgentDone(agentDone)
 				return metrics, err
@@ -142,9 +134,7 @@ func (s *session) processStreamingReply(current *turn, agentCtx context.Context,
 				_ = waitAgentDone(agentDone)
 				return metrics, err
 			}
-			if err := s.sendTurnMediaJSON(current.ctx, current, protocol.Message{
-				Type: "tts", State: "sentence_end", SessionID: s.id, TurnID: current.id, Text: segment,
-			}); err != nil {
+			if err := s.sendTurnMediaJSON(current.ctx, current, protocol.TTSLifecycleType, protocol.TTSLifecyclePayload{State: "sentence_end", Text: segment}); err != nil {
 				current.cancel()
 				_ = waitAgentDone(agentDone)
 				return metrics, err
@@ -167,9 +157,7 @@ streamComplete:
 	if !s.isCurrent(current) {
 		return metrics, context.Canceled
 	}
-	if err := s.sendTurnMediaJSON(current.ctx, current, protocol.Message{
-		Type: "tts", State: "stop", SessionID: s.id, TurnID: current.id,
-	}); err != nil {
+	if err := s.sendTurnMediaJSON(current.ctx, current, protocol.TTSLifecycleType, protocol.TTSLifecyclePayload{State: "stop"}); err != nil {
 		return metrics, err
 	}
 	return metrics, nil

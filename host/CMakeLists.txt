@@ -4,6 +4,7 @@ enable_testing()
 
 add_library(companion_app
   ../components/companion_app/src/app.cpp
+  ../components/companion_app/src/wire_protocol.cpp
   ../components/companion_app/src/mock_backend.cpp
 )
 target_include_directories(companion_app PUBLIC ../components/companion_app/include)
@@ -17,6 +18,7 @@ target_compile_options(companion_sim PRIVATE -Wall -Wextra -Wpedantic -Werror)
 add_executable(companion_tests tests/tests.cpp)
 target_link_libraries(companion_tests PRIVATE companion_app)
 target_compile_options(companion_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+target_compile_definitions(companion_tests PRIVATE COMPANION_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
 add_test(NAME companion_tests COMMAND companion_tests)
 
