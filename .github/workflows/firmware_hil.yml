@@ -39,22 +39,23 @@ jobs:
         run: |
           {
             echo "## Firmware HIL"
-            echo ""
-            echo "- Run: `${{ github.run_id }}`"
-            echo "- Commit: `$(git rev-parse HEAD)`"
-            echo "- Ref: `${{ github.ref }}`"
-            echo "- Target: `esp32s3`"
-            echo "- Port: `$HIL_PORT`"
+            echo
+            echo "- Run: ${{ github.run_id }}"
+            echo "- Commit: $(git rev-parse HEAD)"
+            echo "- Ref: ${{ github.ref }}"
+            echo "- Target: esp32s3"
+            echo "- Port: $HIL_PORT"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Validate runner prerequisites
         run: |
+          mkdir -p artifacts
           test -n "$HIL_PORT"
           test -e "$HIL_PORT"
           test -f "$HOME/esp/esp-idf/export.sh"
           source "$HOME/esp/esp-idf/export.sh"
-          idf.py --version | tee -a artifacts-idf-version.txt
-          echo "- ESP-IDF: `$(idf.py --version)`" >> "$GITHUB_STEP_SUMMARY"
+          idf.py --version | tee artifacts/idf-version.txt
+          echo "- ESP-IDF: $(idf.py --version)" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Install pinned HIL dependencies
         run: |
@@ -69,13 +70,19 @@ jobs:
       - name: Run physical boot smoke test
         run: |
           source "$HOME/esp/esp-idf/export.sh"
-          mkdir -p artifacts
-          mv artifacts-idf-version.txt artifacts/idf-version.txt
-          ERASE_FLAG=""
+          PYTEST_ARGS=(
+            tests/firmware
+            -s
+            --embedded-services esp,idf
+            --app-path .
+            --target esp32s3
+            --port "$HIL_PORT"
+            --junitxml=artifacts/hil-junit.xml
+          )
           if [ "$HIL_ERASE_ALL" = "true" ]; then
-            ERASE_FLAG="--erase-all"
+            PYTEST_ARGS+=(--erase-all)
           fi
-          python -m pytest tests/firmware             -s             --embedded-services esp,idf             --app-path .             --target esp32s3             --port "$HIL_PORT"             $ERASE_FLAG             --junitxml=artifacts/hil-junit.xml
+          python -m pytest "${PYTEST_ARGS[@]}"
 
       - name: Upload HIL report
         if: always()
