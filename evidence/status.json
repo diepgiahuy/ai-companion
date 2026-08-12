@@ -1,0 +1,112 @@
+{
+  "schema_version": 1,
+  "updated_at": "2026-08-12T23:27:00+07:00",
+  "rules": {
+    "allowed_statuses": ["passed", "partial", "unproven", "blocked", "failed"],
+    "production_pass_requires_non_mock_evidence": true,
+    "mock_evidence_can_promote": false
+  },
+  "gates": {
+    "go_1_26_5_race_e2e": {
+      "status": "passed",
+      "evidence": [
+        {
+          "kind": "github_actions",
+          "run_id": 31615741250,
+          "commit": "a99645a01ca1d6618c3bdff7fa16a0487c33f5d8",
+          "workflow": "production-e2e"
+        }
+      ]
+    },
+    "module_reproducibility": {
+      "status": "passed",
+      "evidence": [
+        {
+          "kind": "manual_real_environment",
+          "environment": "Docker Go 1.26.5 on Apple Silicon",
+          "assertion": "go mod tidy produced zero diff after dependency lock; go mod verify passed"
+        }
+      ]
+    },
+    "dependency_vulnerability_scan": {
+      "status": "passed",
+      "evidence": [
+        {
+          "kind": "manual_real_environment",
+          "tool": "govulncheck v1.6.0",
+          "assertion": "0 called vulnerabilities"
+        }
+      ]
+    },
+    "mic_signal_hardware": {
+      "status": "passed",
+      "evidence": [
+        {
+          "kind": "hardware_manual",
+          "assertion": "INMP441 peak/RMS respond dynamically to sound on ESP32-S3"
+        }
+      ]
+    },
+    "real_voice_e2e": {
+      "status": "unproven",
+      "evidence": [],
+      "reason": "Backend production composition still uses MockASR and MockTTS; mock/fake-model paths do not count as production evidence."
+    },
+    "real_asr_quality": {
+      "status": "unproven",
+      "evidence": []
+    },
+    "real_tts_quality": {
+      "status": "unproven",
+      "evidence": []
+    },
+    "real_llm_tool_quality": {
+      "status": "unproven",
+      "evidence": [],
+      "reason": "Deterministic routing/fake-model tests exist but real-model task success has not been measured."
+    },
+    "prompt_regression_eval": {
+      "status": "unproven",
+      "evidence": []
+    },
+    "destructive_tool_confirmation": {
+      "status": "unproven",
+      "evidence": [],
+      "reason": "Current destructive marker is keyword/sub-string based and is not tool+argument scoped confirmation."
+    },
+    "idempotency_payload_conflict": {
+      "status": "unproven",
+      "evidence": [],
+      "reason": "Current INSERT OR IGNORE semantics do not prove same-key/different-payload conflict detection."
+    },
+    "postgres_migrations_jobs": {
+      "status": "unproven",
+      "evidence": []
+    },
+    "webrtc_real_network": {
+      "status": "unproven",
+      "evidence": [],
+      "required_metrics": ["p50_first_audio_ms", "p95_first_audio_ms", "packet_loss_recovery", "barge_in_ms"]
+    },
+    "mcp_external_integration": {
+      "status": "unproven",
+      "evidence": []
+    },
+    "protocol_v2_negotiation": {
+      "status": "unproven",
+      "evidence": []
+    },
+    "security_default_deny": {
+      "status": "unproven",
+      "evidence": []
+    },
+    "privacy_explicit_consent": {
+      "status": "unproven",
+      "evidence": []
+    },
+    "real_device_24h_soak": {
+      "status": "unproven",
+      "evidence": []
+    }
+  }
+}
