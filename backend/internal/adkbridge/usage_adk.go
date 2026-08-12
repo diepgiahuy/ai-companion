@@ -13,16 +13,15 @@ import (
 	usagepkg "companion-server/internal/usage"
 )
 
-const adkPromptVersion = "adk-cp-sw2-v1"
-
 // meteredLLM keeps quota and usage accounting outside the ADK framework. This
 // preserves Companion's existing cost-control boundary while allowing the model
 // implementation to be replaced independently.
 type meteredLLM struct {
-	inner     model.LLM
-	modelName string
-	guard     UsageGuard
-	meter     usagepkg.Meter
+	inner         model.LLM
+	modelName     string
+	promptVersion string
+	guard         UsageGuard
+	meter         usagepkg.Meter
 }
 
 func (m *meteredLLM) Name() string { return m.inner.Name() }
@@ -52,7 +51,7 @@ func (m *meteredLLM) GenerateContent(ctx context.Context, req *model.LLMRequest,
 				usage = &usagepkg.Record{
 					Provider:         "adk-openai-compatible",
 					Model:            modelName,
-					PromptVersion:    adkPromptVersion,
+					PromptVersion:    m.promptVersion,
 					PromptTokens:     int(u.PromptTokenCount),
 					CompletionTokens: int(u.CandidatesTokenCount),
 					TotalTokens:      int(u.TotalTokenCount),
