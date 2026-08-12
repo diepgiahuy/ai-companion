@@ -7,7 +7,7 @@ This document is the architecture contract for evolving the current single-node 
 ```text
 ESP32 fleet
    |
-   +---- DATA PLANE -------- WebSocket gateway -> ASR -> Context Compiler -> LLM -> ToolRegistry -> TTS/UI
+   +---- DATA PLANE -------- WebSocket/WebRTC Opus gateway -> ASR -> Semantic Router -> LLM -> MCP Bridge -> TTS/UI
    |
    +---- CONTROL PLANE ----- device identity/twin, config, feature catalog/flags, entitlements, privacy, OTA
                                   |
@@ -39,7 +39,10 @@ The control plane includes a versioned Feature Catalog plus flags:
 draft -> internal -> beta -> released -> deprecated -> removed
 ```
 
-A FeatureModule manifest describes tools, resources, UI cards, config keys, locales, device capabilities, minimum protocol and implementation adapter. It is metadata only: manifests never load arbitrary executable code into the Go process. Native capability code is deployed normally; optional external capability execution must cross an allow-listed adapter/MCP boundary with policy checks.
+A FeatureModule manifest describes tools, resources, UI cards, config keys, locales, device capabilities, minimum protocol and implementation adapter. It is metadata only: manifests never load arbitrary executable code into the Go process. Native capability code is deployed normally; optional external capability execution must cross the **Official MCP Go SDK Bridge** boundary with strict SSRF-safe endpoint defaults.
+
+### 4.1. Evidence-Based Truth Gate
+Code deployment is strictly governed by `evidence/status.json`. The architecture intentionally separates **implemented code** from **production-proven evidence**. Mock/fake evidence cannot promote code to a `PASS` state. It remains `UNPROVEN` until real-provider/network/HIL evidence exists.
 
 ## 5. LLM runtime
 
@@ -47,7 +50,7 @@ The LLM is a reasoning/composition component, never the authoritative database.
 
 ```text
 ASR
- -> deterministic ContextRouter
+ -> deterministic ContextRouter / Semantic Router
  -> authoritative domain resources
     + current temporal memory
     + hybrid semantic/lexical memory
@@ -55,13 +58,16 @@ ASR
  -> selected model
  -> native structured/parallel tool calls
  -> host JSON-schema validation + policy
- -> ToolRegistry
+ -> MCP Bridge / ToolRegistry
  -> authoritative mutation
  -> early UI
  -> final verbalization/TTS
 ```
 
 Fast/reasoning model selection is replaceable. Every model request can record model, prompt version and token usage; an optional monthly quota guard blocks runaway spend. Real-model promotion must pass the versioned eval corpus plus provider-side quality/latency/cost tests.
+
+### 5.1. HITL Governance Gates & Destructive Auth
+While the LLM is restricted by JSON-schema validation, **High-Risk Mutations** (e.g., identity rotation, payments, memory purges) must implement a strict Governance Gate. Destructive authorization is based on **owner + exact tool + canonical args hash + expiry confirmation scope**, not just utterance substrings. The LLM may draft the execution plan, but the ToolRegistry MUST pause execution and await explicit human cryptographic approval before committing the mutation.
 
 ## 6. Memory
 
@@ -90,6 +96,12 @@ Firmware metadata is separate from firmware bytes. The registry enforces board/c
 
 On-device ESP-IDF binary download, image verification, pending-verify self-test, rollback, Secure Boot v2, flash encryption/eFuse security version and physical HIL are separate release gates.
 
+### 9.1. Tiered CI/CD Release Pipeline
+To safely deploy AI-assisted firmware, the OTA pipeline strictly follows a tiered validation model:
+*   **Tier 1 (Virtual):** Fast feedback via static analysis, MISRA compliance, and QEMU/Wokwi emulation.
+*   **Tier 2 (Physical):** Hardware-in-the-Loop (HIL) via Mac M1 self-hosted runners using `pytest-embedded`.
+Firmware NEVER reaches the OTA registry without passing both tiers.
+
 ## 10. Voice and language
 
 Locale uses BCP-47-style tags (`vi-VN`, `en-US`), timezone is IANA (`Asia/Ho_Chi_Minh`), and users select a stable logical `voice_key`, not a provider-specific voice ID. Locale/timezone/voice are carried in `TurnContext`, so ASR/LLM/TTS adapters may resolve them per turn. The Qwen system instruction responds in the preferred locale rather than being permanently Vietnamese.
@@ -106,18 +118,26 @@ Speaker identification remains opt-in/future work and must never silently identi
 
 The server supports per-device credentials with only SHA-256 token hashes stored, constant-time comparison, revoke/rotate enrollment and credential-backed ownership. Enrollment also binds trusted `user_id`, `tenant_id` and `plan` claims; database-authenticated sessions use those claims for config/feature resolution instead of trusting transport headers. Legacy global-token/header identity remains for bench compatibility only. Commercial hardware must move credential material into ESP32 secure provisioning/storage and enable TLS verification, Secure Boot and flash encryption.
 
-## 13. POC -> production replacements
+### 12.1. AI Security Debt & Pipeline Hardening
+Due to the speed of AI-generated code, the CI/CD pipeline acts as the primary security perimeter:
+*   **Automated Security Gates:** All AI-generated PRs are automatically scanned for Common Weakness Enumerations (CWEs) (e.g., injection flaws) and Supply Chain attacks (hallucinated dependencies).
+*   **Code Lineage:** AI-authored code is tracked distinctly in version control, triggering stricter automated RBAC and signing policies before merging into `main`.
 
-| POC | Production replacement | Core rewrite? |
-|---|---|---:|
-| SQLite | Postgres | No — repository adapters |
-| in-process vector scan | pgvector/Qdrant | No — VectorStore |
-| memory conversation cache | Redis | No — Cache |
-| local flags | OpenFeature provider/flagd/Unleash/LaunchDarkly | No — FeatureProvider |
-| single Go process | gateway/agent/worker/control-plane processes | No — package ports become RPC boundaries |
-| local files | object storage | No — recording/firmware storage adapter |
-| JSON logs | OpenTelemetry exporter | No — telemetry boundary |
+## 13. Commercial Production (CP) Milestone Roadmap
+
+The evolution from POC to a commercial production system strictly follows this sequential milestone roadmap. Work must not skip ahead of unproven dependencies.
+
+1. **CP-AUDIT0 (The Foundation):** Evidence model + README truth + production profile (`evidence/status.json`).
+2. **CP-VOICE1 (Speech Layer):** Real ASR/TTS provider boundaries.
+3. **CP-AI1 (Brain Layer):** Prompt bundles + real LLM eval.
+4. **CP-SAFE1 (Governance):** Confirmation tokens + hard idempotency (Destructive Auth).
+5. **CP-DATA1 (Persistence):** Postgres + Atlas + Ent + River (replaces SQLite).
+6. **CP-RT1 (Concurrency):** Supervised concurrency + protocol v2.
+7. **CP-MCP1 (Integration):** Device/external MCP.
+8. **CP-OBS1 (Telemetry):** OpenTelemetry + SLO/fuzz/load/fault injection.
+9. **CP-FW (Hardware):** AEC/VAD/wake word + secure device.
+10. **CP-RC (Release Candidate):** Real-device full system + soak testing.
 
 ## 14. Explicit non-goals for the current verified POC
 
-Do not mark these production-ready until their real gate passes: ESP-SR AEC/WakeNet, full hands-free barge-in, physical I2S/OLED validation, firmware OTA downloader/rollback HIL, Secure Boot/eFuse provisioning, production streaming ASR/TTS, production vector service, external MCP transport, speaker identification, billing/payment integration, and commercial data-provider contracts.
+Do not mark these production-ready until their real CP milestone passes. The architecture separates implemented code from production-proven evidence. Fake/mock evidence cannot promote a feature to `PASS`.
