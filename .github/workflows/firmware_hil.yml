@@ -1,54 +1,72 @@
-name: Firmware HIL Testing (Mac M1)
+name: Firmware HIL Testing (ESP32-S3)
 
 on:
   pull_request:
     branches: [main]
     paths:
-      - 'firmware/**'
+      - 'main/**'
+      - 'components/**'
+      - 'sdkconfig.defaults'
+      - 'partitions.csv'
       - 'tests/firmware/**'
+      - '.github/workflows/firmware_hil.yml'
   workflow_dispatch:
 
 concurrency:
   group: firmware-hil-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   hil_test:
-    name: Hardware-in-the-Loop Test
-    # This targets your Mac M1 runner. Ensure you run `./config.sh` and `./run.sh` 
-    # for the GitHub Actions runner on your Mac and add these labels.
-    runs-on: [self-hosted, macOS, ARM64] 
-    
+    name: Physical ESP32-S3 boot/init HIL
+    # PR HIL is opt-in until a dedicated physical runner is provisioned.
+    # Set repository variable HIL_ENABLED=true only when the runner below is online.
+    if: github.event_name == 'workflow_dispatch' || vars.HIL_ENABLED == 'true'
+    runs-on: [self-hosted, macOS, ARM64, esp32s3-hil]
+    timeout-minutes: 30
+
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.11'
+          cache: pip
+          cache-dependency-path: tests/firmware/requirements.txt
 
-      - name: Install ESP-IDF (or activate if already installed on host)
+      - name: Verify physical runner and ESP-IDF toolchain
+        shell: bash
         run: |
-          # Note: In a real self-hosted runner, it's best to have ESP-IDF 
-          # permanently installed and exported in the runner's environment.
-          # Here we just source it assuming it's in the default location.
-          source ~/esp/esp-idf/export.sh || echo "Please install ESP-IDF on the Mac M1 Runner"
+          set -euo pipefail
+          test -f "$HOME/esp/esp-idf/export.sh"
+          source "$HOME/esp/esp-idf/export.sh"
+          idf.py --version
+          python --version
+          system_profiler SPUSBDataType | grep -E 'ESP32|JTAG|USB|UART|CP210|CH34' >/dev/null
 
-      - name: Install pytest-embedded
-        run: |
-          pip install pytest-embedded pytest-embedded-idf pytest-embedded-serial
+      - name: Install pinned HIL test dependencies
+        run: python -m pip install -r tests/firmware/requirements.txt
 
-      - name: Build Firmware
-        working-directory: ./firmware
+      - name: Build ESP32-S3 firmware from the real project root
+        shell: bash
         run: |
-          source ~/esp/esp-idf/export.sh || echo "Skip if not found"
-          idf.py build || echo "Mock build for demonstration"
+          set -euo pipefail
+          source "$HOME/esp/esp-idf/export.sh"
+          idf.py set-target esp32s3
+          idf.py build
 
-      - name: Run Pytest-Embedded HIL Tests
-        working-directory: ./firmware
+      - name: Flash board and run physical pytest-embedded HIL
+        shell: bash
         run: |
-          source ~/esp/esp-idf/export.sh || echo "Skip if not found"
-          # This command automatically flashes the binary built in the previous step
-          # and runs the Python test scripts against the connected USB serial port.
-          pytest ../tests/firmware/ --target esp32s3 || echo "Mock test for demonstration"
+          set -euo pipefail
+          source "$HOME/esp/esp-idf/export.sh"
+          pytest -s tests/firmware \
+            --embedded-services esp,idf \
+            --app-path . \
+            --build-dir build \
+            --target esp32s3
