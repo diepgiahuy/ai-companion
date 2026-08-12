@@ -1,0 +1,16 @@
+{
+  "id": "companion",
+  "version": "4.0.0",
+  "base": ["base.md", "safety.md", "tool-policy.md", "persona.md"],
+  "packs": {
+    "expense": "domains/finance.md",
+    "budget": "domains/finance.md",
+    "schedule": "domains/schedule.md",
+    "note": "domains/personal-data.md",
+    "journal": "domains/personal-data.md",
+    "memory": "domains/memory.md",
+    "market": "domains/external-data.md",
+    "voice": "domains/voice.md",
+    "context": "domains/context.md"
+  }
+}
