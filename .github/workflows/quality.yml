@@ -35,8 +35,8 @@ jobs:
         run: docker build --pull -f Dockerfile.test -t companion-quality .
       - name: Module reproducibility and verification
         run: |
-          docker run --rm companion-quality bash -lc '
-            set -euo pipefail
+          docker run --rm companion-quality sh -c '
+            set -eu
             cd /src/backend
             cp go.mod /tmp/go.mod.before
             cp go.sum /tmp/go.sum.before
@@ -45,22 +45,22 @@ jobs:
             cmp go.sum /tmp/go.sum.before
             go mod verify
           '
-      - name: Vet and race tests
+      - name: Vet and race all production adapter tags
         run: |
-          docker run --rm companion-quality bash -lc '
-            set -euo pipefail
+          docker run --rm companion-quality sh -c '
+            set -eu
             cd /src/backend
-            go vet -tags "adk,nolibopusfile" ./...
-            go test -tags "adk,nolibopusfile" -race -count=1 ./...
+            go vet -tags "adk,mcp,webrtc,nolibopusfile" ./...
+            go test -tags "adk,mcp,webrtc,nolibopusfile" -race -count=1 ./...
           '
       - name: Go vulnerability reachability scan
         run: |
-          docker run --rm companion-quality bash -lc '
-            set -euo pipefail
+          docker run --rm companion-quality sh -c '
+            set -eu
             export GOBIN=/tmp/go-tools
             go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
             cd /src/backend
-            /tmp/go-tools/govulncheck -tags=adk,nolibopusfile -test ./...
+            /tmp/go-tools/govulncheck -tags=adk,mcp,webrtc,nolibopusfile -test ./...
           '
       - name: Diff hygiene
         run: git diff --check
