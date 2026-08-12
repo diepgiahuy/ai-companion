@@ -1,0 +1,231 @@
+package resources
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
+
+	"companion-server/internal/capability"
+	conversationctx "companion-server/internal/conversation"
+	"companion-server/internal/domain"
+	"companion-server/internal/pipeline"
+)
+
+type Native struct {
+	store        domain.ReadRepositories
+	conversation *conversationctx.Service
+	location     *time.Location
+}
+
+func NewNative(data domain.ReadRepositories, conversation *conversationctx.Service, location *time.Location) *Native {
+	if location == nil {
+		location = time.UTC
+	}
+	return &Native{store: data, conversation: conversation, location: location}
+}
+
+func (n *Native) Schemes() []string {
+	return []string{"expenses", "budget", "reminders", "timers", "notes", "journal", "conversation"}
+}
+
+func (n *Native) List(context.Context) ([]capability.ResourceDescriptor, error) {
+	return []capability.ResourceDescriptor{
+		{URI: "expenses://today", Name: "Today's expenses", Description: "Expense total and items for the current local day"},
+		{URI: "expenses://week/current", Name: "Current week expenses", Description: "Expense total and items for the current local week"},
+		{URI: "expenses://month/current", Name: "Current month expenses", Description: "Expense total and items for the current local month"},
+		{URI: "budget://daily", Name: "Daily budget", Description: "Current daily spending limit"},
+		{URI: "budget://weekly", Name: "Weekly budget", Description: "Current weekly spending limit"},
+		{URI: "budget://monthly", Name: "Monthly budget", Description: "Current monthly spending limit"},
+		{URI: "reminders://today", Name: "Today's reminders", Description: "Pending reminders due today"},
+		{URI: "reminders://upcoming", Name: "Upcoming reminders", Description: "Pending scheduled reminders"},
+		{URI: "timers://active", Name: "Active timers", Description: "Pending timers with remaining seconds"},
+		{URI: "notes://recent", Name: "Recent notes", Description: "Recently saved notes"},
+		{URI: "journal://today", Name: "Today's journal", Description: "Journal entries from the current local day"},
+		{URI: "conversation://recent", Name: "Recent conversation", Description: "Bounded hot/durable working conversation context"},
+	}, nil
+}
+
+func (n *Native) Read(ctx context.Context, uri *url.URL) (capability.Resource, error) {
+	if n.store == nil {
+		return capability.Resource{}, fmt.Errorf("native resource store is unavailable")
+	}
+	userID, deviceID, threadID := "", "", "default"
+	if turn, ok := pipeline.CurrentTurn(ctx); ok {
+		userID, deviceID, threadID = turn.UserID, turn.DeviceID, turn.ThreadID
+		if strings.TrimSpace(userID) == "" {
+			userID = deviceID
+		}
+		if strings.TrimSpace(threadID) == "" {
+			threadID = "default"
+		}
+	}
+	now := time.Now().In(n.location)
+	limit := queryLimit(uri, 10)
+	var value any
+	var err error
+
+	switch strings.ToLower(uri.Scheme) {
+	case "expenses":
+		var from, to time.Time
+		switch resourceKey(uri) {
+		case "today":
+			from, to = dayRange(now)
+		case "week/current":
+			from, to = weekRange(now)
+		case "month/current":
+			from, to = monthRange(now)
+		default:
+			return capability.Resource{}, fmt.Errorf("unsupported expense resource %q", uri.String())
+		}
+		total, totalErr := n.store.ExpenseTotal(ctx, userID, from, to)
+		if totalErr != nil {
+			return capability.Resource{}, totalErr
+		}
+		items, listErr := n.store.ListExpenses(ctx, userID, from, to, "", limit)
+		if listErr != nil {
+			return capability.Resource{}, listErr
+		}
+		value = map[string]any{"from": from, "to": to, "total_vnd": total, "expenses": items}
+
+	case "budget":
+		period := resourceKey(uri)
+		if period != "daily" && period != "weekly" && period != "monthly" {
+			return capability.Resource{}, fmt.Errorf("unsupported budget resource %q", uri.String())
+		}
+		amount, found, lookupErr := n.store.BudgetLimit(ctx, userID, period)
+		if lookupErr != nil {
+			return capability.Resource{}, lookupErr
+		}
+		value = map[string]any{"period": period, "set": found, "limit_vnd": amount}
+
+	case "reminders":
+		items, listErr := n.store.ListReminders(ctx, userID, deviceID, "active", 100)
+		if listErr != nil {
+			return capability.Resource{}, listErr
+		}
+		filtered := make([]domain.ScheduledItem, 0, len(items))
+		switch resourceKey(uri) {
+		case "today":
+			from, to := dayRange(now)
+			for _, item := range items {
+				if item.Kind != "timer" && !item.FireAt.Before(from) && item.FireAt.Before(to) {
+					filtered = append(filtered, item)
+				}
+			}
+		case "upcoming":
+			for _, item := range items {
+				if item.Kind != "timer" && item.FireAt.After(now) {
+					filtered = append(filtered, item)
+				}
+			}
+		default:
+			return capability.Resource{}, fmt.Errorf("unsupported reminder resource %q", uri.String())
+		}
+		value = map[string]any{"reminders": trimReminders(filtered, limit)}
+
+	case "timers":
+		if resourceKey(uri) != "active" {
+			return capability.Resource{}, fmt.Errorf("unsupported timer resource %q", uri.String())
+		}
+		items, listErr := n.store.ListTimers(ctx, userID, deviceID, "active", limit)
+		if listErr != nil {
+			return capability.Resource{}, listErr
+		}
+		type activeTimer struct {
+			domain.ScheduledItem
+			RemainingSeconds int64 `json:"remaining_seconds"`
+		}
+		active := make([]activeTimer, 0, len(items))
+		for _, item := range items {
+			remaining := item.PausedRemainingSeconds
+			if item.Status != "paused" {
+				remaining = int64(time.Until(item.FireAt).Seconds())
+			}
+			if remaining < 0 {
+				remaining = 0
+			}
+			active = append(active, activeTimer{ScheduledItem: item, RemainingSeconds: remaining})
+		}
+		value = map[string]any{"timers": active}
+
+	case "notes":
+		if resourceKey(uri) != "recent" {
+			return capability.Resource{}, fmt.Errorf("unsupported note resource %q", uri.String())
+		}
+		value, err = n.store.ListNotes(ctx, userID, limit)
+
+	case "journal":
+		if resourceKey(uri) != "today" {
+			return capability.Resource{}, fmt.Errorf("unsupported journal resource %q", uri.String())
+		}
+		from, to := dayRange(now)
+		value, err = n.store.ListJournal(ctx, userID, from, to, limit)
+
+	case "conversation":
+		if resourceKey(uri) != "recent" {
+			return capability.Resource{}, fmt.Errorf("unsupported conversation resource %q", uri.String())
+		}
+		if n.conversation == nil {
+			return capability.Resource{}, fmt.Errorf("conversation resource provider is unavailable")
+		}
+		value, err = n.conversation.Recent(ctx, conversationctx.Scope{UserID: userID, ThreadID: threadID}, limit)
+
+	default:
+		return capability.Resource{}, fmt.Errorf("unsupported resource scheme %q", uri.Scheme)
+	}
+	if err != nil {
+		return capability.Resource{}, err
+	}
+	payload, err := json.Marshal(value)
+	if err != nil {
+		return capability.Resource{}, err
+	}
+	return capability.Resource{URI: uri.String(), MIMEType: "application/json", Text: string(payload)}, nil
+}
+
+func resourceKey(uri *url.URL) string {
+	return strings.Trim(strings.TrimSpace(uri.Host+uri.Path), "/")
+}
+
+func queryLimit(uri *url.URL, fallback int) int {
+	value := uri.Query().Get("limit")
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed < 1 {
+		return fallback
+	}
+	if parsed > 20 {
+		return 20
+	}
+	return parsed
+}
+
+func dayRange(now time.Time) (time.Time, time.Time) {
+	from := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	return from, from.AddDate(0, 0, 1)
+}
+
+func weekRange(now time.Time) (time.Time, time.Time) {
+	dayStart, _ := dayRange(now)
+	offset := (int(dayStart.Weekday()) + 6) % 7 // Monday = 0
+	from := dayStart.AddDate(0, 0, -offset)
+	return from, from.AddDate(0, 0, 7)
+}
+
+func monthRange(now time.Time) (time.Time, time.Time) {
+	from := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+	return from, from.AddDate(0, 1, 0)
+}
+
+func trimReminders(items []domain.ScheduledItem, limit int) []domain.ScheduledItem {
+	if limit > 0 && len(items) > limit {
+		return items[:limit]
+	}
+	return items
+}

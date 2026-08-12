@@ -1,0 +1,4 @@
+[wokwi]
+version = 1
+firmware = '../build/esp32_companion_poc.bin'
+elf = '../build/esp32_companion_poc.elf'

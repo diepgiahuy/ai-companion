@@ -1,0 +1,35 @@
+package server
+
+import (
+	"net/http"
+	"strings"
+
+	"companion-server/internal/domain"
+)
+
+// IdentityResolver keeps transport authentication/identity mapping replaceable.
+// The POC resolver accepts optional headers for tests and falls back to a configurable single-user owner plus a per-device thread.
+// Production should replace this with a resolver backed by enrolled device credentials.
+type IdentityResolver interface {
+	Resolve(request *http.Request, deviceID string) domain.Identity
+}
+
+type HeaderIdentityResolver struct{ DefaultUserID string }
+
+func (r HeaderIdentityResolver) Resolve(request *http.Request, deviceID string) domain.Identity {
+	userID := strings.TrimSpace(request.Header.Get("User-Id"))
+	if userID == "" {
+		userID = strings.TrimSpace(r.DefaultUserID)
+		if userID == "" {
+			userID = "default"
+		}
+	}
+	threadID := strings.TrimSpace(request.Header.Get("Thread-Id"))
+	if threadID == "" {
+		threadID = strings.TrimSpace(deviceID)
+		if threadID == "" {
+			threadID = "default"
+		}
+	}
+	return domain.Identity{UserID: userID, DeviceID: strings.TrimSpace(deviceID), ThreadID: threadID, TenantID: strings.TrimSpace(request.Header.Get("Tenant-Id")), Plan: strings.TrimSpace(request.Header.Get("Plan"))}
+}

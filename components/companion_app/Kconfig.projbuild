@@ -1,0 +1,44 @@
+menu "Companion interaction"
+
+config COMPANION_SMART_VAD
+    bool "Enable basic Smart VAD automatic end-of-speech"
+    default y
+    help
+        The button still starts capture. Once speech has been detected, the
+        firmware automatically ends the turn after the configured silence.
+        Disable this to use manual button stop only.
+
+config COMPANION_VAD_THRESHOLD
+    int "Smart VAD mean-absolute PCM threshold"
+    range 1 32767
+    default 450
+    depends on COMPANION_SMART_VAD
+
+config COMPANION_VAD_SILENCE_MS
+    int "Smart VAD trailing silence (ms)"
+    range 200 3000
+    default 800
+    depends on COMPANION_SMART_VAD
+
+config COMPANION_VAD_MIN_SPEECH_MS
+    int "Minimum detected speech before auto-stop (ms)"
+    range 0 3000
+    default 250
+    depends on COMPANION_SMART_VAD
+
+config COMPANION_IDLE_AFTER_MS
+    int "Idle clock delay (ms)"
+    range 1000 60000
+    default 5000
+
+config COMPANION_ALARM_VISIBLE_MS
+    int "Alarm screen duration (ms)"
+    range 1000 60000
+    default 10000
+
+config COMPANION_ALARM_TONE_MS
+    int "Local alarm beep pattern duration (ms)"
+    range 0 10000
+    default 900
+
+endmenu

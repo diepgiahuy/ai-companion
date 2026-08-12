@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "author": "Companion POC",
+  "editor": "wokwi",
+  "parts": [
+    {
+      "type": "board-esp32-s3-devkitc-1",
+      "id": "esp",
+      "top": 20,
+      "left": 20,
+      "attrs": {}
+    },
+    {
+      "type": "board-ssd1306",
+      "id": "oled",
+      "top": -80,
+      "left": 300,
+      "attrs": { "i2cAddress": "0x3c" }
+    },
+    {
+      "type": "wokwi-pushbutton",
+      "id": "talk",
+      "top": 190,
+      "left": 320,
+      "attrs": { "color": "green", "label": "TALK" }
+    }
+  ],
+  "connections": [
+    [ "esp:3V3", "oled:VCC", "red", [] ],
+    [ "esp:GND.1", "oled:GND", "black", [] ],
+    [ "esp:41", "oled:SDA", "green", [] ],
+    [ "esp:42", "oled:SCL", "blue", [] ],
+    [ "esp:40", "talk:1.l", "orange", [] ],
+    [ "esp:GND.1", "talk:2.l", "black", [] ]
+  ],
+  "dependencies": {}
+}

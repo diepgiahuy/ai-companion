@@ -1,0 +1,4 @@
+build*
+backend/companion.db*
+.git
+deliverables

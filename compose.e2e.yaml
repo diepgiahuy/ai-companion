@@ -1,0 +1,6 @@
+services:
+  e2e:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    command: ["bash", "scripts/e2e.sh"]

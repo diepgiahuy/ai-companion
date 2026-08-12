@@ -1,0 +1,9 @@
+/build/
+/build-host/
+/managed_components/
+/sdkconfig
+/sdkconfig.old
+/.cache/
+
+/backend/data/
+/backend/*.db

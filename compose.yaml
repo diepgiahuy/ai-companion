@@ -1,0 +1,25 @@
+services:
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+  esp-idf:
+    build:
+      context: .
+      dockerfile: Dockerfile.esp-idf
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    command: ["sh", "-c", "cd backend && go run -tags nolibopusfile ./cmd/companiond"]
+    working_dir: /src
+    environment:
+      COMPANION_ADDRESS: ":8000"
+      COMPANION_DATABASE: "/data/companion.db"
+      COMPANION_RECORDINGS_DIR: "/data/recordings"
+      MOCK_TRANSCRIPT: "hôm nay đi chợ 50k"
+    ports: ["8000:8000"]
+    volumes: ["companion-data:/data"]
+
+volumes:
+  companion-data:

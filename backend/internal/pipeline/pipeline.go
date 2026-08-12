@@ -1,0 +1,78 @@
+package pipeline
+
+import "context"
+
+type ASR interface {
+	Transcribe(ctx context.Context, pcm []byte) (string, error)
+}
+
+type Agent interface {
+	Respond(ctx context.Context, turnID, transcript string) (string, error)
+}
+
+type UICard struct {
+	Kind      string `json:"kind"`
+	Title     string `json:"title"`
+	Primary   string `json:"primary"`
+	Secondary string `json:"secondary,omitempty"`
+	Progress  int    `json:"progress,omitempty"`
+}
+
+type AgentResult struct {
+	Text string
+	UI   *UICard
+}
+
+type RichAgent interface {
+	RespondRich(ctx context.Context, turnID, transcript string) (AgentResult, error)
+}
+
+type TTS interface {
+	Synthesize(ctx context.Context, text string, emit func([]byte) error) error
+}
+
+type AudioCodec interface {
+	DecodeUplink(packet []byte) ([]byte, error)
+	EncodeDownlink(pcm []byte) ([]byte, error)
+}
+
+type CodecFactory interface {
+	New() (AudioCodec, error)
+}
+
+type Components struct {
+	ASR    ASR
+	Agent  Agent
+	TTS    TTS
+	Codecs CodecFactory
+}
+
+// TurnContext carries bounded, ephemeral metadata for the current user turn.
+// It lets tool implementations persist the same audio that was sent to ASR
+// without widening the stable Agent interface or coupling the server to tools.
+type TurnContext struct {
+	UserID     string
+	ThreadID   string
+	DeviceID   string
+	SessionID  string
+	TurnID     string
+	Transcript string
+	PCM16Mono  []byte
+	SampleRate int
+	Locale     string
+	Timezone   string
+	VoiceKey   string
+	TenantID   string
+	Plan       string
+}
+
+type turnContextKey struct{}
+
+func WithTurnContext(ctx context.Context, turn TurnContext) context.Context {
+	return context.WithValue(ctx, turnContextKey{}, turn)
+}
+
+func CurrentTurn(ctx context.Context) (TurnContext, bool) {
+	turn, ok := ctx.Value(turnContextKey{}).(TurnContext)
+	return turn, ok
+}

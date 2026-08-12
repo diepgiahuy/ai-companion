@@ -1,0 +1,6 @@
+{
+  "name": "esp32-companion-go125",
+  "build": {"dockerfile": "Dockerfile", "context": ".."},
+  "workspaceFolder": "/workspace",
+  "customizations": {"vscode": {"extensions": ["golang.Go"]}}
+}

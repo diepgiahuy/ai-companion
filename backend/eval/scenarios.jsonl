@@ -1,0 +1,48 @@
+{"input":"Hôm nay tôi tiêu bao nhiêu?","must_pack":["expense","budget"]}
+{"input":"Tuần này chi tiêu thế nào?","must_pack":["expense","budget"]}
+{"input":"Tháng này tổng expense bao nhiêu?","must_pack":["expense","budget"]}
+{"input":"Ghi 45k tiền ăn trưa","must_pack":["expense","budget"]}
+{"input":"Sửa khoản chi hôm nay","must_pack":["expense","budget"]}
+{"input":"Ngân sách tháng này còn bao nhiêu?","must_pack":["budget"]}
+{"input":"Đặt budget tháng là 6 triệu","must_pack":["budget"]}
+{"input":"Hạn mức mỗi ngày của tôi?","must_pack":["budget"]}
+{"input":"Tạo timer 30 phút","must_pack":["schedule"]}
+{"input":"Hẹn giờ 10 phút","must_pack":["schedule"]}
+{"input":"Timer đang chạy còn bao lâu?","must_pack":["schedule"]}
+{"input":"Nhắc tôi lúc 8 giờ sáng mai","must_pack":["schedule"]}
+{"input":"Lịch hôm nay có gì?","must_pack":["schedule"]}
+{"input":"Cuộc hẹn sắp tới của tôi?","must_pack":["schedule"]}
+{"input":"Tạo ghi chú mua pin","must_pack":["note"]}
+{"input":"Note gần đây của tôi","must_pack":["note"]}
+{"input":"Xóa ghi chú số 3","must_pack":["note"]}
+{"input":"Viết nhật ký hôm nay","must_pack":["journal"]}
+{"input":"Journal hôm nay","must_pack":["journal"]}
+{"input":"Ghi âm đoạn này làm voice memo","must_pack":["voice"]}
+{"input":"Liệt kê voice note","must_pack":["voice"]}
+{"input":"Nhớ là tôi không thích cà phê","must_pack":["memory"]}
+{"input":"Ghi nhớ mục tiêu mua laptop cuối năm","must_pack":["memory"]}
+{"input":"Tôi từng nói gì về sở thích ăn uống?","must_pack":["memory"]}
+{"input":"Quên preference về cà phê","must_pack":["memory"]}
+{"input":"Giá vàng hiện tại bao nhiêu?","must_pack":["market"]}
+{"input":"XAU/USD đang giá nào?","must_pack":["market"]}
+{"input":"Bitcoin hiện tại bao nhiêu?","must_pack":["market"]}
+{"input":"Giá stock AAPL","must_pack":["market"]}
+{"input":"Tỷ giá USD/VND hiện tại","must_pack":["market"]}
+{"input":"Market crypto hôm nay","must_pack":["market"]}
+{"input":"Nhắc tôi nếu giá vàng xuống dưới 3000","must_pack":["market","schedule"]}
+{"input":"Tạo cảnh báo stock khi giá vượt ngưỡng","must_pack":["market"]}
+{"input":"Xóa lịch sử hội thoại này","must_pack":["context"],"exact":true}
+{"input":"Clear history cuộc hội thoại","must_pack":["context"],"exact":true}
+{"input":"Xoá hội thoại hiện tại","must_pack":["context"],"exact":true}
+{"input":"Hôm nay tôi khỏe không?","fallback":true}
+{"input":"Kể chuyện vui đi","fallback":true}
+{"input":"Xin chào companion","fallback":true}
+{"input":"Phân tích chi tiêu tháng này","must_pack":["expense","budget"]}
+{"input":"Tôi mua cafe 35k","must_pack":["expense","budget"]}
+{"input":"Budget tuần này","must_pack":["budget"]}
+{"input":"Reminder ngày mai","must_pack":["schedule"]}
+{"input":"Appointment lúc 15:00","must_pack":["schedule"]}
+{"input":"voice recording gần đây","must_pack":["voice"]}
+{"input":"personal memory của tôi","must_pack":["memory"]}
+{"input":"gold price hiện tại","must_pack":["market"]}
+{"input":"exchange rate USD/VND","must_pack":["market"]}

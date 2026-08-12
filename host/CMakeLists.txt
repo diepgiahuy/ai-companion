@@ -1,0 +1,27 @@
+cmake_minimum_required(VERSION 3.16)
+project(companion_host LANGUAGES CXX)
+enable_testing()
+
+add_library(companion_app
+  ../components/companion_app/src/app.cpp
+  ../components/companion_app/src/mock_backend.cpp
+)
+target_include_directories(companion_app PUBLIC ../components/companion_app/include)
+target_compile_features(companion_app PUBLIC cxx_std_20)
+target_compile_options(companion_app PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+add_executable(companion_sim src/sim.cpp)
+target_link_libraries(companion_sim PRIVATE companion_app)
+target_compile_options(companion_sim PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+add_executable(companion_tests tests/tests.cpp)
+target_link_libraries(companion_tests PRIVATE companion_app)
+target_compile_options(companion_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+add_test(NAME companion_tests COMMAND companion_tests)
+
+add_executable(opus_probe tests/opus_probe.cpp)
+target_link_libraries(opus_probe PRIVATE ${CMAKE_DL_LIBS})
+target_compile_options(opus_probe PRIVATE -Wall -Wextra -Wpedantic -Werror)
+add_test(NAME opus_probe COMMAND opus_probe)
+set_tests_properties(opus_probe PROPERTIES SKIP_RETURN_CODE 77)
