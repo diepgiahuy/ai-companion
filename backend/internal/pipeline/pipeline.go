@@ -6,6 +6,23 @@ type ASR interface {
 	Transcribe(ctx context.Context, pcm []byte) (string, error)
 }
 
+// ASRPartial is provider-neutral streaming recognition state. Providers may
+// omit stability/confidence when unavailable; turn detection must not depend on
+// one vendor-specific score.
+type ASRPartial struct {
+	Text       string
+	Final      bool
+	Confidence float64
+	Stable     bool
+}
+
+// StreamingASR is an optional capability for providers that can emit partial
+// transcripts while audio is still arriving. The existing batch ASR interface
+// remains the rollback/compatibility boundary.
+type StreamingASR interface {
+	TranscribeStream(ctx context.Context, pcm <-chan []byte, emit func(ASRPartial) error) (string, error)
+}
+
 type Agent interface {
 	Respond(ctx context.Context, turnID, transcript string) (string, error)
 }
@@ -85,6 +102,7 @@ type AgentStreamEvent struct {
 	TextDelta string
 	UI        *UICard
 	Status    string
+	ToolName  string
 }
 
 // StreamingAgent allows text to reach sentence segmentation/TTS before the

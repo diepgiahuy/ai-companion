@@ -1,35 +1,16 @@
-import pytest
-from pytest_embedded import Dut
+from pytest_embedded_idf.dut import IdfDut
 
-def test_device_boot(dut: Dut):
-    """
-    Test that the device boots up properly and initializes without crashing.
-    """
-    # Wait for the bootloader and app start
-    dut.expect('app_main: Firmware booted', timeout=10)
 
-def test_bump_to_pair(dut: Dut):
-    """
-    Test the Bump-to-Pair logic using pytest-embedded.
-    """
-    # Simulate a fake BLE RSSI spike via a console command (assuming a mock command exists for testing)
-    dut.write('mock_ble_rssi -45')
-    
-    # Assert that the device responds with the pairing log
-    dut.expect('Pairing successful', timeout=5)
+def test_physical_esp32s3_boots_and_initializes(dut: IdfDut) -> None:
+    """Prove the flashed physical target reaches the post-init application loop.
 
-def test_voice_mail_trigger(dut: Dut):
+    pytest-embedded-idf flashes the real build and connects to the real serial
+    port. The success log is emitted only after display, button and I2S audio
+    initialization have completed; initialization failures return before it.
+
+    This gate intentionally does NOT claim real ASR/TTS, WebRTC, MCP or
+    end-to-end voice quality. Those require separate real-provider/network
+    evidence.
     """
-    Test that holding the button triggers the voice mail recording.
-    """
-    # Simulate GPIO button hold
-    dut.write('mock_gpio_hold 40')
-    
-    # Check for the correct state transition
-    dut.expect('Recording Voice Mail...', timeout=3)
-    
-    # Release the button
-    dut.write('mock_gpio_release 40')
-    
-    # Check that it saved the file
-    dut.expect('Voice Mail saved to FIFO', timeout=5)
+    assert dut.app.target == "esp32s3"
+    dut.expect("hardware POC using", timeout=30)

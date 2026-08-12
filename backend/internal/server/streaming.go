@@ -13,6 +13,8 @@ import (
 	"github.com/coder/websocket"
 )
 
+const agentCancellationJoinTimeout = 2 * time.Second
+
 type streamingTurnMetrics struct {
 	AgentTotal     time.Duration
 	TTSActive      time.Duration
@@ -27,6 +29,10 @@ func (s *session) processStreamingReply(current *turn, agentCtx context.Context,
 	started := time.Now()
 	segments := make(chan string, 8)
 	agentDone := make(chan error, 1)
+
+	if err := s.sendTurnUIState(current.ctx, current, protocol.UIEmotionThinking, ""); err != nil {
+		return streamingTurnMetrics{}, err
+	}
 
 	go func() {
 		segmenter := realtime.NewSegmenter()
@@ -53,6 +59,11 @@ func (s *session) processStreamingReply(current *turn, agentCtx context.Context,
 				}); err != nil {
 					return err
 				}
+				if event.Status == "tool_running" && strings.TrimSpace(event.ToolName) != "" {
+					if err := s.sendTurnUIState(current.ctx, current, protocol.UIEmotionToolExecuting, event.ToolName); err != nil {
+						return err
+					}
+				}
 			}
 			for _, segment := range segmenter.Push(event.TextDelta) {
 				if err := emitSegment(segment); err != nil {
@@ -76,52 +87,72 @@ func (s *session) processStreamingReply(current *turn, agentCtx context.Context,
 	var metrics streamingTurnMetrics
 	var ttsStartedAt time.Time
 	segmentsSeen := 0
-	for segment := range segments {
-		if !s.isCurrent(current) {
+	for {
+		select {
+		case <-current.ctx.Done():
 			current.cancel()
-			<-agentDone
+			if err := waitAgentDone(agentDone); err != nil {
+				return metrics, err
+			}
 			return metrics, context.Canceled
-		}
-		if segmentsSeen == 0 {
-			metrics.FirstSegmentAt = time.Since(started)
-			ttsStartedAt = time.Now()
-			s.setTurnState(current, "speaking")
+		case segment, ok := <-segments:
+			if !ok {
+				goto streamComplete
+			}
+			if !s.isCurrent(current) {
+				current.cancel()
+				if err := waitAgentDone(agentDone); err != nil {
+					return metrics, err
+				}
+				return metrics, context.Canceled
+			}
+			if segmentsSeen == 0 {
+				metrics.FirstSegmentAt = time.Since(started)
+				ttsStartedAt = time.Now()
+				s.setTurnState(current, "speaking")
+				if err := s.sendTurnUIState(current.ctx, current, protocol.UIEmotionSpeaking, ""); err != nil {
+					current.cancel()
+					_ = waitAgentDone(agentDone)
+					return metrics, err
+				}
+				if err := s.sendTurnMediaJSON(current.ctx, current, protocol.Message{
+					Type: "tts", State: "start", SessionID: s.id, TurnID: current.id,
+				}); err != nil {
+					current.cancel()
+					_ = waitAgentDone(agentDone)
+					return metrics, err
+				}
+			}
+			segmentsSeen++
 			if err := s.sendTurnMediaJSON(current.ctx, current, protocol.Message{
-				Type: "tts", State: "start", SessionID: s.id, TurnID: current.id,
+				Type: "tts", State: "sentence_start", SessionID: s.id, TurnID: current.id, Text: segment,
 			}); err != nil {
 				current.cancel()
-				<-agentDone
+				_ = waitAgentDone(agentDone)
+				return metrics, err
+			}
+			if err := s.components.TTS.Synthesize(agentCtx, segment, func(frame []byte) error {
+				packet, err := s.codec.EncodeDownlink(frame)
+				if err != nil {
+					return err
+				}
+				return s.sendTurn(current.ctx, current, outbound{kind: websocket.MessageBinary, data: packet})
+			}); err != nil {
+				current.cancel()
+				_ = waitAgentDone(agentDone)
+				return metrics, err
+			}
+			if err := s.sendTurnMediaJSON(current.ctx, current, protocol.Message{
+				Type: "tts", State: "sentence_end", SessionID: s.id, TurnID: current.id, Text: segment,
+			}); err != nil {
+				current.cancel()
+				_ = waitAgentDone(agentDone)
 				return metrics, err
 			}
 		}
-		segmentsSeen++
-		if err := s.sendTurnMediaJSON(current.ctx, current, protocol.Message{
-			Type: "tts", State: "sentence_start", SessionID: s.id, TurnID: current.id, Text: segment,
-		}); err != nil {
-			current.cancel()
-			<-agentDone
-			return metrics, err
-		}
-		if err := s.components.TTS.Synthesize(agentCtx, segment, func(frame []byte) error {
-			packet, err := s.codec.EncodeDownlink(frame)
-			if err != nil {
-				return err
-			}
-			return s.sendTurn(current.ctx, current, outbound{kind: websocket.MessageBinary, data: packet})
-		}); err != nil {
-			current.cancel()
-			<-agentDone
-			return metrics, err
-		}
-		if err := s.sendTurnMediaJSON(current.ctx, current, protocol.Message{
-			Type: "tts", State: "sentence_end", SessionID: s.id, TurnID: current.id, Text: segment,
-		}); err != nil {
-			current.cancel()
-			<-agentDone
-			return metrics, err
-		}
 	}
 
+streamComplete:
 	agentErr := <-agentDone
 	metrics.AgentTotal = time.Since(started)
 	if !ttsStartedAt.IsZero() {
@@ -142,4 +173,15 @@ func (s *session) processStreamingReply(current *turn, agentCtx context.Context,
 		return metrics, err
 	}
 	return metrics, nil
+}
+
+func waitAgentDone(done <-chan error) error {
+	timer := time.NewTimer(agentCancellationJoinTimeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+		return nil
+	case <-timer.C:
+		return fmt.Errorf("streaming agent did not stop within %s after cancellation", agentCancellationJoinTimeout)
+	}
 }

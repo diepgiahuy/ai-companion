@@ -144,6 +144,22 @@ func readJSON(t *testing.T, ctx context.Context, connection *websocket.Conn) pro
 	return message
 }
 
+type ackSignalRepo struct {
+	SchedulerRepository
+	acked chan struct{}
+}
+
+func (r *ackSignalRepo) AcknowledgeReminder(ctx context.Context, userID, deviceID string, id int64) error {
+	if err := r.SchedulerRepository.AcknowledgeReminder(ctx, userID, deviceID, id); err != nil {
+		return err
+	}
+	select {
+	case r.acked <- struct{}{}:
+	default:
+	}
+	return nil
+}
+
 func TestReminderSchedulerPushesAlarmToTargetDevice(t *testing.T) {
 	data, err := store.Open(filepath.Join(t.TempDir(), "alarm.db"))
 	if err != nil {
@@ -153,9 +169,10 @@ func TestReminderSchedulerPushesAlarmToTargetDevice(t *testing.T) {
 	if err := data.CreateReminderForDevice(context.Background(), "default", "alarm-1", "device-test", "Hết giờ 30 phút", time.Now().Add(-time.Second)); err != nil {
 		t.Fatal(err)
 	}
+	repo := &ackSignalRepo{SchedulerRepository: data, acked: make(chan struct{}, 1)}
 	service := New(pipeline.Components{
 		ASR: pipeline.MockASR{}, Agent: pipeline.MockAgent{}, TTS: pipeline.MockTTS{}, Codecs: pipeline.OpusFactory{},
-	}, "", slog.New(slog.NewTextHandler(io.Discard, nil)), WithStore(data), WithSchedulerInterval(20*time.Millisecond))
+	}, "", slog.New(slog.NewTextHandler(io.Discard, nil)), WithStore(repo), WithSchedulerInterval(20*time.Millisecond))
 	background, stopBackground := context.WithCancel(context.Background())
 	defer stopBackground()
 	go service.RunBackground(background)
@@ -193,7 +210,11 @@ func TestReminderSchedulerPushesAlarmToTargetDevice(t *testing.T) {
 		t.Fatalf("alarm = %+v", alarm)
 	}
 	writeJSON(t, ctx, connection, protocol.Message{Type: "alarm_ack", ID: alarm.ID})
-	time.Sleep(20 * time.Millisecond)
+	select {
+	case <-repo.acked:
+	case <-ctx.Done():
+		t.Fatalf("alarm acknowledgement was not committed: %v", ctx.Err())
+	}
 	fired, err := data.ListReminders(context.Background(), "default", "device-test", "fired", 10)
 	if err != nil {
 		t.Fatal(err)

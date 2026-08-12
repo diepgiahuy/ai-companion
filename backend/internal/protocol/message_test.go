@@ -14,3 +14,19 @@ func TestValidateHello(t *testing.T) {
 		t.Fatal("incompatible audio params were accepted")
 	}
 }
+
+func TestValidateUIState(t *testing.T) {
+	valid := Message{Type: "ui_state", Emotion: UIEmotionToolExecuting, ToolName: "expense.log"}
+	if err := ValidateUIState(valid); err != nil {
+		t.Fatalf("valid ui state rejected: %v", err)
+	}
+	if err := ValidateUIState(Message{Type: "ui_state", Emotion: UIEmotionToolExecuting}); err == nil {
+		t.Fatal("tool executing state without tool_name was accepted")
+	}
+	if err := ValidateUIState(Message{Type: "ui_state", Emotion: "dancing"}); err == nil {
+		t.Fatal("unknown emotion was accepted")
+	}
+	if err := ValidateUIState(Message{Type: "ui_state", Emotion: UIEmotionSpeaking, ToolName: "expense.log"}); err == nil {
+		t.Fatal("tool_name leaked into a non-tool state")
+	}
+}
