@@ -75,7 +75,27 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Probe Dependency Graph capability
+        id: dependency-graph
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          endpoint="https://api.github.com/repos/${GITHUB_REPOSITORY}/dependency-graph/sbom"
+          if curl -fsSL \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "$endpoint" >/dev/null; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::GitHub Dependency Graph is unavailable for this repository; dependency-review is UNAVAILABLE, not PASS. Enable Dependency Graph in repository security settings to activate this blocking gate."
+            echo "### Dependency review" >> "$GITHUB_STEP_SUMMARY"
+            echo "UNAVAILABLE: GitHub Dependency Graph is disabled or unsupported for this repository." >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Review dependency changes
+        if: steps.dependency-graph.outputs.available == 'true'
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
           fail-on-severity: moderate
