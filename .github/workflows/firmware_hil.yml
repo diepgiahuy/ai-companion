@@ -38,8 +38,10 @@ jobs:
           {
             echo "## Firmware HIL"
             echo ""
+            echo "- Run: `${{ github.run_id }}`"
             echo "- Commit: `$(git rev-parse HEAD)`"
             echo "- Ref: `${{ github.ref }}`"
+            echo "- Target: `esp32s3`"
             echo "- Port: `$HIL_PORT`"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -48,11 +50,14 @@ jobs:
           test -n "$HIL_PORT"
           test -e "$HIL_PORT"
           test -f "$HOME/esp/esp-idf/export.sh"
+          source "$HOME/esp/esp-idf/export.sh"
+          idf.py --version | tee -a artifacts-idf-version.txt
+          echo "- ESP-IDF: `$(idf.py --version)`" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Set up test environment
+      - name: Install pinned HIL dependencies
         run: |
           source "$HOME/esp/esp-idf/export.sh"
-          python -m pip install --upgrade             "pytest-embedded~=2.0"             "pytest-embedded-idf~=2.0"             "pytest-embedded-serial-esp~=2.0"
+          python -m pip install --requirement tests/firmware/requirements.txt
 
       - name: Build firmware
         run: |
@@ -63,6 +68,7 @@ jobs:
         run: |
           source "$HOME/esp/esp-idf/export.sh"
           mkdir -p artifacts
+          mv artifacts-idf-version.txt artifacts/idf-version.txt
           ERASE_FLAG=""
           if [ "$HIL_ERASE_ALL" = "true" ]; then
             ERASE_FLAG="--erase-all"
