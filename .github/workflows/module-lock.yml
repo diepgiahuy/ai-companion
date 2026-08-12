@@ -17,9 +17,13 @@ jobs:
     name: Generate exact Go module lock candidate
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: write
     steps:
-      - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Checkout PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.ref || github.ref_name }}
       - name: Tidy with exact Go 1.26.5
         run: |
           mkdir -p module-lock
@@ -28,11 +32,34 @@ jobs:
             -w /src/backend \
             golang:1.26.5-bookworm \
             sh -c 'set -eu; go mod tidy; go mod verify; cp go.mod go.sum /src/module-lock/'
+      - name: Record resolved module graph
+        run: |
+          docker run --rm \
+            -v "$PWD:/src" \
+            -w /src/backend \
+            golang:1.26.5-bookworm \
+            sh -c 'set -eu; go list -m -json github.com/modelcontextprotocol/go-sdk > /src/module-lock/mcp-module.json; go mod graph | grep modelcontextprotocol > /src/module-lock/mcp-graph.txt || true'
       - name: Upload lock candidate
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: go-module-lock
           path: |
             module-lock/go.mod
             module-lock/go.sum
+            module-lock/mcp-module.json
+            module-lock/mcp-graph.txt
           if-no-files-found: error
+      - name: Commit generated lock on same-repository PR
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- backend/go.mod backend/go.sum; then
+            echo 'Module lock already reproducible.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add backend/go.mod backend/go.sum
+          git commit -m 'chore: refresh Go module lock'
+          git push origin "HEAD:${{ github.event.pull_request.head.ref }}"
