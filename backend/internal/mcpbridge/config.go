@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -23,11 +24,24 @@ type ServerConfig struct {
 	Entitlement         string        `json:"entitlement,omitempty"`
 	FeatureKey          string        `json:"feature_key,omitempty"`
 	AllowPrivateNetwork bool          `json:"allow_private_network,omitempty"`
+	BearerTokenEnv      string        `json:"bearer_token_env,omitempty"`
 	Timeout             time.Duration `json:"-"`
 	TimeoutText         string        `json:"timeout,omitempty"`
 }
 
 func (c *ServerConfig) Normalize() error {
+	c.Name = strings.TrimSpace(c.Name)
+	c.Endpoint = strings.TrimSpace(c.Endpoint)
+	c.Pack = strings.TrimSpace(c.Pack)
+	c.Entitlement = strings.TrimSpace(c.Entitlement)
+	c.FeatureKey = strings.TrimSpace(c.FeatureKey)
+	c.BearerTokenEnv = strings.TrimSpace(c.BearerTokenEnv)
+	if c.Name == "" || c.Endpoint == "" {
+		return fmt.Errorf("MCP name and endpoint are required")
+	}
+	if c.BearerTokenEnv != "" && strings.TrimSpace(os.Getenv(c.BearerTokenEnv)) == "" {
+		return fmt.Errorf("MCP bearer token environment variable %q is empty", c.BearerTokenEnv)
+	}
 	if strings.TrimSpace(c.TimeoutText) != "" {
 		d, err := time.ParseDuration(strings.TrimSpace(c.TimeoutText))
 		if err != nil || d <= 0 || d > 5*time.Minute {
@@ -71,7 +85,8 @@ func publicIP(ip net.IP) bool {
 }
 
 func secureHTTPClient(config ServerConfig) (*http.Client, error) {
-	if _, err := ValidateEndpoint(config.Endpoint, config.AllowPrivateNetwork); err != nil {
+	endpoint, err := ValidateEndpoint(config.Endpoint, config.AllowPrivateNetwork)
+	if err != nil {
 		return nil, err
 	}
 	timeout := config.Timeout
@@ -99,7 +114,15 @@ func secureHTTPClient(config ServerConfig) (*http.Client, error) {
 		}
 		return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0].String(), port))
 	}
-	client := &http.Client{Transport: transport, Timeout: timeout}
+	var roundTripper http.RoundTripper = transport
+	if config.BearerTokenEnv != "" {
+		roundTripper = bearerTransport{
+			base:        transport,
+			originHost:  strings.ToLower(endpoint.Hostname()),
+			tokenEnvVar: config.BearerTokenEnv,
+		}
+	}
+	client := &http.Client{Transport: roundTripper, Timeout: timeout}
 	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 5 {
 			return fmt.Errorf("too many MCP redirects")
@@ -110,6 +133,27 @@ func secureHTTPClient(config ServerConfig) (*http.Client, error) {
 		return nil
 	}
 	return client, nil
+}
+
+type bearerTransport struct {
+	base        http.RoundTripper
+	originHost  string
+	tokenEnvVar string
+}
+
+func (t bearerTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	clone := request.Clone(request.Context())
+	clone.Header = request.Header.Clone()
+	if strings.EqualFold(clone.URL.Hostname(), t.originHost) {
+		token := strings.TrimSpace(os.Getenv(t.tokenEnvVar))
+		if token == "" {
+			return nil, fmt.Errorf("MCP bearer token environment variable %q became empty", t.tokenEnvVar)
+		}
+		clone.Header.Set("Authorization", "Bearer "+token)
+	} else {
+		clone.Header.Del("Authorization")
+	}
+	return t.base.RoundTrip(clone)
 }
 
 func minDuration(a, b time.Duration) time.Duration {
