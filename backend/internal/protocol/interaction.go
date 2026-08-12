@@ -173,6 +173,32 @@ func interactionTypeForPayload(p InteractionPayload) (InteractionType, error) {
 		return PairingRejectedType, nil
 	case PairingExpired:
 		return PairingExpiredType, nil
+	case *GestureNotification:
+		return GestureNotificationType, nil
+	case *VoiceMailAvailable:
+		return VoiceMailAvailableType, nil
+	case *VoiceMailClaim:
+		return VoiceMailClaimType, nil
+	case *VoiceMailClaimed:
+		return VoiceMailClaimedType, nil
+	case *VoiceMailPlaybackResult:
+		return VoiceMailPlaybackResultType, nil
+	case *VoiceMailConsumed:
+		return VoiceMailConsumedType, nil
+	case *VoiceMailExpired:
+		return VoiceMailExpiredType, nil
+	case *PairingSessionCreate:
+		return PairingSessionCreateType, nil
+	case *PairingSessionCreated:
+		return PairingSessionCreatedType, nil
+	case *PairingConfirmation:
+		return PairingConfirmationType, nil
+	case *PairingSucceeded:
+		return PairingSucceededType, nil
+	case *PairingRejected:
+		return PairingRejectedType, nil
+	case *PairingExpired:
+		return PairingExpiredType, nil
 	default:
 		return "", fmt.Errorf("unsupported interaction payload %T", p)
 	}
@@ -275,6 +301,9 @@ func (p VoiceMailAvailable) Validate() error {
 	}
 	if len(p.ChecksumSHA256) != 64 {
 		return fmt.Errorf("checksum_sha256 must be a 64-character hex digest")
+	}
+	if _, err := hex.DecodeString(p.ChecksumSHA256); err != nil {
+		return fmt.Errorf("checksum_sha256 must be hexadecimal")
 	}
 	if p.ExpiresAt.IsZero() {
 		return fmt.Errorf("expires_at is required")
