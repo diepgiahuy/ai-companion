@@ -916,11 +916,9 @@ bool WebSocketVoiceBackend::encode_and_enqueue(
       .buffer = reinterpret_cast<uint8_t*>(const_cast<int16_t*>(pcm.data())),
       .len = static_cast<uint32_t>(pcm.size_bytes()),
   };
-  esp_audio_enc_out_frame_t output{
-      .buffer = packet.bytes.data(),
-      .len = static_cast<uint32_t>(packet.bytes.size()),
-      .encoded_bytes = 0,
-  };
+  esp_audio_enc_out_frame_t output{};
+  output.buffer = packet.bytes.data();
+  output.len = static_cast<uint32_t>(packet.bytes.size());
   if (esp_opus_enc_process(opus_encoder_, &input, &output) != ESP_AUDIO_ERR_OK ||
       output.encoded_bytes == 0 || output.encoded_bytes > packet.bytes.size()) {
     return false;
@@ -957,11 +955,9 @@ bool WebSocketVoiceBackend::decode_and_enqueue(const OpusPacket& packet,
       .consumed = 0,
       .frame_recover = ESP_AUDIO_DEC_RECOVERY_NONE,
   };
-  esp_audio_dec_out_frame_t output{
-      .buffer = reinterpret_cast<uint8_t*>(decoded.data()),
-      .len = static_cast<uint32_t>(decoded.size() * sizeof(int16_t)),
-      .decoded_size = 0,
-  };
+  esp_audio_dec_out_frame_t output{};
+  output.buffer = reinterpret_cast<uint8_t*>(decoded.data());
+  output.len = static_cast<uint32_t>(decoded.size() * sizeof(int16_t));
   esp_audio_dec_info_t info{};
   if (esp_opus_dec_decode(opus_decoder_, &input, &output, &info) !=
           ESP_AUDIO_ERR_OK ||
