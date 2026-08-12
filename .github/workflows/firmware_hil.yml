@@ -1,54 +1,79 @@
-name: Firmware HIL Testing (Mac M1)
+name: Firmware HIL
 
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'firmware/**'
-      - 'tests/firmware/**'
   workflow_dispatch:
+    inputs:
+      device_port:
+        description: Serial device connected to the trusted ESP32-S3 DUT
+        required: true
+        type: string
+      erase_all:
+        description: Erase flash before testing
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
 
 concurrency:
   group: firmware-hil-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
-  hil_test:
-    name: Hardware-in-the-Loop Test
-    # This targets your Mac M1 runner. Ensure you run `./config.sh` and `./run.sh` 
-    # for the GitHub Actions runner on your Mac and add these labels.
-    runs-on: [self-hosted, macOS, ARM64] 
-    
+  hil:
+    name: Trusted ESP32-S3 smoke test
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 30
+    env:
+      HIL_PORT: ${{ inputs.device_port }}
+      HIL_ERASE_ALL: ${{ inputs.erase_all }}
+
     steps:
-      - name: Checkout Repository
+      - name: Checkout trusted repository ref
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Record source revision
+        run: |
+          {
+            echo "## Firmware HIL"
+            echo ""
+            echo "- Commit: `$(git rev-parse HEAD)`"
+            echo "- Ref: `${{ github.ref }}`"
+            echo "- Port: `$HIL_PORT`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Validate runner prerequisites
+        run: |
+          test -n "$HIL_PORT"
+          test -e "$HIL_PORT"
+          test -f "$HOME/esp/esp-idf/export.sh"
+
+      - name: Set up test environment
+        run: |
+          source "$HOME/esp/esp-idf/export.sh"
+          python -m pip install --upgrade             "pytest-embedded~=2.0"             "pytest-embedded-idf~=2.0"             "pytest-embedded-serial-esp~=2.0"
+
+      - name: Build firmware
+        run: |
+          source "$HOME/esp/esp-idf/export.sh"
+          idf.py build
+
+      - name: Run physical boot smoke test
+        run: |
+          source "$HOME/esp/esp-idf/export.sh"
+          mkdir -p artifacts
+          ERASE_FLAG=""
+          if [ "$HIL_ERASE_ALL" = "true" ]; then
+            ERASE_FLAG="--erase-all"
+          fi
+          python -m pytest tests/firmware             -s             --embedded-services esp,idf             --app-path .             --target esp32s3             --port "$HIL_PORT"             $ERASE_FLAG             --junitxml=artifacts/hil-junit.xml
+
+      - name: Upload HIL report
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          python-version: '3.11'
-
-      - name: Install ESP-IDF (or activate if already installed on host)
-        run: |
-          # Note: In a real self-hosted runner, it's best to have ESP-IDF 
-          # permanently installed and exported in the runner's environment.
-          # Here we just source it assuming it's in the default location.
-          source ~/esp/esp-idf/export.sh || echo "Please install ESP-IDF on the Mac M1 Runner"
-
-      - name: Install pytest-embedded
-        run: |
-          pip install pytest-embedded pytest-embedded-idf pytest-embedded-serial
-
-      - name: Build Firmware
-        working-directory: ./firmware
-        run: |
-          source ~/esp/esp-idf/export.sh || echo "Skip if not found"
-          idf.py build || echo "Mock build for demonstration"
-
-      - name: Run Pytest-Embedded HIL Tests
-        working-directory: ./firmware
-        run: |
-          source ~/esp/esp-idf/export.sh || echo "Skip if not found"
-          # This command automatically flashes the binary built in the previous step
-          # and runs the Python test scripts against the connected USB serial port.
-          pytest ../tests/firmware/ --target esp32s3 || echo "Mock test for demonstration"
+          name: firmware-hil-${{ github.run_id }}
+          path: artifacts/
+          if-no-files-found: warn
+          retention-days: 14
