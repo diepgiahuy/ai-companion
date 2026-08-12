@@ -27,7 +27,7 @@ jobs:
             -v "$PWD:/src" \
             -w /src/backend \
             golang:1.26.5-bookworm \
-            bash -lc 'set -euo pipefail; go mod tidy; go mod verify; cp go.mod go.sum /src/module-lock/'
+            sh -c 'set -eu; go mod tidy; go mod verify; cp go.mod go.sum /src/module-lock/'
       - name: Upload lock candidate
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
