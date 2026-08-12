@@ -157,7 +157,7 @@ func (r *Runtime) Stream(ctx context.Context, turnID, transcript string, emit fu
 		if event == nil {
 			continue
 		}
-		status, callIDs := eventStatus(event.Content)
+		status, toolName, callIDs := eventStatus(event.Content)
 		for _, callID := range callIDs {
 			// A provider may stream function-call arguments. Non-empty IDs are
 			// safe to record on partial events because the tracker deduplicates
@@ -167,7 +167,7 @@ func (r *Runtime) Stream(ctx context.Context, turnID, transcript string, emit fu
 			}
 		}
 		if status != "" {
-			if err := emit(pipeline.AgentStreamEvent{Status: status}); err != nil {
+			if err := emit(pipeline.AgentStreamEvent{Status: status, ToolName: toolName}); err != nil {
 				return err
 			}
 		}
@@ -211,20 +211,24 @@ func contentText(content *genai.Content) string {
 	return b.String()
 }
 
-func eventStatus(content *genai.Content) (string, []string) {
+func eventStatus(content *genai.Content) (string, string, []string) {
 	if content == nil {
-		return "", nil
+		return "", "", nil
 	}
 	var callIDs []string
+	toolName := ""
 	for _, part := range content.Parts {
 		if part != nil && part.FunctionCall != nil {
 			callIDs = append(callIDs, part.FunctionCall.ID)
+			if toolName == "" {
+				toolName = strings.TrimSpace(part.FunctionCall.Name)
+			}
 		}
 	}
 	if len(callIDs) > 0 {
-		return "tool_running", callIDs
+		return "tool_running", toolName, callIDs
 	}
-	return "", nil
+	return "", "", nil
 }
 
 type presentationQueue struct {
