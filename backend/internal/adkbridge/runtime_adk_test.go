@@ -40,7 +40,12 @@ func TestADKRepresentativeToolsReuseRegistrySchemas(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := newWithModel(Config{AppName: "test", Tools: reg}, fakeLLM{}); err != nil {
+	if _, err := newWithModel(Config{
+		AppName:       "test",
+		Tools:         reg,
+		Instruction:   "test instruction",
+		PromptVersion: "test@1#fixture",
+	}, fakeLLM{}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -68,7 +73,7 @@ func (denyUsageGuard) Check(context.Context, string) error { return errors.New("
 func TestMeteredLLMRecordsOneUsageSnapshot(t *testing.T) {
 	inner := &usageLLM{}
 	meter := usagepkg.NewMemory()
-	llm := &meteredLLM{inner: inner, modelName: "configured", meter: meter}
+	llm := &meteredLLM{inner: inner, modelName: "configured", promptVersion: "companion@4#abc", meter: meter}
 	ctx := pipeline.WithTurnContext(context.Background(), pipeline.TurnContext{UserID: "u1", DeviceID: "d1"})
 	for _, err := range llm.GenerateContent(ctx, &model.LLMRequest{Model: "selected"}, true) {
 		if err != nil {
