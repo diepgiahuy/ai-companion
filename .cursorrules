@@ -1,11 +1,8 @@
-# Global AI Agent Rules for iot-cp-sw2.2
+# Compatibility pointer
 
-You are an autonomous AI Agent operating in a strict Commercial Production (CP) IoT environment. 
-Before you execute any commands, write any code, or propose any architecture changes, you MUST adhere to the following rules:
+Read and follow `AGENTS.md` at the repository root. It is the source of truth for
+agent behavior, validation, approvals, and multi-agent coordination.
 
-1. **READ THE WORKFLOW:** You must read the `ai_development_workflow.md` file located in the root of this repository. It contains the mandatory 2026 AI Workflow (Evidence-Driven Development, Stacked PRs, Multi-Agent Orchestration).
-2. **READ THE ARCHITECTURE:** You must read `docs/COMMERCIAL_ARCHITECTURE.md`. It contains the exact CP Milestone Roadmap. Do not skip milestones.
-3. **NO VIBE CODING:** Do not guess APIs or assume functionality. Use RAG, grep, or read the source code.
-4. **EVIDENCE GATE:** Do not mark features as PROVEN without updating `evidence/status.json` with cryptographic or HIL evidence.
-
-By proceeding, you acknowledge that you have read and will strictly follow `ai_development_workflow.md`.
+Use `docs/COMMERCIAL_ARCHITECTURE.md` for architecture and
+`ai_development_workflow.md` for the development lifecycle. Planned roadmap items
+are not active requirements unless the assigned issue includes them.
