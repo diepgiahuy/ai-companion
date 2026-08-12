@@ -1,58 +1,77 @@
-name: Firmware HIL Testing (ESP32-S3)
+name: Firmware HIL
 
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'main/**'
-      - 'components/**'
-      - 'sdkconfig.defaults'
-      - 'partitions.csv'
-      - 'tests/firmware/**'
-      - '.github/workflows/firmware_hil.yml'
   workflow_dispatch:
-
-concurrency:
-  group: firmware-hil-${{ github.ref }}
-  cancel-in-progress: true
+    inputs:
+      device_port:
+        description: Serial device connected to the trusted ESP32-S3 DUT
+        required: true
+        type: string
+      erase_all:
+        description: Erase flash before testing
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
 
+concurrency:
+  group: firmware-hil-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
-  hil_test:
-    name: Physical ESP32-S3 boot/init HIL
-    # PR HIL is opt-in until a dedicated physical runner is provisioned.
-    # Set repository variable HIL_ENABLED=true only when the runner below is online.
-    if: github.event_name == 'workflow_dispatch' || vars.HIL_ENABLED == 'true'
+  hil:
+    name: Trusted ESP32-S3 smoke test
     runs-on: [self-hosted, macOS, ARM64, esp32s3-hil]
     timeout-minutes: 30
+    env:
+      HIL_PORT: ${{ inputs.device_port }}
+      HIL_ERASE_ALL: ${{ inputs.erase_all }}
 
     steps:
-      - name: Checkout
+      - name: Checkout trusted repository ref
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: '3.11'
-          cache: pip
-          cache-dependency-path: tests/firmware/requirements.txt
+          persist-credentials: false
 
-      - name: Verify physical runner and ESP-IDF toolchain
+      - name: Record source revision
         shell: bash
         run: |
           set -euo pipefail
+          {
+            echo "## Firmware HIL"
+            echo
+            echo "- Run: ${{ github.run_id }}"
+            echo "- Commit: $(git rev-parse HEAD)"
+            echo "- Ref: ${{ github.ref }}"
+            echo "- Target: esp32s3"
+            echo "- Port: $HIL_PORT"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Validate runner prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          test -n "$HIL_PORT"
+          test -e "$HIL_PORT"
+          test -r "$HIL_PORT"
+          test -w "$HIL_PORT"
           test -f "$HOME/esp/esp-idf/export.sh"
           source "$HOME/esp/esp-idf/export.sh"
-          idf.py --version
+          idf.py --version | tee artifacts/idf-version.txt
           python --version
-          system_profiler SPUSBDataType | grep -E 'ESP32|JTAG|USB|UART|CP210|CH34' >/dev/null
+          echo "- ESP-IDF: $(idf.py --version)" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Install pinned HIL test dependencies
-        run: python -m pip install -r tests/firmware/requirements.txt
+      - name: Install pinned HIL dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          source "$HOME/esp/esp-idf/export.sh"
+          python -m pip install --requirement tests/firmware/requirements.txt
 
-      - name: Build ESP32-S3 firmware from the real project root
+      - name: Build firmware
         shell: bash
         run: |
           set -euo pipefail
@@ -60,13 +79,31 @@ jobs:
           idf.py set-target esp32s3
           idf.py build
 
-      - name: Flash board and run physical pytest-embedded HIL
+      - name: Run physical boot smoke test
         shell: bash
         run: |
           set -euo pipefail
           source "$HOME/esp/esp-idf/export.sh"
-          pytest -s tests/firmware \
-            --embedded-services esp,idf \
-            --app-path . \
-            --build-dir build \
+          PYTEST_ARGS=(
+            tests/firmware
+            -s
+            --embedded-services esp,idf
+            --app-path .
+            --build-dir build
             --target esp32s3
+            --port "$HIL_PORT"
+            --junitxml=artifacts/hil-junit.xml
+          )
+          if [ "$HIL_ERASE_ALL" = "true" ]; then
+            PYTEST_ARGS+=(--erase-all)
+          fi
+          python -m pytest "${PYTEST_ARGS[@]}"
+
+      - name: Upload HIL report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: firmware-hil-${{ github.run_id }}
+          path: artifacts/
+          if-no-files-found: warn
+          retention-days: 14

@@ -2,9 +2,9 @@
 
 ESP32-S3 personal voice companion with a Go backend, realtime audio, durable personal tools, typed UI state, replaceable AI providers, and an evidence-driven production rollout.
 
-> **Stable checkpoint:** [`CP-SW2.3-20260812`](https://github.com/diepgiahuy/ai-companion/tree/CP-SW2.3-20260812)  
-> **Active work:** PR #1 — production evidence platform, prompt/runtime hardening, semantic routing, MCP and WebRTC foundations  
-> **Updated:** 2026-08-13  
+> **Stable checkpoint:** [`CP-SW2.3-20260812`](https://github.com/diepgiahuy/ai-companion/tree/CP-SW2.3-20260812)
+> **Active baseline:** the production evidence platform from merged PR #1; physical/provider gates remain unproven
+> **Updated:** 2026-08-13
 > **Truth rule:** README is the human-readable source of truth. `evidence/status.json` is the machine-verifiable backing for production claims. Mock/fake tests may verify logic, but they cannot promote a production gate to `passed`.
 
 This project is intentionally a **modular Go monolith + ESP32 firmware**, not a microservice demo. The LLM is a reasoning/composition component; authoritative personal state lives behind domain repositories/tools.
@@ -20,7 +20,7 @@ The table below distinguishes **implemented** from **production-proven**. A gree
 | Dependency vulnerability reachability | ✅ passed | `govulncheck` — 0 called vulnerabilities at verified checkpoint |
 | CodeQL | ✅ passed | GitHub CodeQL traced Go build on verified PR head |
 | Mic raw signal | ✅ passed | Real ESP32-S3 + INMP441 peak/RMS responds to sound |
-| Physical ESP32-S3 HIL | ⚪ unproven | Real fail-closed workflow exists; requires dedicated `esp32s3-hil` runner + board and `HIL_ENABLED=true` |
+| Physical ESP32-S3 HIL | ⚪ unproven | Real fail-closed workflow exists; requires a maintainer-authorized manual run on the dedicated `esp32s3-hil` runner + board |
 | Real ASR → LLM → TTS voice E2E | ⚪ unproven | Requires real ASR/TTS providers and real device/network run |
 | Real LLM tool quality | ⚪ unproven | Requires real-model task-success/argument benchmark |
 | Prompt regression quality | ⚪ unproven | Requires versioned real-model eval/red-team suite |
@@ -38,7 +38,7 @@ The canonical structured status is [`evidence/status.json`](evidence/status.json
 
 ## Active engineering work
 
-The current development branch/PR implements foundations for the next production stages without claiming the corresponding real-world gates:
+The current `main` branch includes foundations for the next production stages without claiming the corresponding real-world gates:
 
 - **Versioned prompt bundle v4** — composable base/safety/persona/domain blocks, external override, fingerprinting for trace/eval/rollback.
 - **Typed runtime config** — LLM generation parameters and runtime profile are validated; production profile rejects mock-provider fallback.
@@ -49,9 +49,9 @@ The current development branch/PR implements foundations for the next production
 - **Native MCP bridge** — official MCP Go SDK behind the Companion `ToolRegistry`/policy boundary, with endpoint validation and SSRF-safe defaults.
 - **WebRTC Opus bridge** — Pion WebRTC adapter in parallel with the existing WebSocket transport; latency target remains unproven until measured on real networks.
 - **Expanded GitHub CI/CD** — module lock, race/vet, govulncheck, CodeQL, evidence truth gate, dependency review capability detection, release provenance foundation.
-- **Physical HIL workflow** — fail-closed ESP-IDF build/flash/serial test using `pytest-embedded`; it never falls back to a mock result and is intentionally skipped on PRs until the dedicated board runner is enabled.
+- **Physical HIL workflow** — fail-closed ESP-IDF build/flash/serial test using `pytest-embedded`; it never falls back to a mock result and runs only when a maintainer manually selects a trusted ref and explicit device port.
 
-See PR #1 for the exact diff and deliberately unclaimed gates.
+See merged PR #1 for the original implementation diff and deliberately unclaimed gates.
 
 ## Architecture
 
@@ -146,7 +146,7 @@ go test -tags "adk,mcp,webrtc,nolibopusfile" -race -count=1 ./...
 
 Additional CI workflows run evidence validation, module reproducibility, `govulncheck`, CodeQL and release/security checks. Passing these gates proves only their stated scope.
 
-Physical HIL is a separate gate. It requires a self-hosted macOS ARM64 runner labeled `esp32s3-hil`, a connected ESP32-S3, ESP-IDF installed on the runner, and repository variable `HIL_ENABLED=true`. Without that physical environment the PR HIL job is skipped and **does not count as evidence**.
+Physical HIL is a separate, manual-only gate. It requires a self-hosted macOS ARM64 runner labeled `esp32s3-hil`, a connected ESP32-S3, ESP-IDF installed on the runner, and an explicit serial device path. Pull-request code never triggers this runner; without a successful maintainer-authorized run on a trusted ref there is **no HIL evidence**.
 
 ## Production definition of done
 
