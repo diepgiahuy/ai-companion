@@ -9,6 +9,6 @@ python3 scripts/budget_check.py
 
 echo '== backend Go 1.26.5 + race + websocket/tool-loop E2E =='
 (cd backend && go env GOVERSION | grep -Eq '^go1\.26\.5$')
-(cd backend && go test -tags nolibopusfile -race ./...)
+(cd backend && go test -tags "adk,nolibopusfile" -race -count=1 ./...)
 
 echo 'E2E PASS'

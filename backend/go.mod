@@ -6,6 +6,9 @@ toolchain go1.26.5
 
 require (
 	github.com/coder/websocket v1.8.15
+	github.com/google/jsonschema-go v0.4.3
+	google.golang.org/adk/v2 v2.2.0
+	google.golang.org/genai v1.66.0
 	gopkg.in/hraban/opus.v2 v2.0.0-20230925203106-0188a62cb302
 	modernc.org/sqlite v1.56.0
 )

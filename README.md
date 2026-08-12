@@ -1,7 +1,7 @@
 # Companion Production v1 — Single-User AI Voice Device
 
 > **Status:** Production rewrite in controlled rollout  
-> **Checkpoint:** CP-SW1 — realtime turn runtime + streaming response foundation  
+> **Checkpoint:** CP-SW2.1 — reversible Google ADK v2 integration seam (partial gate)
 > **Updated:** 2026-08-12  
 > **Source baseline:** `companion-production-v1-cp0-20260812`  
 > **Rule:** a feature is never marked ✅ until its stated test gate passes. Research choice ≠ implemented. Source-complete ≠ hardware-proven.
@@ -60,6 +60,40 @@ Legend: ✅ passed gate · 🟡 in progress / partial · 🔴 not started · �
 - Google ADK is not integrated into the source yet. ADK Go v2.2.0 pins Go 1.26.5; this sandbox only provides Go 1.23.2 and cannot fetch the production dependency graph. CP-SW2 must run on the exact production toolchain/container/CI before it can be marked ✅.
 - Current custom Qwen/context/tool implementation remains the active compatibility path until CP-SW2/CP-SW4 parity tests prove the ADK replacement.
 - WebSocket audio is still the legacy 60 ms framing contract; 20/40 ms negotiation and WebRTC are deferred to firmware/transport work rather than changed blindly while hardware is intentionally out of scope.
+
+### CP-SW2.1 evidence — 2026-08-12
+
+**Status: PARTIAL — source integration + offline regression are green; exact ADK dependency/toolchain gate is still blocked by this sandbox.**
+
+**Implemented in code:**
+
+- Added `internal/adkbridge` as an anti-corruption boundary. Product/domain/data packages do not import ADK types. Without the `adk` build tag the bridge fails closed with `ErrNotBuilt`.
+- Added explicit `COMPANION_AGENT_RUNTIME=legacy|adk|mock`; `legacy` remains the default rollback path and unknown runtimes fail startup.
+- Added the official ADK OpenAI/Responses model adapter behind the `adk` build tag and pinned the production module candidates to ADK v2.2.0 / Go 1.26.5.
+- Wrapped the first four representative capabilities — `expense.log`, `budget.get`, `timer.create`, `memory.recall` — as typed ADK FunctionTools while reusing the existing `ToolRegistry` JSON schemas. The bridge does **not** duplicate validation, authorization or business semantics.
+- ADK `FunctionCallID` participates in a canonical SHA-256 idempotency key together with user/thread/device/session/turn/tool identity; delimiter-collision cases are regression-tested.
+- Preserved host destructive-intent policy and host usage quota/metering around the ADK model boundary so opting into ADK does not bypass existing safety/cost controls.
+- Added SSE response streaming into the existing `StreamingAgent` surface. ADK partial events are treated as real deltas; a final full snapshot is deduplicated before sentence segmentation/TTS. UI presentations from host tools are queued and emitted sequentially.
+- Production E2E now includes the `adk` build tag, and `make backend-adk-gate` refuses any Go version other than 1.26.5.
+- Added a clean-tag checkpoint snapshot script that creates/verifies ZIP, Git bundle, SHA256 and restore manifest together so future rollback artifacts cannot drift independently.
+
+**Tests passed in the available environment:**
+
+- focused `internal/adkbridge` + capability/policy unit tests with `-race` ✅
+- fail-closed no-ADK-build test ✅
+- registry validation and authorization preservation tests ✅
+- reconnect-safe/collision-safe idempotency tests ✅
+- ADK stream-delta edge-case tests, including repeated suffix chunks ✅
+- full `scripts/e2e_offline.sh` host + backend functional/race regression ✅
+- offline `go vet` for the modified untagged path ✅
+
+**Gate still open / not claimed:**
+
+- The sandbox has Go 1.23.2 and blocks outbound DNS, so it cannot fetch Go 1.26.5 or the new ADK dependency graph. The tagged ADK compile/API tests and final `go.sum` lock are therefore **not** claimed as passing here.
+- ADK's in-memory runner is intentionally temporary. Durable Companion session/event storage and full existing-tool parity remain CP-SW4 gates before ADK can become the default.
+- The official ADK OpenAI adapter requires the OpenAI **Responses API** surface. Servers exposing only Chat Completions remain on the legacy adapter until a compatible adapter/endpoint is proven.
+
+Rollback target after this checkpoint is tagged: `CP-SW2.1-20260812`; the previous known-good software point remains `CP-SW1-20260812`.
 
 ### CP-SW1 notes / difficulty / solution / trade-off
 
@@ -696,12 +730,14 @@ Delivered in this checkpoint:
 
 Rollback: the existing non-streaming `Agent.Respond/RichAgent` path remains intact.
 
-## CP-SW2 — Google ADK Go v2.2 + model gateway
+## CP-SW2 — Google ADK Go v2.2 + model gateway — 🟡
 
-Plan:
+CP-SW2.1 has delivered the reversible adapter/tool/streaming/usage seam. Remaining work is the exact production dependency/compile gate and broader parity.
+
+Plan / remaining gates:
 
 1. Add ADK v2.2 behind `AgentRuntime`/adapter boundary, not directly throughout domain code.
-2. Start with the official ADK OpenAI-compatible model adapter for local Ollama/vLLM-compatible endpoints, while isolating it because Google marks that adapter experimental.
+2. Start with the official experimental ADK OpenAI adapter only for OpenAI **Responses API**-compatible endpoints; do not assume a generic `/chat/completions` server is compatible.
 3. Add Gemini-native model adapter separately.
 4. Map existing read/write capabilities to typed ADK `FunctionTool`s.
 5. Preserve existing Qwen implementation behind a rollback feature flag until parity is proven.
@@ -943,15 +979,14 @@ Research refreshed on **2026-08-12** from primary/project documentation. Version
 
 # 22. Next action
 
-**Current work queue: CP-SW2 — Google ADK Go v2.2 + model gateway.**
+**Current work queue: finish CP-SW2 after CP-SW2.1 reversible seam.**
 
 Implementation sequence:
 
-1. Build/run the backend in the exact Go **1.26.5** production environment.
-2. Add `google.golang.org/adk/v2@v2.2.0` and lock the dependency graph.
-3. Introduce an ADK adapter without allowing ADK types to leak into domain/data packages.
-4. Wrap the first four representative capabilities as typed tools: `expense.log`, `budget.get`, `timer.create`, `memory.recall` (memory remains compatibility-only until CP-SW6).
-5. Run fake-model deterministic tests, then OpenAI-compatible local endpoint contract tests, then streaming/barge-in E2E.
-6. Compare behavior against the existing compatibility agent; switch primary runtime only after parity is green.
+1. In an environment with outbound dependency access, run exact Go **1.26.5**, `go mod tidy`, `go mod verify`, and commit the resulting `go.sum` lock.
+2. Run `make backend-adk-gate` so the tagged ADK fake-model/tool/usage compile tests execute on the exact production toolchain.
+3. Add an OpenAI Responses-compatible local endpoint contract test and cancellation/barge-in integration test.
+4. Compare representative ADK tool behavior against the existing compatibility agent.
+5. Keep `legacy` as default; broader tool/context/session replacement remains CP-SW4 after parity is measured.
 
 Hardware work is intentionally not in the current queue.

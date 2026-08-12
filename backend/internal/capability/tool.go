@@ -66,6 +66,19 @@ func (r *ToolRegistry) Register(t Tool) error {
 	return nil
 }
 func (r *ToolRegistry) Definitions() []ToolDefinition { return r.DefinitionsForPacks(nil) }
+
+// Definition returns one registered tool definition without exposing the tool
+// implementation. Adapters use this to reuse the capability registry as the
+// schema source of truth instead of maintaining a second schema catalog.
+func (r *ToolRegistry) Definition(name string) (ToolDefinition, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	t := r.tools[name]
+	if t == nil || t.Definition() == nil {
+		return ToolDefinition{}, false
+	}
+	return *t.Definition(), true
+}
 func (r *ToolRegistry) DefinitionsForPacks(packs []string) []ToolDefinition {
 	allowed := map[string]bool{}
 	for _, p := range packs {

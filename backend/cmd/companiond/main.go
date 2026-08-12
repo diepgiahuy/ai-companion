@@ -8,9 +8,11 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
+	"companion-server/internal/adkbridge"
 	"companion-server/internal/agent"
 	"companion-server/internal/capability"
 	"companion-server/internal/contextengine"
@@ -134,11 +136,34 @@ func main() {
 
 	monthlyLLMLimit, _ := strconv.ParseInt(value("COMPANION_MONTHLY_LLM_TOKEN_LIMIT", "0"), 10, 64)
 	usageGuard := usage.Guard{Reader: data, MonthlyLimit: monthlyLLMLimit}
-	qwenBaseURL := os.Getenv("QWEN_BASE_URL")
-	if qwenBaseURL == "" {
+	agentRuntime := strings.ToLower(strings.TrimSpace(value("COMPANION_AGENT_RUNTIME", "legacy")))
+	switch agentRuntime {
+	case "mock":
 		components.Agent = pipeline.MockAgent{}
-		logger.Warn("QWEN_BASE_URL is empty; using deterministic mock agent")
-	} else {
+		logger.Warn("using deterministic mock agent by configuration")
+	case "adk":
+		adkAgent, err := adkbridge.New(adkbridge.Config{
+			AppName:    "companion",
+			ModelName:  value("ADK_MODEL", value("QWEN_MODEL", "Qwen/Qwen3-4B-Instruct-2507")),
+			BaseURL:    os.Getenv("ADK_OPENAI_BASE_URL"),
+			APIKey:     os.Getenv("ADK_OPENAI_API_KEY"),
+			Tools:      toolRegistry,
+			UsageGuard: usageGuard,
+			UsageMeter: data,
+		})
+		if err != nil {
+			logger.Error("initialize ADK runtime", "error", err, "hint", "build with -tags=adk; ADK_OPENAI_BASE_URL must expose the OpenAI Responses API for local-compatible providers")
+			os.Exit(1)
+		}
+		components.Agent = adkAgent
+		logger.Warn("ADK runtime is experimental until CP-SW4 parity/session/usage gates pass")
+	case "legacy":
+		qwenBaseURL := os.Getenv("QWEN_BASE_URL")
+		if qwenBaseURL == "" {
+			components.Agent = pipeline.MockAgent{}
+			logger.Warn("QWEN_BASE_URL is empty; using deterministic mock agent")
+			break
+		}
 		qwen, err := agent.NewQwen(
 			qwenBaseURL,
 			os.Getenv("QWEN_API_KEY"),
@@ -157,6 +182,9 @@ func main() {
 			os.Exit(1)
 		}
 		components.Agent = qwen
+	default:
+		logger.Error("unsupported COMPANION_AGENT_RUNTIME", "value", agentRuntime, "allowed", "legacy|adk|mock")
+		os.Exit(1)
 	}
 
 	serverOptions := []server.Option{

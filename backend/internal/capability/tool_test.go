@@ -51,3 +51,18 @@ func TestRegistryRejectsInvalidArgumentsBeforeHandler(t *testing.T) {
 		t.Fatalf("unexpected %s", got.Content)
 	}
 }
+
+func TestToolRegistryDefinitionLookup(t *testing.T) {
+	reg := NewToolRegistry()
+	original := ToolDefinition{Name: "sample.read", Description: "sample", Pack: "sample", Parameters: map[string]any{"type": "object"}}
+	if err := reg.Register(FunctionTool{ToolName: original.Name, ToolDefinition: &original, Handler: func(context.Context, ToolRequest) ToolResult { return Success(map[string]any{}) }}); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := reg.Definition(original.Name)
+	if !ok || got.Name != original.Name || got.Pack != original.Pack {
+		t.Fatalf("unexpected definition: %#v ok=%v", got, ok)
+	}
+	if _, ok := reg.Definition("missing"); ok {
+		t.Fatal("missing tool unexpectedly resolved")
+	}
+}

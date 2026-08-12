@@ -26,7 +26,8 @@ Opus packets and does not read Ogg/Opus files.
 - One cancellable active turn per device/session, with explicit user + thread identity.
 - Bounded outbound queue and an eight-second input limit.
 - SQLite WAL storage with user-scoped domain ownership, session-safe idempotency keys and legacy migration.
-- Optional OpenAI-compatible `Qwen3-4B-Instruct-2507` provider.
+- Explicit agent-runtime selector: legacy Qwen compatibility path, opt-in ADK v2 bridge, or deterministic mock.
+- The ADK bridge is an anti-corruption layer: ADK types stay out of domain/data packages and host tools delegate back through the authoritative `ToolRegistry`.
 - Provider-neutral `ToolRegistry` and MCP-style `ResourceRegistry`; deterministic ContextRouter preloads application-controlled resources and exposes only relevant tool packs.
 - Typed repository ports isolate Expense/Budget/Schedule/Note/Journal/VoiceMemo logic from SQLite; conversation uses a write-through cache + replaceable store, and `agent.Qwen` does not import SQLite.
 - Deterministic mock ASR and streaming tone TTS for hardware proof.
@@ -51,17 +52,37 @@ Do not mark a backend feature complete until its side effects are idempotent and
 ```bash
 cp config.example.env .env
 set -a; . ./.env; set +a
+
+# Default / rollback runtime. If QWEN_BASE_URL is empty this uses the deterministic mock.
 go run -tags nolibopusfile ./cmd/companiond
+
+# CP-SW2 experimental ADK runtime. Requires the production dependency graph.
+COMPANION_AGENT_RUNTIME=adk go run -tags "adk,nolibopusfile" ./cmd/companiond
 ```
 
-With `QWEN_BASE_URL` empty, the server uses the mock agent. This is the correct
-mode for first ESP32 integration because it isolates network/audio failures
-from model failures.
+Runtime selection is explicit: `COMPANION_AGENT_RUNTIME=legacy|adk|mock`. An
+unknown value fails startup rather than silently choosing another provider. The
+legacy path remains the default until ADK session/parity gates pass.
+
+The ADK OpenAI adapter targets the **OpenAI Responses API**. `ADK_OPENAI_BASE_URL`
+may point at OpenAI or a compatible local server only when that server implements
+the Responses API; an endpoint that implements only `/chat/completions` must stay
+on the legacy adapter or gain a different `model.LLM` adapter.
+
+The ADK path currently uses ADK's in-memory session runner only as an opt-in
+integration seam. It must not become the default before CP-SW4 replaces that
+service with durable Companion session storage and the full tool/context parity
+suite passes. Host-side authorization, destructive-intent policy, idempotency,
+and token quota/usage accounting remain Companion-owned boundaries.
 
 ## Verify
 
 ```bash
-go test -tags nolibopusfile -race ./...
+# Restricted/offline compatibility gate
+GOTOOLCHAIN=local go test -modfile=go.offline.mod -race -count=1 ./...
+
+# Production ADK gate — exact toolchain required
+make backend-adk-gate
 ```
 
 Real streaming ASR and Vietnamese TTS remain provider-level follow-up work;
