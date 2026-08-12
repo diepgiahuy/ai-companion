@@ -17,13 +17,25 @@ import (
 var ErrNotBuilt = errors.New("MCP integration is not included in this build; rebuild with -tags=mcp")
 
 type ServerConfig struct {
-	Name                string
-	Endpoint            string
-	Pack                string
-	Entitlement         string
-	FeatureKey          string
-	AllowPrivateNetwork bool
-	Timeout             time.Duration
+	Name                string        `json:"name"`
+	Endpoint            string        `json:"endpoint"`
+	Pack                string        `json:"pack,omitempty"`
+	Entitlement         string        `json:"entitlement,omitempty"`
+	FeatureKey          string        `json:"feature_key,omitempty"`
+	AllowPrivateNetwork bool          `json:"allow_private_network,omitempty"`
+	Timeout             time.Duration `json:"-"`
+	TimeoutText         string        `json:"timeout,omitempty"`
+}
+
+func (c *ServerConfig) Normalize() error {
+	if strings.TrimSpace(c.TimeoutText) != "" {
+		d, err := time.ParseDuration(strings.TrimSpace(c.TimeoutText))
+		if err != nil || d <= 0 || d > 5*time.Minute {
+			return fmt.Errorf("MCP timeout must be >0 and <=5m")
+		}
+		c.Timeout = d
+	}
+	return nil
 }
 
 type Manager interface {
@@ -59,8 +71,7 @@ func publicIP(ip net.IP) bool {
 }
 
 func secureHTTPClient(config ServerConfig) (*http.Client, error) {
-	u, err := ValidateEndpoint(config.Endpoint, config.AllowPrivateNetwork)
-	if err != nil {
+	if _, err := ValidateEndpoint(config.Endpoint, config.AllowPrivateNetwork); err != nil {
 		return nil, err
 	}
 	timeout := config.Timeout
@@ -98,7 +109,6 @@ func secureHTTPClient(config ServerConfig) (*http.Client, error) {
 		}
 		return nil
 	}
-	_ = u
 	return client, nil
 }
 
@@ -109,9 +119,11 @@ func minDuration(a, b time.Duration) time.Duration {
 	return b
 }
 
-// ConnectAndRegister is implemented by build-tag-specific files so importing
-// MCP remains an explicit capability boundary rather than leaking SDK types into
-// domain/tool packages.
 func ConnectAndRegister(ctx context.Context, registry *capability.ToolRegistry, configs []ServerConfig) (Manager, error) {
+	for i := range configs {
+		if err := configs[i].Normalize(); err != nil {
+			return nil, fmt.Errorf("MCP server %q: %w", configs[i].Name, err)
+		}
+	}
 	return connectAndRegister(ctx, registry, configs)
 }
