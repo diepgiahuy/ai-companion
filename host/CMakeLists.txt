@@ -17,7 +17,7 @@ target_compile_options(companion_sim PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
 add_executable(companion_tests tests/tests.cpp)
 target_link_libraries(companion_tests PRIVATE companion_app)
-target_compile_options(companion_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+target_compile_options(companion_tests PRIVATE -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
 target_compile_definitions(companion_tests PRIVATE COMPANION_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
 add_test(NAME companion_tests COMMAND companion_tests)

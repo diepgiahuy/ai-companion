@@ -120,6 +120,13 @@ void canonical_v2_envelope_matches_golden_fixture() {
           "{\"transport\":\"websocket\",\"audio_params\":{"
           "\"format\":\"opus\",\"sample_rate\":16000,"
           "\"channels\":1,\"frame_duration\":60}}",
+      .correlation_id = {},
+      .session_id = {},
+      .turn_id = {},
+      .generation_id = 0,
+      .has_generation_id = false,
+      .idempotency_key = {},
+      .occurred_at = {},
   };
   assert(protocol::encode(envelope, output, written));
   std::string expected = read_fixture("testdata/protocol/v2/session_hello.json");
@@ -132,7 +139,13 @@ void canonical_v2_envelope_matches_golden_fixture() {
       .type = protocol::ControlType::session_pong,
       .message_id = "firmware-2\nquoted\"",
       .payload_json = "{}",
+      .correlation_id = {},
       .session_id = "session\\one",
+      .turn_id = {},
+      .generation_id = 0,
+      .has_generation_id = false,
+      .idempotency_key = {},
+      .occurred_at = {},
   };
   assert(protocol::encode(escaped, output, written));
   assert(std::string_view(output.data(), written) ==

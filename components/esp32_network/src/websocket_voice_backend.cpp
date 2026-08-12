@@ -635,6 +635,10 @@ void WebSocketVoiceBackend::writer_loop() {
           .correlation_id = correlation_id,
           .session_id = session_id.data(),
           .turn_id = turn_id,
+          .generation_id = 0,
+          .has_generation_id = false,
+          .idempotency_key = {},
+          .occurred_at = {},
       };
       if (!protocol::encode(envelope, json, json_size)) {
         ESP_LOGW(kTag, "control envelope encode failed");
