@@ -505,7 +505,6 @@ func (s *session) handleControl(ctx context.Context, data []byte) error {
 	default:
 		return &protocol.ProtocolError{Code: protocol.InvalidEnvelopeCode, Detail: fmt.Sprintf("message type %q is invalid in this direction", message.Type)}
 	}
-	return nil
 }
 
 func (s *session) startTurn(parent context.Context, turnID string) error {
