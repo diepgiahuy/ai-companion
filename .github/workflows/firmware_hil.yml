@@ -23,7 +23,7 @@ concurrency:
 jobs:
   hil:
     name: Trusted ESP32-S3 smoke test
-    runs-on: [self-hosted, macOS, ARM64]
+    runs-on: [self-hosted, macOS, ARM64, esp32s3-hil]
     timeout-minutes: 30
     env:
       HIL_PORT: ${{ inputs.device_port }}
@@ -31,12 +31,14 @@ jobs:
 
     steps:
       - name: Checkout trusted repository ref
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Record source revision
+        shell: bash
         run: |
+          set -euo pipefail
           {
             echo "## Firmware HIL"
             echo
@@ -48,33 +50,46 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Validate runner prerequisites
+        shell: bash
         run: |
+          set -euo pipefail
           mkdir -p artifacts
           test -n "$HIL_PORT"
           test -e "$HIL_PORT"
+          test -r "$HIL_PORT"
+          test -w "$HIL_PORT"
           test -f "$HOME/esp/esp-idf/export.sh"
           source "$HOME/esp/esp-idf/export.sh"
           idf.py --version | tee artifacts/idf-version.txt
+          python --version
           echo "- ESP-IDF: $(idf.py --version)" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Install pinned HIL dependencies
+        shell: bash
         run: |
+          set -euo pipefail
           source "$HOME/esp/esp-idf/export.sh"
           python -m pip install --requirement tests/firmware/requirements.txt
 
       - name: Build firmware
+        shell: bash
         run: |
+          set -euo pipefail
           source "$HOME/esp/esp-idf/export.sh"
+          idf.py set-target esp32s3
           idf.py build
 
       - name: Run physical boot smoke test
+        shell: bash
         run: |
+          set -euo pipefail
           source "$HOME/esp/esp-idf/export.sh"
           PYTEST_ARGS=(
             tests/firmware
             -s
             --embedded-services esp,idf
             --app-path .
+            --build-dir build
             --target esp32s3
             --port "$HIL_PORT"
             --junitxml=artifacts/hil-junit.xml

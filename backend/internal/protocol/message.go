@@ -56,6 +56,28 @@ type Features struct {
 	ButtonBargeIn bool `json:"button_barge_in,omitempty"`
 }
 
+type UIEmotion string
+
+const (
+	UIEmotionIdle          UIEmotion = "idle"
+	UIEmotionListening     UIEmotion = "listening"
+	UIEmotionThinking      UIEmotion = "thinking"
+	UIEmotionSpeaking      UIEmotion = "speaking"
+	UIEmotionToolExecuting UIEmotion = "tool_executing"
+	UIEmotionInterrupted   UIEmotion = "interrupted"
+	UIEmotionError         UIEmotion = "error"
+)
+
+func (e UIEmotion) Valid() bool {
+	switch e {
+	case UIEmotionIdle, UIEmotionListening, UIEmotionThinking, UIEmotionSpeaking,
+		UIEmotionToolExecuting, UIEmotionInterrupted, UIEmotionError:
+		return true
+	default:
+		return false
+	}
+}
+
 type Message struct {
 	Type          string         `json:"type"`
 	Version       int            `json:"version,omitempty"`
@@ -71,12 +93,30 @@ type Message struct {
 	FireAt        string         `json:"fire_at,omitempty"`
 	Reason        string         `json:"reason,omitempty"`
 	Code          string         `json:"code,omitempty"`
+	Emotion       UIEmotion      `json:"emotion,omitempty"`
+	ToolName      string         `json:"tool_name,omitempty"`
 	Features      Features       `json:"features,omitempty"`
 	AudioParams   *AudioParams   `json:"audio_params,omitempty"`
 	UI            any            `json:"ui,omitempty"`
 	Config        *RuntimeConfig `json:"config,omitempty"`
 	ConfigVersion int64          `json:"config_version,omitempty"`
 	Applied       bool           `json:"applied,omitempty"`
+}
+
+func ValidateUIState(message Message) error {
+	if message.Type != "ui_state" {
+		return fmt.Errorf("ui state message type must be ui_state")
+	}
+	if !message.Emotion.Valid() {
+		return fmt.Errorf("unsupported ui emotion %q", message.Emotion)
+	}
+	if message.Emotion == UIEmotionToolExecuting && message.ToolName == "" {
+		return fmt.Errorf("tool_name is required for tool_executing emotion")
+	}
+	if message.Emotion != UIEmotionToolExecuting && message.ToolName != "" {
+		return fmt.Errorf("tool_name is only valid for tool_executing emotion")
+	}
+	return nil
 }
 
 func ValidateHello(message Message) error {

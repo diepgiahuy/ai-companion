@@ -27,19 +27,19 @@ unit, integration, and simulator checks.
 
 1. Create a dedicated macOS account for the runner.
 2. Register a repository runner using GitHub's generated one-time setup command.
-3. Assign the labels `self-hosted`, `macOS`, and `ARM64`.
+3. Assign the labels `self-hosted`, `macOS`, `ARM64`, and `esp32s3-hil`.
 4. Update the Actions runner to version 2.329.0 or newer; the pinned Node 24 actions require it.
 5. Install the repository-supported ESP-IDF toolchain under
    `$HOME/esp/esp-idf`.
 6. Confirm `$HOME/esp/esp-idf/export.sh` exists and `idf.py --version` works in
    the runner account.
 7. Keep system Python separate from personal environments. The workflow installs the
-   compatible major/minor versions from `tests/firmware/requirements.txt` into the
+   exact versions from `tests/firmware/requirements.txt` into the
    ESP-IDF-selected Python environment.
 8. Configure the runner service only after an interactive smoke run succeeds.
 
 Update ESP-IDF or pytest packages through a reviewed PR. Record compatibility and
-rollback notes before changing the pinned range.
+rollback notes before changing the pinned versions.
 
 ## DUT contract
 

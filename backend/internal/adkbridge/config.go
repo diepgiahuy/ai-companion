@@ -24,13 +24,14 @@ type UsageGuard interface {
 // types stay inside the adapter implementation so product/domain packages do
 // not become coupled to a framework dependency.
 type Config struct {
-	AppName     string
-	ModelName   string
-	BaseURL     string
-	APIKey      string
-	Instruction string
-	HTTPClient  *http.Client
-	Tools       *capability.ToolRegistry
-	UsageGuard  UsageGuard
-	UsageMeter  usagepkg.Meter
+	AppName       string
+	ModelName     string
+	BaseURL       string
+	APIKey        string
+	Instruction   string
+	PromptVersion string
+	HTTPClient    *http.Client
+	Tools         *capability.ToolRegistry
+	UsageGuard    UsageGuard
+	UsageMeter    usagepkg.Meter
 }
