@@ -2,6 +2,7 @@ package capability
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -64,5 +65,33 @@ func TestToolRegistryDefinitionLookup(t *testing.T) {
 	}
 	if _, ok := reg.Definition("missing"); ok {
 		t.Fatal("missing tool unexpectedly resolved")
+	}
+}
+
+type panicTool struct{}
+
+func (panicTool) Name() string { return "test.panic" }
+func (panicTool) Definition() *ToolDefinition {
+	return &ToolDefinition{Name: "test.panic", Risk: "read", Parameters: map[string]any{"type": "object"}}
+}
+func (panicTool) Execute(context.Context, ToolRequest) ToolResult {
+	panic("secret panic payload must never reach model")
+}
+
+func TestToolRegistryContainsToolPanicsAsGenericFailure(t *testing.T) {
+	reg := NewToolRegistry()
+	if err := reg.Register(panicTool{}); err != nil {
+		t.Fatal(err)
+	}
+	result := reg.Execute(context.Background(), "test.panic", ToolRequest{Arguments: `{}`})
+	if strings.Contains(result.Content, "secret panic payload") {
+		t.Fatalf("panic payload leaked: %s", result.Content)
+	}
+	var out map[string]any
+	if err := json.Unmarshal([]byte(result.Content), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out["ok"] != false || out["error"] != "internal tool execution failed" {
+		t.Fatalf("unexpected panic failure: %#v", out)
 	}
 }

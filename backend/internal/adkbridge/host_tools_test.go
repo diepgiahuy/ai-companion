@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"companion-server/internal/capability"
@@ -156,5 +157,112 @@ func TestToolExecutionKeyCanonicalTupleHasNoDelimiterCollision(t *testing.T) {
 	}
 	if ka != ToolExecutionKey(a, "call", ToolBudgetGet) {
 		t.Fatal("idempotency key must be deterministic")
+	}
+}
+
+type malformedResultTool struct {
+	name         string
+	def          *capability.ToolDefinition
+	content      string
+	presentation *capability.Presentation
+}
+
+func (t malformedResultTool) Name() string                           { return t.name }
+func (t malformedResultTool) Definition() *capability.ToolDefinition { return t.def }
+func (t malformedResultTool) Execute(context.Context, capability.ToolRequest) capability.ToolResult {
+	return capability.ToolResult{Content: t.content, Presentation: t.presentation}
+}
+
+func TestHostToolExecutorConvertsMalformedHostResultToSafeStructuredFailure(t *testing.T) {
+	reg := capability.NewToolRegistry()
+	tool := malformedResultTool{
+		name: ToolTimerCreate,
+		def: &capability.ToolDefinition{
+			Name:       ToolTimerCreate,
+			Risk:       "write",
+			Parameters: map[string]any{"type": "object", "additionalProperties": true},
+		},
+		content:      `backend panic detail: secret-token-123`,
+		presentation: &capability.Presentation{Kind: "success", Title: "must not publish"},
+	}
+	if err := reg.Register(tool); err != nil {
+		t.Fatal(err)
+	}
+
+	var gotOutcome ToolOutcome
+	presentations := 0
+	ctx := capability.WithPresentationSink(context.Background(), func(capability.Presentation) { presentations++ })
+	ctx = withToolOutcomeSink(ctx, func(outcome ToolOutcome) { gotOutcome = outcome })
+	out, err := (HostToolExecutor{Registry: reg}).Execute(ctx, ToolTimerCreate, "call-malformed", TimerCreateArgs{DelaySeconds: 60})
+	if err != nil {
+		t.Fatalf("malformed host output must become a tool response, got error: %v", err)
+	}
+	if out["ok"] != false || out["error_code"] != "invalid_tool_result" || out["execution_status"] != "unknown" || out["retryable"] != false {
+		t.Fatalf("unexpected safe failure payload: %#v", out)
+	}
+	encoded, err := json.Marshal(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(encoded) == "" || strings.Contains(string(encoded), "secret-token-123") {
+		t.Fatalf("raw host output leaked to model: %s", encoded)
+	}
+	if gotOutcome.Name != ToolTimerCreate || gotOutcome.Risk != "write" || gotOutcome.Valid || gotOutcome.OK {
+		t.Fatalf("unexpected outcome: %#v", gotOutcome)
+	}
+	if presentations != 0 {
+		t.Fatalf("malformed tool result published %d presentation(s)", presentations)
+	}
+}
+
+func TestHostToolExecutorRejectsJSONWithoutBooleanOKEnvelope(t *testing.T) {
+	reg := capability.NewToolRegistry()
+	tool := malformedResultTool{
+		name: ToolBudgetGet,
+		def: &capability.ToolDefinition{
+			Name:       ToolBudgetGet,
+			Risk:       "read",
+			Parameters: map[string]any{"type": "object", "additionalProperties": true},
+		},
+		content: `{"value":123}`,
+	}
+	if err := reg.Register(tool); err != nil {
+		t.Fatal(err)
+	}
+	out, err := (HostToolExecutor{Registry: reg}).Execute(context.Background(), ToolBudgetGet, "call-no-envelope", BudgetGetArgs{Period: "monthly"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out["error_code"] != "invalid_tool_result" || out["execution_status"] != "unknown" {
+		t.Fatalf("unexpected payload: %#v", out)
+	}
+}
+
+func TestHostToolExecutorDoesNotPublishPresentationForValidFailure(t *testing.T) {
+	reg := capability.NewToolRegistry()
+	tool := malformedResultTool{
+		name: ToolTimerCreate,
+		def: &capability.ToolDefinition{
+			Name:       ToolTimerCreate,
+			Risk:       "write",
+			Parameters: map[string]any{"type": "object", "additionalProperties": true},
+		},
+		content:      `{"ok":false,"error":"rejected"}`,
+		presentation: &capability.Presentation{Kind: "success", Title: "must not publish"},
+	}
+	if err := reg.Register(tool); err != nil {
+		t.Fatal(err)
+	}
+	presentations := 0
+	ctx := capability.WithPresentationSink(context.Background(), func(capability.Presentation) { presentations++ })
+	out, err := (HostToolExecutor{Registry: reg}).Execute(ctx, ToolTimerCreate, "call-failed", TimerCreateArgs{DelaySeconds: 60})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out["ok"] != false {
+		t.Fatalf("unexpected tool result: %#v", out)
+	}
+	if presentations != 0 {
+		t.Fatalf("failed tool result published %d presentation(s)", presentations)
 	}
 }

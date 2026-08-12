@@ -26,7 +26,7 @@ import (
 
 const (
 	maximumControlQueue = 32
-	maximumAudioQueue   = 24
+	maximumMediaQueue   = 24
 	helloTimeout        = 10 * time.Second
 )
 
@@ -258,7 +258,7 @@ type session struct {
 	hub           *sessionHub
 	logger        *slog.Logger
 	controlWrites chan outbound
-	audioWrites   chan outbound
+	mediaWrites   chan outbound
 	mu            sync.Mutex
 	active        *turn
 	generation    uint64
@@ -300,7 +300,7 @@ func newSession(connection *websocket.Conn, components pipeline.Components, hub 
 		hub:           hub,
 		logger:        logger,
 		controlWrites: make(chan outbound, maximumControlQueue),
-		audioWrites:   make(chan outbound, maximumAudioQueue),
+		mediaWrites:   make(chan outbound, maximumMediaQueue),
 		codec:         codec,
 		controlPlane:  control,
 	}, nil
@@ -382,18 +382,19 @@ func (s *session) readLoop(ctx context.Context) error {
 
 func (s *session) writeLoop(ctx context.Context) error {
 	write := func(message outbound) error {
-		// A cancelled/interrupting turn may already have audio/control items queued.
+		// A cancelled/interrupting turn may already have media/control items queued.
 		// Never let those stale generation items reach the device after barge-in.
 		if !s.outboundCurrent(message) {
 			return nil
 		}
 		writeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		defer cancel()
-		return s.connection.Write(writeCtx, message.kind, message.data)
+		err := s.connection.Write(writeCtx, message.kind, message.data)
+		cancel()
+		return err
 	}
 	for {
 		// Always drain control first when available so alarms/config/abort are not
-		// trapped behind a slow TTS audio stream.
+		// trapped behind the ordered TTS media stream.
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -411,7 +412,7 @@ func (s *session) writeLoop(ctx context.Context) error {
 			if err := write(message); err != nil {
 				return err
 			}
-		case message := <-s.audioWrites:
+		case message := <-s.mediaWrites:
 			if err := write(message); err != nil {
 				return err
 			}
@@ -611,14 +612,23 @@ func (s *session) processTurn(current *turn, pcm []byte) {
 	}
 	s.setTurnState(current, "speaking")
 	if ui != nil && !earlyUI {
-		s.sendTurnJSON(current.ctx, current, protocol.Message{Type: "ui", SessionID: s.id, TurnID: current.id, UI: ui})
+		if err := s.sendTurnJSON(current.ctx, current, protocol.Message{Type: "ui", SessionID: s.id, TurnID: current.id, UI: ui}); err != nil {
+			s.failTurn(current, "control_write_failed", err)
+			return
+		}
 	}
-	s.sendTurnJSON(current.ctx, current, protocol.Message{
+	if err := s.sendTurnMediaJSON(current.ctx, current, protocol.Message{
 		Type: "tts", State: "start", SessionID: s.id, TurnID: current.id,
-	})
-	s.sendTurnJSON(current.ctx, current, protocol.Message{
+	}); err != nil {
+		s.failTurn(current, "media_write_failed", err)
+		return
+	}
+	if err := s.sendTurnMediaJSON(current.ctx, current, protocol.Message{
 		Type: "tts", State: "sentence_start", SessionID: s.id, TurnID: current.id, Text: reply,
-	})
+	}); err != nil {
+		s.failTurn(current, "media_write_failed", err)
+		return
+	}
 	ttsStarted := time.Now()
 	err = s.components.TTS.Synthesize(agentCtx, reply, func(frame []byte) error {
 		packet, err := s.codec.EncodeDownlink(frame)
@@ -636,9 +646,12 @@ func (s *session) processTurn(current *turn, pcm []byte) {
 	if !s.isCurrent(current) {
 		return
 	}
-	s.sendTurnJSON(current.ctx, current, protocol.Message{
+	if err := s.sendTurnMediaJSON(current.ctx, current, protocol.Message{
 		Type: "tts", State: "stop", SessionID: s.id, TurnID: current.id,
-	})
+	}); err != nil {
+		s.failTurn(current, "media_write_failed", err)
+		return
+	}
 	ttsDuration := time.Since(ttsStarted)
 	s.logger.Info("voice turn completed",
 		"turn_id", current.id, "session_id", s.id, "device_id", s.deviceID, "user_id", s.userID,
@@ -736,6 +749,33 @@ func (s *session) sendTurn(ctx context.Context, current *turn, message outbound)
 	return s.send(ctx, message)
 }
 
+// sendTurnMediaJSON enqueues a turn-scoped TTS lifecycle event on the same
+// FIFO lane as its audio frames. Urgent control messages keep their separate
+// priority lane, while media causality is explicit rather than dependent on
+// scheduler timing across two queues.
+func (s *session) sendTurnMediaJSON(ctx context.Context, current *turn, message protocol.Message) error {
+	if current == nil {
+		return fmt.Errorf("turn is required")
+	}
+	message.GenerationID = current.generation
+	data, err := json.Marshal(message)
+	if err != nil {
+		return err
+	}
+	out := outbound{kind: websocket.MessageText, data: data, turnScoped: true, generation: current.generation}
+	// Media control is causally required after previously accepted audio. It may
+	// wait for bounded queue capacity instead of failing on a transiently-full
+	// lane; ordinary audio frame production remains non-blocking via sendTurn.
+	waitCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	select {
+	case <-waitCtx.Done():
+		return waitCtx.Err()
+	case s.mediaWrites <- out:
+		return nil
+	}
+}
+
 func (s *session) sendTurnError(ctx context.Context, current *turn, code, message string) {
 	_ = s.sendTurnJSON(ctx, current, protocol.Message{
 		Type: "error", Code: code, Text: message, SessionID: s.id, TurnID: current.id,
@@ -752,7 +792,7 @@ func (s *session) send(ctx context.Context, message outbound) error {
 	queue := s.controlWrites
 	label := "control"
 	if message.kind == websocket.MessageBinary {
-		queue = s.audioWrites
+		queue = s.mediaWrites
 		label = "audio"
 	}
 	select {

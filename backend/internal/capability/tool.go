@@ -100,7 +100,17 @@ func (r *ToolRegistry) DefinitionsForPacks(packs []string) []ToolDefinition {
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }
-func (r *ToolRegistry) Execute(ctx context.Context, name string, req ToolRequest) ToolResult {
+func (r *ToolRegistry) Execute(ctx context.Context, name string, req ToolRequest) (result ToolResult) {
+	// Tool implementations are extension boundaries. A panic in one tool must
+	// not tear down the voice/session process or leak the panic payload back to
+	// the model. Observability can attach richer internal diagnostics later; the
+	// model-facing failure remains deliberately generic.
+	defer func() {
+		if recover() != nil {
+			result = Failure(fmt.Errorf("internal tool execution failed"))
+		}
+	}()
+
 	r.mu.RLock()
 	t := r.tools[name]
 	a := r.authorizer

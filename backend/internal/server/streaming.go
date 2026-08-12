@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -87,7 +86,7 @@ func (s *session) processStreamingReply(current *turn, agentCtx context.Context,
 			metrics.FirstSegmentAt = time.Since(started)
 			ttsStartedAt = time.Now()
 			s.setTurnState(current, "speaking")
-			if err := s.sendTurnJSON(current.ctx, current, protocol.Message{
+			if err := s.sendTurnMediaJSON(current.ctx, current, protocol.Message{
 				Type: "tts", State: "start", SessionID: s.id, TurnID: current.id,
 			}); err != nil {
 				current.cancel()
@@ -96,7 +95,7 @@ func (s *session) processStreamingReply(current *turn, agentCtx context.Context,
 			}
 		}
 		segmentsSeen++
-		if err := s.sendTurnJSON(current.ctx, current, protocol.Message{
+		if err := s.sendTurnMediaJSON(current.ctx, current, protocol.Message{
 			Type: "tts", State: "sentence_start", SessionID: s.id, TurnID: current.id, Text: segment,
 		}); err != nil {
 			current.cancel()
@@ -114,7 +113,7 @@ func (s *session) processStreamingReply(current *turn, agentCtx context.Context,
 			<-agentDone
 			return metrics, err
 		}
-		if err := s.sendTurnJSON(current.ctx, current, protocol.Message{
+		if err := s.sendTurnMediaJSON(current.ctx, current, protocol.Message{
 			Type: "tts", State: "sentence_end", SessionID: s.id, TurnID: current.id, Text: segment,
 		}); err != nil {
 			current.cancel()
@@ -137,9 +136,9 @@ func (s *session) processStreamingReply(current *turn, agentCtx context.Context,
 	if !s.isCurrent(current) {
 		return metrics, context.Canceled
 	}
-	if err := s.sendTurnJSON(current.ctx, current, protocol.Message{
+	if err := s.sendTurnMediaJSON(current.ctx, current, protocol.Message{
 		Type: "tts", State: "stop", SessionID: s.id, TurnID: current.id,
-	}); err != nil && !errors.Is(err, context.Canceled) {
+	}); err != nil {
 		return metrics, err
 	}
 	return metrics, nil

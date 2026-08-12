@@ -1,7 +1,7 @@
 # Companion Production v1 — Single-User AI Voice Device
 
 > **Status:** Production rewrite in controlled rollout  
-> **Checkpoint:** CP-SW2.1 — reversible Google ADK v2 integration seam (partial gate)
+> **Checkpoint:** CP-SW2.2 — hardening checkpoint PASS; CP-SW2 production ADK gate still partial
 > **Updated:** 2026-08-12  
 > **Source baseline:** `companion-production-v1-cp0-20260812`  
 > **Rule:** a feature is never marked ✅ until its stated test gate passes. Research choice ≠ implemented. Source-complete ≠ hardware-proven.
@@ -94,6 +94,24 @@ Legend: ✅ passed gate · 🟡 in progress / partial · 🔴 not started · �
 - The official ADK OpenAI adapter requires the OpenAI **Responses API** surface. Servers exposing only Chat Completions remain on the legacy adapter until a compatible adapter/endpoint is proven.
 
 Rollback target after this checkpoint is tagged: `CP-SW2.1-20260812`; the previous known-good software point remains `CP-SW1-20260812`.
+
+### CP-SW2.2 evidence — 2026-08-12
+
+**Status: PARTIAL — tool-loop/error hardening + independent static review are green; exact ADK production compile/provider gate remains open.**
+
+- Replaced the single `sentText` terminal assumption with a Companion-owned invocation outcome tracker that correlates function calls/results and distinguishes text emitted before vs after tool execution.
+- A committed `write`/`destructive` mutation with no post-tool model text gets a narrow deterministic `OK.` fallback so the user is not encouraged to repeat a side effect that already succeeded. Reads, failures, malformed results, incomplete calls, and mixed unacknowledged tool sequences are never hidden by that fallback.
+- Malformed host-tool output now becomes a safe non-retryable `invalid_tool_result` response. Raw host output is not copied into the model context, and a parsed result is only accepted when it contains a boolean `ok` envelope.
+- `ToolRegistry.Execute` now contains panics at the common tool boundary and returns a generic structured failure rather than allowing a tool panic/panic payload to escape into the voice process/model.
+- Independent static review is now a permanent checkpoint gate. `docs/STATIC_REVIEW_GATE.md` defines the review dimensions, and checkpoint snapshotting refuses to run unless the checkpoint note records `Static review status: PASS`.
+- The proposed per-request fire-and-forget usage-meter goroutine was **not** adopted: there is no measured bottleneck yet, and unbounded asynchronous accounting would weaken quota/shutdown reliability. Measure first; if required later, use a bounded/drained design.
+- Independent review also exposed a realtime ordering bug outside the original Gemini findings: priority control writes could overtake accepted TTS audio. TTS lifecycle events and audio now share one ordered, turn-scoped **media FIFO**, while abort/config/other urgent control keeps its priority lane. This preserves barge-in responsiveness without a per-sentence drain barrier.
+- Media lifecycle enqueue uses bounded backpressure; ordinary audio enqueue remains bounded/non-blocking. Non-streaming media/UI enqueue errors are no longer silently ignored, and streaming cancellation at terminal enqueue propagates instead of being logged as successful completion.
+- ADK tool presentation is emitted only after a valid `ok=true` host result, preventing malformed/failed tools from showing a success UI.
+- Final static-review stress evidence: expense websocket E2E `50/50` under `-race`, media/stream ordering `30/30`, ADK host/outcome/capability `20/20`, followed by full race/vet/offline E2E.
+- Post-review `go test -race`, `go vet`, host tests and offline E2E are green. The exact tagged ADK gate is still blocked by this sandbox's Go 1.23.2/no-dependency-download constraint and is not falsely marked PASS.
+
+Rollback target after this checkpoint is tagged: `CP-SW2.2-20260812`; `CP-SW2.1-20260812` remains the previous known-good point.
 
 ### CP-SW1 notes / difficulty / solution / trade-off
 
@@ -714,7 +732,7 @@ Also track:
 
 # 16. Rollout plan in detail — software first
 
-The order below is binding for the current rewrite. **Do not switch to hardware work until the requested software checkpoints are completed or explicitly reprioritized.** Every checkpoint updates this README with: status, code changed, tests executed, failures, solution, trade-offs, rollback path, and next gate.
+The order below is binding for the current rewrite. **Do not switch to hardware work until the requested software checkpoints are completed or explicitly reprioritized.** Every checkpoint updates this README with: status, code changed, tests executed, failures, solution, trade-offs, rollback path, next gate, and an **independent static review** performed after implementation but before tagging/snapshotting. A checkpoint cannot close until review findings are fixed or explicitly accepted, relevant tests are rerun, and the review status is recorded as PASS.
 
 ## CP-SW1 — Realtime turn runtime + streaming foundation — ✅
 
@@ -882,6 +900,17 @@ Changed:
 Tests executed:
 - command -> PASS/FAIL
 - HIL scenario -> PASS/FAIL
+
+Independent static review:
+- Static review status: PASS | FAIL
+- correctness / state-machine invariants:
+- concurrency / cancellation / lifecycle:
+- error semantics / retry / idempotency:
+- security / privacy / trust boundaries:
+- performance / resource bounds:
+- maintainability / dependency and architecture boundaries:
+- findings fixed or explicitly accepted:
+- tests rerun after review:
 
 Measured:
 - latency:

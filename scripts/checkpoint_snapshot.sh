@@ -25,6 +25,30 @@ if ! git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
   exit 1
 fi
 
+review_note="docs/checkpoints/${tag}.md"
+if [[ ! -f "$review_note" ]]; then
+  echo "checkpoint note is required before snapshot: $review_note" >&2
+  exit 1
+fi
+if ! grep -Fq "## Independent static review" "$review_note"; then
+  echo "checkpoint note is missing independent static review section: $review_note" >&2
+  exit 1
+fi
+if ! grep -Fq "Static review status: PASS" "$review_note"; then
+  echo "checkpoint static review has not passed: $review_note" >&2
+  exit 1
+fi
+
+review_report="docs/reviews/${tag}-static-review.md"
+if [[ ! -f "$review_report" ]]; then
+  echo "independent static review report is required before snapshot: $review_report" >&2
+  exit 1
+fi
+if ! grep -Fq "Static review status: PASS" "$review_report"; then
+  echo "independent static review report has not passed: $review_report" >&2
+  exit 1
+fi
+
 head_commit="$(git rev-parse HEAD)"
 tag_commit="$(git rev-list -n 1 "$tag")"
 if [[ "$head_commit" != "$tag_commit" ]]; then

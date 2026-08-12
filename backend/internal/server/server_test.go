@@ -494,7 +494,7 @@ func TestTurnGenerationInvalidatesQueuedOutput(t *testing.T) {
 	s := &session{
 		id:            "session-1",
 		controlWrites: make(chan outbound, 4),
-		audioWrites:   make(chan outbound, 4),
+		mediaWrites:   make(chan outbound, 4),
 		generation:    7,
 	}
 	turnCtx, turnCancel := context.WithCancel(ctx)
@@ -516,5 +516,91 @@ func TestTurnGenerationInvalidatesQueuedOutput(t *testing.T) {
 		}
 	default:
 		t.Fatal("expected interruption control event")
+	}
+}
+
+func TestTurnMediaLifecycleSharesFIFOWithAudio(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	s := &session{
+		controlWrites: make(chan outbound, 4),
+		mediaWrites:   make(chan outbound, 4),
+		generation:    3,
+	}
+	turnCtx, turnCancel := context.WithCancel(ctx)
+	defer turnCancel()
+	current := &turn{id: "turn-3", ctx: turnCtx, cancel: turnCancel, generation: 3}
+	s.active = current
+
+	if err := s.sendTurnMediaJSON(ctx, current, protocol.Message{Type: "tts", State: "start", TurnID: current.id}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.sendTurn(ctx, current, outbound{kind: websocket.MessageBinary, data: []byte{1}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.sendTurnMediaJSON(ctx, current, protocol.Message{Type: "tts", State: "stop", TurnID: current.id}); err != nil {
+		t.Fatal(err)
+	}
+
+	startMessage := <-s.mediaWrites
+	if startMessage.kind != websocket.MessageText {
+		t.Fatalf("first media item kind=%v, want text lifecycle event", startMessage.kind)
+	}
+	var startControl protocol.Message
+	if err := json.Unmarshal(startMessage.data, &startControl); err != nil {
+		t.Fatal(err)
+	}
+	if startControl.Type != "tts" || startControl.State != "start" {
+		t.Fatalf("first media control=%+v, want tts start", startControl)
+	}
+
+	audio := <-s.mediaWrites
+	if audio.kind != websocket.MessageBinary || len(audio.data) != 1 {
+		t.Fatalf("second media item=%#v, want audio", audio)
+	}
+
+	stopMessage := <-s.mediaWrites
+	if stopMessage.kind != websocket.MessageText {
+		t.Fatalf("third media item kind=%v, want text lifecycle event", stopMessage.kind)
+	}
+	var stopControl protocol.Message
+	if err := json.Unmarshal(stopMessage.data, &stopControl); err != nil {
+		t.Fatal(err)
+	}
+	if stopControl.Type != "tts" || stopControl.State != "stop" {
+		t.Fatalf("third media control=%+v, want tts stop", stopControl)
+	}
+}
+
+func TestTurnMediaControlWaitsForTransientQueueCapacity(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	s := &session{mediaWrites: make(chan outbound, 1), generation: 5}
+	turnCtx, turnCancel := context.WithCancel(ctx)
+	defer turnCancel()
+	current := &turn{id: "turn-5", ctx: turnCtx, cancel: turnCancel, generation: 5}
+	s.active = current
+
+	// Fill the lane with the final accepted audio frame. A causally-dependent
+	// stop event may wait for bounded capacity rather than failing immediately.
+	s.mediaWrites <- outbound{kind: websocket.MessageBinary, data: []byte{1}, turnScoped: true, generation: 5}
+	done := make(chan error, 1)
+	go func() {
+		done <- s.sendTurnMediaJSON(ctx, current, protocol.Message{Type: "tts", State: "stop", TurnID: current.id})
+	}()
+
+	select {
+	case err := <-done:
+		t.Fatalf("media control returned while lane was transiently full: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	<-s.mediaWrites // writer makes one slot available
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	queued := <-s.mediaWrites
+	if queued.kind != websocket.MessageText {
+		t.Fatalf("queued item kind=%v, want media control text", queued.kind)
 	}
 }

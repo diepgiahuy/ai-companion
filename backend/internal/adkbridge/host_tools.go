@@ -78,21 +78,39 @@ func (e HostToolExecutor) Execute(ctx context.Context, toolName, functionCallID 
 		return nil, fmt.Errorf("marshal %s args: %w", toolName, err)
 	}
 	turn, _ := pipeline.CurrentTurn(ctx)
+	definition, _ := e.Registry.Definition(toolName)
 	result := e.Registry.Execute(ctx, toolName, capability.ToolRequest{
 		Key:       ToolExecutionKey(turn, functionCallID, toolName),
 		Arguments: string(payload),
 	})
-	if result.Presentation != nil {
+	var out map[string]any
+	if err := json.Unmarshal([]byte(result.Content), &out); err != nil || out == nil {
+		return invalidToolResult(ctx, functionCallID, toolName, definition.Risk), nil
+	}
+	ok, hasOK := out["ok"].(bool)
+	if !hasOK {
+		return invalidToolResult(ctx, functionCallID, toolName, definition.Risk), nil
+	}
+	emitToolOutcome(ctx, ToolOutcome{FunctionCallID: functionCallID, Name: toolName, Risk: definition.Risk, OK: ok, Valid: true})
+	if ok && result.Presentation != nil {
 		capability.EmitPresentation(ctx, *result.Presentation)
 	}
-	var out map[string]any
-	if err := json.Unmarshal([]byte(result.Content), &out); err != nil {
-		return nil, fmt.Errorf("decode %s result: %w", toolName, err)
-	}
-	if out == nil {
-		out = map[string]any{}
-	}
 	return out, nil
+}
+
+func invalidToolResult(ctx context.Context, functionCallID, toolName, risk string) map[string]any {
+	// A malformed host result has ambiguous execution status: the side effect
+	// may already have committed before serialization failed. Return structured
+	// data to the LLM so it can explain the failure, but never expose raw host
+	// output and never invite an automatic retry.
+	emitToolOutcome(ctx, ToolOutcome{FunctionCallID: functionCallID, Name: toolName, Risk: risk, Valid: false})
+	return map[string]any{
+		"ok":               false,
+		"error":            "internal tool execution failed",
+		"error_code":       "invalid_tool_result",
+		"execution_status": "unknown",
+		"retryable":        false,
+	}
 }
 
 // ToolExecutionKey is stable for an ADK function call and scoped far enough to
