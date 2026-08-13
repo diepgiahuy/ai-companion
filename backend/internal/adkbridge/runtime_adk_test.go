@@ -23,13 +23,18 @@ func (fakeLLM) GenerateContent(context.Context, *model.LLMRequest, bool) iter.Se
 	return func(func(*model.LLMResponse, error) bool) {}
 }
 
-func TestADKRepresentativeToolsReuseRegistrySchemas(t *testing.T) {
+func TestADKExposesEveryRegistryToolAndReusesSchemas(t *testing.T) {
 	reg := capability.NewToolRegistry()
-	for _, name := range RepresentativeToolNames() {
+	names := []string{"expense.log", "budget.get", "note.create", "reminder.create", "timer.create", "memory.recall", "custom.dynamic"}
+	for _, name := range names {
 		name := name
 		def := capability.ToolDefinition{
-			Name: name, Description: name, Pack: "test",
-			Parameters: map[string]any{"type": "object", "additionalProperties": true},
+			Name: name, Description: "schema for " + name, Pack: "test",
+			Parameters: map[string]any{
+				"type":                 "object",
+				"properties":           map[string]any{"value": map[string]any{"type": "string"}},
+				"additionalProperties": false,
+			},
 		}
 		if err := reg.Register(capability.FunctionTool{
 			ToolName: name, ToolDefinition: &def,
@@ -40,6 +45,24 @@ func TestADKRepresentativeToolsReuseRegistrySchemas(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+
+	tools, err := buildHostTools(reg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tools) != len(names) {
+		t.Fatalf("ADK tool count=%d, registry count=%d", len(tools), len(names))
+	}
+	got := map[string]bool{}
+	for _, current := range tools {
+		got[current.Name()] = true
+	}
+	for _, name := range names {
+		if !got[name] {
+			t.Fatalf("registry tool %q missing from ADK exposure", name)
+		}
+	}
+
 	if _, err := newWithModel(Config{
 		AppName:       "test",
 		Tools:         reg,
@@ -47,6 +70,18 @@ func TestADKRepresentativeToolsReuseRegistrySchemas(t *testing.T) {
 		PromptVersion: "test@1#fixture",
 	}, fakeLLM{}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestADKRejectsEmptyRegistry(t *testing.T) {
+	_, err := newWithModel(Config{
+		AppName:       "test",
+		Tools:         capability.NewToolRegistry(),
+		Instruction:   "test instruction",
+		PromptVersion: "test@1#fixture",
+	}, fakeLLM{})
+	if err == nil {
+		t.Fatal("expected empty registry to fail closed")
 	}
 }
 
