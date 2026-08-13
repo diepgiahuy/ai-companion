@@ -120,28 +120,52 @@ expect_unauthorized "$CORE_DEVICE" "$CORE_CREDENTIAL"
 python3 "$ROOT/host/companion_software_device/validate_evidence.py" "$OUT"
 stop_server
 
-# Authoritative mutation run: ADK -> complete ToolRegistry -> SQLite. The fake
-# Responses endpoint only decides the deterministic function call; ToolRegistry
-# policy/schema/idempotency and the real repository execute the mutation.
+# Representative ADK tool parity. The same durable SQLite database and enrolled
+# device are reused across process restarts. Restarting only changes MockASR's
+# deterministic transcript; the product agent remains ADK and the Responses
+# fixture must route every case through the public ToolRegistry definition.
 TOOL_DEVICE="software-device-tool"
-export MOCK_TRANSCRIPT="Hôm nay đi chợ 50k"
 export COMPANION_DATABASE="$TMP/tool.db"
-COMPANION_EVIDENCE_CONFIG_SHA256="$(printf '%s\n' \
-  'profile=test' 'allow_mock=true' 'agent=adk:fake_responses' \
-  'auth=database_enrolled' 'asr=mock:Hôm nay đi chợ 50k' \
-  'tts=mock' 'protocol=v2' | sha256sum | awk '{print $1}')"
+TOOL_CREDENTIAL=""
+TOOL_CASES=(
+  "expense|Tier1 expense 50k|$TOOL_OUT"
+  "budget|Tier1 budget weekly|${OUT%.json}-tool-budget.json"
+  "note|Tier1 note|${OUT%.json}-tool-note.json"
+  "journal|Tier1 journal|${OUT%.json}-tool-journal.json"
+  "reminder|Tier1 reminder|${OUT%.json}-tool-reminder.json"
+  "timer|Tier1 timer|${OUT%.json}-tool-timer.json"
+  "memory|Tier1 memory|${OUT%.json}-tool-memory.json"
+)
+
+for spec in "${TOOL_CASES[@]}"; do
+  IFS='|' read -r case_id transcript evidence_path <<<"$spec"
+  export MOCK_TRANSCRIPT="$transcript"
+  COMPANION_EVIDENCE_CONFIG_SHA256="$(printf '%s\n' \
+    'profile=test' 'allow_mock=true' 'agent=adk:fake_responses' \
+    'auth=database_enrolled' "asr=mock:${transcript}" \
+    'tts=mock' 'protocol=v2' "tool_case=${case_id}" | sha256sum | awk '{print $1}')"
+  start_server "$TOOL_SERVER_LOG"
+  if [[ -z "$TOOL_CREDENTIAL" ]]; then
+    TOOL_CREDENTIAL="$(enroll_device "$TOOL_DEVICE")"
+    expect_unauthorized "$TOOL_DEVICE" "wrong-tier1-credential"
+  fi
+  "${SOFTWARE_DEVICE_BIN:-/usr/local/bin/companion_software_device}" \
+    --url ws://127.0.0.1:18000/v2/device \
+    --device-id "$TOOL_DEVICE" \
+    --token "$TOOL_CREDENTIAL" \
+    --admin-token "$COMPANION_ADMIN_TOKEN" \
+    --scenario-set tool \
+    --expected-text "Tier-1 tool parity ok" \
+    --evidence "$evidence_path"
+  python3 "$ROOT/host/companion_software_device/validate_evidence.py" "$evidence_path"
+  stop_server
+done
+
+# Re-open the same authoritative DB only to exercise the final credential
+# lifecycle. A revoked credential must fail before WebSocket upgrade.
+export MOCK_TRANSCRIPT="Tier1 memory"
 start_server "$TOOL_SERVER_LOG"
-TOOL_CREDENTIAL="$(enroll_device "$TOOL_DEVICE")"
-expect_unauthorized "$TOOL_DEVICE" "wrong-tier1-credential"
-"${SOFTWARE_DEVICE_BIN:-/usr/local/bin/companion_software_device}" \
-  --url ws://127.0.0.1:18000/v2/device \
-  --device-id "$TOOL_DEVICE" \
-  --token "$TOOL_CREDENTIAL" \
-  --admin-token "$COMPANION_ADMIN_TOKEN" \
-  --scenario-set tool \
-  --evidence "$TOOL_OUT"
 revoke_device "$TOOL_DEVICE"
 expect_unauthorized "$TOOL_DEVICE" "$TOOL_CREDENTIAL"
-python3 "$ROOT/host/companion_software_device/validate_evidence.py" "$TOOL_OUT"
 stop_server
 python3 "$ROOT/host/companion_software_device/verify_tool_db.py" "$TMP/tool.db" "$TOOL_DB_OUT"
