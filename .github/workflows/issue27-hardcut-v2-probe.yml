@@ -1,0 +1,151 @@
+name: issue27-hardcut-v2-probe
+
+on:
+  push:
+    branches: [agent/issue-27-native-slice]
+    paths: [.github/workflows/issue27-hardcut-v2-probe.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: agent/issue-27-native-slice
+      - name: Reuse base hard-cut candidate
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import textwrap
+          raw = Path('.github/workflows/issue27-hardcut-probe.yml').read_text(encoding='utf-8').splitlines()
+          start = next(i for i, line in enumerate(raw) if "python3 - <<'PY'" in line) + 1
+          end = next(i for i in range(start, len(raw)) if raw[i].strip() == 'PY')
+          code = textwrap.dedent('\n'.join(raw[start:end]))
+          exec(compile(code, 'issue27-hardcut-probe-inline.py', 'exec'))
+          PY
+      - name: Route legacy create adapters through durable ledger
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          root = Path('.')
+
+          def replace_function(path, start, next_start, replacement, label):
+              text = path.read_text(encoding='utf-8')
+              if text.count(start) != 1 or text.count(next_start) != 1:
+                  raise SystemExit(f'{label} boundary drifted')
+              begin = text.index(start)
+              end = text.index(next_start, begin)
+              path.write_text(text[:begin] + replacement + '\n' + text[end:], encoding='utf-8')
+
+          legacy = root/'backend/internal/store/legacy_idempotency.go'
+          text = legacy.read_text(encoding='utf-8')
+          helper = r'''
+
+          func legacyMutationRequest(operation, userID, key string, payload any) (idempotency.Request, error) {
+              actorHash, err := idempotency.HashValue([]string{"", owner(userID)})
+              if err != nil { return idempotency.Request{}, err }
+              requestHash, err := idempotency.HashValue(payload)
+              if err != nil { return idempotency.Request{}, err }
+              request := idempotency.Request{Actor: "actor:" + actorHash, Operation: strings.TrimSpace(operation), Key: strings.TrimSpace(key), RequestHash: requestHash}
+              if err := request.Validate(); err != nil { return idempotency.Request{}, err }
+              return request, nil
+          }
+          '''
+          if 'func legacyMutationRequest(' in text:
+              raise SystemExit('legacyMutationRequest unexpectedly already exists')
+          legacy.write_text(text + helper, encoding='utf-8')
+
+          store = root/'backend/internal/store/store.go'
+          replace_function(store,
+              'func (s *Store) CreateNote(ctx context.Context, userID, key, content string) error {',
+              'func (s *Store) ListNotes(',
+              '''func (s *Store) CreateNote(ctx context.Context, userID, key, content string) error {
+              content = strings.TrimSpace(content)
+              request, err := legacyMutationRequest("note.create", userID, key, map[string]any{"content": content})
+              if err != nil { return err }
+              return s.CreateNoteMutation(ctx, request, userID, content)
+          }''', 'CreateNote')
+          replace_function(store,
+              'func (s *Store) CreateExpense(ctx context.Context, userID, key string, amount int64, category, description string, occurredAt time.Time) error {',
+              'func (s *Store) CreateExpenses(',
+              '''func (s *Store) CreateExpense(ctx context.Context, userID, key string, amount int64, category, description string, occurredAt time.Time) error {
+              category = strings.TrimSpace(category)
+              if category == "" { category = "other" }
+              description = strings.TrimSpace(description)
+              request, err := legacyMutationRequest("expense.create", userID, key, map[string]any{"amount_vnd": amount, "category": category, "description": description, "occurred_at": occurredAt.UTC().Format(time.RFC3339Nano)})
+              if err != nil { return err }
+              return s.CreateExpenseMutation(ctx, request, userID, amount, category, description, occurredAt)
+          }''', 'CreateExpense')
+          replace_function(store,
+              'func (s *Store) CreateExpenses(ctx context.Context, userID, key string, items []ExpenseInput) error {',
+              'func (s *Store) ExpenseTotal(',
+              '''func (s *Store) CreateExpenses(ctx context.Context, userID, key string, items []ExpenseInput) error {
+              hashItems := make([]map[string]any, 0, len(items))
+              for _, item := range items {
+                  category := strings.TrimSpace(item.Category)
+                  if category == "" { category = "other" }
+                  hashItems = append(hashItems, map[string]any{"amount_vnd": item.AmountVND, "category": category, "description": strings.TrimSpace(item.Description), "occurred_at": item.OccurredAt.UTC().Format(time.RFC3339Nano)})
+              }
+              request, err := legacyMutationRequest("expense.log", userID, key, hashItems)
+              if err != nil { return err }
+              return s.CreateExpensesMutation(ctx, request, userID, items)
+          }''', 'CreateExpenses')
+          replace_function(store,
+              'func (s *Store) CreateJournal(ctx context.Context, userID, key, content string, occurredAt time.Time) error {',
+              'func (s *Store) ListJournal(',
+              '''func (s *Store) CreateJournal(ctx context.Context, userID, key, content string, occurredAt time.Time) error {
+              content = strings.TrimSpace(content)
+              request, err := legacyMutationRequest("journal.create", userID, key, map[string]any{"content": content, "occurred_at": occurredAt.UTC().Format(time.RFC3339Nano)})
+              if err != nil { return err }
+              return s.CreateJournalMutation(ctx, request, userID, content, occurredAt)
+          }''', 'CreateJournal')
+          replace_function(store,
+              'func (s *Store) createScheduled(ctx context.Context, userID, key, deviceID, kind, title string, fireAt time.Time) error {',
+              'func (s *Store) ListReminders(',
+              '''func (s *Store) createScheduled(ctx context.Context, userID, key, deviceID, kind, title string, fireAt time.Time) error {
+              title = strings.TrimSpace(title)
+              operation := "reminder.create"
+              if kind == "timer" { operation = "timer.create" }
+              request, err := legacyMutationRequest(operation, userID, key, map[string]any{"kind": kind, "title": title, "device_id": strings.TrimSpace(deviceID), "fire_at": fireAt.UTC().Format(time.RFC3339Nano)})
+              if err != nil { return err }
+              if kind == "timer" { _, err = s.CreateTimerMutation(ctx, request, userID, deviceID, title, fireAt) } else { _, err = s.CreateReminderMutation(ctx, request, userID, deviceID, title, fireAt) }
+              return err
+          }''', 'createScheduled')
+          replace_function(store,
+              'func (s *Store) CreateVoiceMemo(ctx context.Context, userID, key, deviceID, path, transcript string, durationMS int64) error {',
+              'func (s *Store) VoiceMemoByKey(',
+              '''func (s *Store) CreateVoiceMemo(ctx context.Context, userID, key, deviceID, path, transcript string, durationMS int64) error {
+              payload := map[string]any{"device_id": strings.TrimSpace(deviceID), "path": strings.TrimSpace(path), "transcript": strings.TrimSpace(transcript), "duration_ms": durationMS}
+              request, err := legacyMutationRequest("voice_memo.save", userID, key, payload)
+              if err != nil { return err }
+              _, err = s.CreateVoiceMemoMutation(ctx, request, userID, deviceID, path, transcript, durationMS)
+              return err
+          }''', 'CreateVoiceMemo')
+
+          platform = root/'backend/internal/store/platform.go'
+          replace_function(platform,
+              'func (s *Store) CreateMarketWatch(ctx context.Context, user, device, key, provider, symbol, currency, operator string, threshold float64) (market.Watch, error) {',
+              'func (s *Store) ListMarketWatches(',
+              '''func (s *Store) CreateMarketWatch(ctx context.Context, user, device, key, provider, symbol, currency, operator string, threshold float64) (market.Watch, error) {
+              provider = strings.TrimSpace(provider)
+              symbol = strings.TrimSpace(symbol)
+              currency = strings.ToUpper(strings.TrimSpace(currency))
+              if currency == "" { currency = "USD" }
+              operator = strings.TrimSpace(operator)
+              request, err := legacyMutationRequest("market.watch.create", user, key, map[string]any{"provider": provider, "symbol": symbol, "currency": currency, "operator": operator, "threshold": threshold, "device_id": strings.TrimSpace(device)})
+              if err != nil { return market.Watch{}, err }
+              return s.CreateMarketWatchMutation(ctx, request, user, device, provider, symbol, currency, operator, threshold)
+          }''', 'CreateMarketWatch')
+          print('legacy create adapters routed through durable ledger')
+          PY
+      - name: Test hard-cut v2 candidate
+        run: |
+          docker build -f Dockerfile.test -t issue27-hardcut-v2 .
+          docker run --rm -v "$PWD:/src" -w /src issue27-hardcut-v2 bash -c 'gofmt -w backend/internal/store && cd backend && go test ./internal/idempotency ./internal/store ./internal/providers/tools && go test -race ./internal/store ./internal/providers/tools'
