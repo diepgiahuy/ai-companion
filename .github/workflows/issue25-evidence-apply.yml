@@ -1,0 +1,37 @@
+name: issue25-evidence-apply
+
+on:
+  push:
+    branches: [agent/issue-25-observability]
+    paths: [.github/workflows/issue25-evidence-apply.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact branch head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: agent/issue-25-observability
+          fetch-depth: 0
+      - name: Guard target branch
+        run: test "$GITHUB_REF_NAME" = "agent/issue-25-observability"
+      - name: Apply structured evidence migration
+        run: python3 scripts/issue25_evidence_patch.py
+      - name: Validate evidence policy and diff
+        run: |
+          python3 scripts/check_evidence.py
+          git diff --check
+      - name: Commit evidence and remove migration helpers
+        run: |
+          git config user.name "Diệp Gia Huy"
+          git config user.email "30974088+diepgiahuy@users.noreply.github.com"
+          git rm .github/workflows/issue25-evidence-apply.yml scripts/issue25_evidence_patch.py
+          git add evidence/status.json
+          git diff --cached --check
+          git commit -m "docs: refresh production evidence truth after single-path cut"
+          git push origin HEAD:agent/issue-25-observability
