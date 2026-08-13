@@ -1,0 +1,83 @@
+name: Apply issue-15 phase A
+
+on:
+  push:
+    branches:
+      - issue-15-single-path-cleanup-v2
+    paths:
+      - .github/workflows/apply_issue15_phase_a.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout clean issue-15 branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: issue-15-single-path-cleanup-v2
+          fetch-depth: 0
+      - name: Transplant only audited non-conflicting cuts
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch --no-tags origin codex/single-path-cleanup
+
+          # Guard the current-main state before changing it. Drift must fail red.
+          grep -q 'CONFIG_COMPANION_USE_WEBSOCKET' main/app_main.cpp
+          grep -q 'src/mock_backend.cpp' components/companion_app/CMakeLists.txt
+          grep -q 'github.com/pion/webrtc/v4' backend/go.mod
+          test -f backend/go.offline.mod
+          test -d backend/offline_deps
+          test -d backend/internal/webrtcbridge
+
+          # These files were audited against #22 and are outside the evidence-ladder overlap.
+          git checkout origin/codex/single-path-cleanup -- \
+            main/app_main.cpp \
+            components/companion_app/CMakeLists.txt \
+            components/esp32_network/Kconfig.projbuild \
+            Makefile \
+            backend/go.mod \
+            backend/go.sum \
+            backend/README.md \
+            backend/config.example.env \
+            docs/ARCHITECTURE.md \
+            scripts/e2e.sh \
+            .github/workflows/codeql.yml \
+            .github/workflows/quality.yml \
+            .github/workflows/release.yml
+
+          git rm -r \
+            backend/internal/webrtcbridge \
+            backend/offline_deps \
+            backend/go.offline.mod \
+            backend/go.offline.sum \
+            scripts/e2e_offline.sh \
+            docs/XIAOZHI_COMPATIBILITY.md
+          git checkout origin/codex/single-path-cleanup -- docs/XIAOZHI_REFERENCE.md
+
+          # Re-resolve the sole Go module with the repository's exact toolchain contract.
+          docker run --rm -v "$PWD/backend:/src" -w /src golang:1.26.5-bookworm \
+            sh -ceu 'go mod tidy && go mod verify'
+
+          # Fail closed on the specific dual paths this phase owns.
+          ! grep -q 'CONFIG_COMPANION_USE_WEBSOCKET' main/app_main.cpp
+          ! grep -q 'mock_backend' main/app_main.cpp
+          ! grep -q 'src/mock_backend.cpp' components/companion_app/CMakeLists.txt
+          ! grep -q 'github.com/pion/webrtc/v4' backend/go.mod
+          ! grep -R -n --include='*.yml' --include='*.yaml' 'adk,mcp,webrtc' .github/workflows
+          test ! -e backend/go.offline.mod
+          test ! -e backend/go.offline.sum
+          test ! -e backend/offline_deps
+          test ! -e backend/internal/webrtcbridge
+          test ! -e scripts/e2e_offline.sh
+          git diff --check
+
+          git add -A
+          git commit -m "refactor: rebuild safe single-path cuts on current main"
+          git push origin HEAD:issue-15-single-path-cleanup-v2
