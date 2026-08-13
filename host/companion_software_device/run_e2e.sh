@@ -84,7 +84,6 @@ export COMPANION_EVIDENCE_COMMIT="${GITHUB_SHA:-$(git -C "$ROOT" rev-parse HEAD 
 export ADK_OPENAI_BASE_URL="http://127.0.0.1:19000/v1"
 export ADK_OPENAI_API_KEY="tier1-fake-key"
 export ADK_MODEL="tier1-fake-model"
-unset COMPANION_AGENT_RUNTIME COMPANION_DEVICE_TOKEN QWEN_BASE_URL QWEN_API_KEY QWEN_MODEL QWEN_FAST_MODEL QWEN_REASONING_MODEL
 
 python3 "$ROOT/host/companion_software_device/fake_responses.py" >"$MODEL_LOG" 2>&1 &
 MODEL_PID=$!
