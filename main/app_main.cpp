@@ -66,7 +66,7 @@ extern "C" void app_main() {
   std::snprintf(device_id.data(), device_id.size(), "%02x:%02x:%02x:%02x:%02x:%02x",
                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
   if (!backend.initialize(CONFIG_COMPANION_SERVER_URL,
-                          CONFIG_COMPANION_DEVICE_TOKEN,
+                          CONFIG_COMPANION_DEVICE_CREDENTIAL,
                           device_id.data(), device_id.data())) {
     ESP_LOGE(kTag, "WebSocket backend initialization failed");
     display.show(UiState::error, "NETWORK ERROR");
