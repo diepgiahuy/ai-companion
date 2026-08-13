@@ -116,9 +116,9 @@ expect_unauthorized "$CORE_DEVICE" "wrong-tier1-credential"
   --admin-token "$COMPANION_ADMIN_TOKEN" \
   --scenario-set core \
   --evidence "$OUT"
-python3 "$ROOT/host/companion_software_device/validate_evidence.py" "$OUT"
 revoke_device "$CORE_DEVICE"
 expect_unauthorized "$CORE_DEVICE" "$CORE_CREDENTIAL"
+python3 "$ROOT/host/companion_software_device/validate_evidence.py" "$OUT"
 stop_server
 
 # Authoritative mutation run: ADK -> complete ToolRegistry -> SQLite. The fake
@@ -141,8 +141,8 @@ expect_unauthorized "$TOOL_DEVICE" "wrong-tier1-credential"
   --admin-token "$COMPANION_ADMIN_TOKEN" \
   --scenario-set tool \
   --evidence "$TOOL_OUT"
-python3 "$ROOT/host/companion_software_device/validate_evidence.py" "$TOOL_OUT"
 revoke_device "$TOOL_DEVICE"
 expect_unauthorized "$TOOL_DEVICE" "$TOOL_CREDENTIAL"
+python3 "$ROOT/host/companion_software_device/validate_evidence.py" "$TOOL_OUT"
 stop_server
 python3 "$ROOT/host/companion_software_device/verify_tool_db.py" "$TMP/tool.db" "$TOOL_DB_OUT"
