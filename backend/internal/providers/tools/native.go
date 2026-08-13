@@ -573,26 +573,41 @@ func nativeTools(d NativeDependencies) []capability.Tool {
 			if d.VoicePrivacy != nil && !d.VoicePrivacy.VoiceAudioAllowed(ctx, u) {
 				return capability.Failure(fmt.Errorf("voice audio persistence disabled by user privacy policy"))
 			}
-			if x, ok, err := d.Store.VoiceMemoByKey(ctx, u, r.Key); err != nil {
+			audioHash := sha256.Sum256(turn.PCM16Mono)
+			request, err := durableMutationRequest(ctx, "voice_memo.save", r.Key, map[string]any{
+				"audio_sha256": hex.EncodeToString(audioHash[:]),
+				"sample_rate":  turn.SampleRate,
+				"device_id":    strings.TrimSpace(turn.DeviceID),
+			})
+			if err != nil {
 				return capability.Failure(err)
-			} else if ok {
-				return capability.Success(map[string]any{"saved": "voice_memo", "id": x.ID, "duration_ms": x.DurationMS})
 			}
-			sum := sha256.Sum256([]byte(r.Key))
-			path := filepath.Join(d.RecordingsDir, "memo-"+hex.EncodeToString(sum[:8])+".wav")
+			if memo, replayed, err := d.Store.ReplayVoiceMemoMutation(ctx, request); err != nil {
+				return capability.Failure(err)
+			} else if replayed {
+				if _, statErr := os.Stat(memo.Path); os.IsNotExist(statErr) {
+					if err := recording.WritePCM16MonoWAV(memo.Path, turn.PCM16Mono, turn.SampleRate); err != nil {
+						return capability.Failure(fmt.Errorf("restore committed voice memo file: %w", err))
+					}
+				} else if statErr != nil {
+					return capability.Failure(fmt.Errorf("inspect committed voice memo file: %w", statErr))
+				}
+				return capability.Success(map[string]any{"saved": "voice_memo", "id": memo.ID, "duration_ms": memo.DurationMS})
+			}
+			pathHash := sha256.Sum256([]byte(request.Actor + "\\x00" + request.Key + "\\x00" + request.RequestHash))
+			path := filepath.Join(d.RecordingsDir, "memo-"+hex.EncodeToString(pathHash[:16])+".wav")
 			if err := recording.WritePCM16MonoWAV(path, turn.PCM16Mono, turn.SampleRate); err != nil {
 				return capability.Failure(err)
 			}
 			ms := int64(len(turn.PCM16Mono)/2) * 1000 / int64(turn.SampleRate)
-			if err := d.Store.CreateVoiceMemo(ctx, u, r.Key, turn.DeviceID, path, turn.Transcript, ms); err != nil {
-				_ = os.Remove(path)
-				return capability.Failure(err)
-			}
-			x, _, err := d.Store.VoiceMemoByKey(ctx, u, r.Key)
+			memo, err := d.Store.CreateVoiceMemoMutation(ctx, request, u, turn.DeviceID, path, turn.Transcript, ms)
 			if err != nil {
+				if idempotency.IsConflict(err) {
+					_ = os.Remove(path)
+				}
 				return capability.Failure(err)
 			}
-			return capability.Success(map[string]any{"saved": "voice_memo", "id": x.ID, "duration_ms": ms})
+			return capability.Success(map[string]any{"saved": "voice_memo", "id": memo.ID, "duration_ms": memo.DurationMS})
 		}),
 		define("voice", "voice_memo.list", "Liệt kê voice memo", obj(map[string]any{"limit": limitField}), func(ctx context.Context, r capability.ToolRequest) capability.ToolResult {
 			var a struct {
@@ -614,21 +629,18 @@ func nativeTools(d NativeDependencies) []capability.Tool {
 			if err := json.Unmarshal([]byte(r.Arguments), &a); err != nil {
 				return capability.Failure(err)
 			}
-			u := currentUser(ctx)
-			memo, ok, err := d.Store.VoiceMemoByID(ctx, u, a.ID)
+			request, err := durableMutationRequest(ctx, "voice_memo.delete", r.Key, map[string]any{"id": a.ID})
 			if err != nil {
 				return capability.Failure(err)
 			}
-			if !ok {
-				return capability.Failure(fmt.Errorf("voice memo not found"))
-			}
-			if err := os.Remove(memo.Path); err != nil && !os.IsNotExist(err) {
-				return capability.Failure(fmt.Errorf("delete voice memo file: %w", err))
-			}
-			if err := d.Store.DeleteVoiceMemo(ctx, u, a.ID); err != nil {
+			memo, err := d.Store.DeleteVoiceMemoMutation(ctx, request, currentUser(ctx), a.ID)
+			if err != nil {
 				return capability.Failure(err)
 			}
-			return capability.Success(map[string]any{"deleted": "voice_memo", "id": a.ID})
+			if err := os.Remove(memo.Path); err != nil && !os.IsNotExist(err) {
+				return capability.Failure(fmt.Errorf("delete committed voice memo file: %w", err))
+			}
+			return capability.Success(map[string]any{"deleted": "voice_memo", "id": memo.ID})
 		}),
 	}
 	if d.Conversation != nil {
@@ -643,14 +655,29 @@ func nativeTools(d NativeDependencies) []capability.Tool {
 				return capability.Failure(fmt.Errorf("explicit confirmation is required"))
 			}
 			scope := currentConversationScope(ctx)
-			if err := d.Conversation.Clear(ctx, scope); err != nil {
+			threadID := strings.TrimSpace(scope.ThreadID)
+			if threadID == "" {
+				threadID = "default"
+			}
+			request, err := durableMutationRequest(ctx, "conversation.clear", r.Key, map[string]any{"thread_id": threadID, "confirm": true})
+			if err != nil {
 				return capability.Failure(err)
 			}
-			// Qwen appends the current user turn before tools execute. Preserve that
-			// explicit clear request so the post-tool assistant response is not left
-			// as an orphan message after clearing earlier history.
+			durable, ok := d.Conversation.(interface {
+				ClearMutation(context.Context, idempotency.Request, conversationctx.Scope) (bool, error)
+			})
+			if !ok {
+				return capability.Failure(fmt.Errorf("durable conversation clear is unavailable"))
+			}
+			if _, err := durable.ClearMutation(ctx, request, scope); err != nil {
+				return capability.Failure(err)
+			}
+			// Re-append the explicit clear request with an idempotency-derived key.
+			// On replay the DB clear callback is skipped and this append is ignored by
+			// UNIQUE(turn_key,role), preserving post-clear assistant messages.
 			if turn, ok := pipeline.CurrentTurn(ctx); ok && strings.TrimSpace(turn.Transcript) != "" {
-				key := "conversation-clear:" + scope.Key() + ":" + strings.TrimSpace(turn.SessionID) + ":" + strings.TrimSpace(turn.TurnID)
+				appendHash := sha256.Sum256([]byte(request.Actor + "\\x00" + request.Operation + "\\x00" + request.Key))
+				key := "conversation-clear:" + hex.EncodeToString(appendHash[:16])
 				if err := d.Conversation.Append(ctx, key, scope, "user", turn.Transcript); err != nil {
 					return capability.Failure(err)
 				}
