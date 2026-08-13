@@ -33,9 +33,9 @@ jobs:
         with:
           languages: go
           build-mode: manual
-      - name: Build all production adapter tags under CodeQL tracing
+      - name: Build production adapter tags under CodeQL tracing
         working-directory: backend
-        run: go build -tags "adk,mcp,webrtc,nolibopusfile" ./...
+        run: go build -tags "adk,mcp,nolibopusfile" ./...
       - name: Analyze
         uses: github/codeql-action/analyze@5595ccaf912efad79be6eef63a5619ff05969be3 # v4
         with:

@@ -1,32 +1,23 @@
-menu "Companion network POC"
-
-config COMPANION_USE_WEBSOCKET
-    bool "Use real Wi-Fi/WebSocket backend"
-    default n
+menu "Companion network"
 
 config COMPANION_WIFI_SSID
     string "Development Wi-Fi SSID"
     default ""
-    depends on COMPANION_USE_WEBSOCKET
 
 config COMPANION_WIFI_PASSWORD
     string "Development Wi-Fi password"
     default ""
-    depends on COMPANION_USE_WEBSOCKET
 
 config COMPANION_TZ_RULE
     string "POSIX timezone rule for device clock"
     default "ICT-7"
-    depends on COMPANION_USE_WEBSOCKET
 
 config COMPANION_SERVER_URL
     string "Backend WebSocket URL"
     default "ws://192.168.1.10:8000/v2/device"
-    depends on COMPANION_USE_WEBSOCKET
 
 config COMPANION_DEVICE_TOKEN
     string "Device bearer token (optional for local development)"
     default ""
-    depends on COMPANION_USE_WEBSOCKET
 
 endmenu
