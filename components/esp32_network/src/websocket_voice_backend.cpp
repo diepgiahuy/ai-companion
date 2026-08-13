@@ -55,6 +55,17 @@ bool optional_bounded_string(const cJSON* object, const char* key,
           std::strlen(value->valuestring) <= maximum_size);
 }
 
+bool bounded_nonempty_string(const cJSON* object, const char* key,
+                             size_t maximum_size) {
+  const std::string_view value = json_string(object, key);
+  return !value.empty() && value.size() <= maximum_size;
+}
+
+bool string_in(std::string_view value,
+               std::initializer_list<std::string_view> allowed) {
+  return std::find(allowed.begin(), allowed.end(), value) != allowed.end();
+}
+
 bool parse_runtime_config(const cJSON* payload, RuntimeConfigPatch& out) {
   const cJSON* version = cJSON_GetObjectItemCaseSensitive(payload, "config_version");
   const cJSON* config = cJSON_GetObjectItemCaseSensitive(payload, "config");
@@ -187,33 +198,49 @@ bool payload_semantics_valid(protocol::ControlType type, const cJSON* payload) {
   case ControlType::session_pong:
     return true;
   case ControlType::turn_abort:
-    return nonempty("reason");
-  case ControlType::turn_state:
-    return nonempty("state");
+    return bounded_nonempty_string(payload, "reason", 64);
+  case ControlType::turn_state: {
+    const std::string_view state = json_string(payload, "state");
+    if (!string_in(state, {"listening", "processing", "speaking", "completed", "interrupted"})) return false;
+    const cJSON* reason_item = cJSON_GetObjectItemCaseSensitive(payload, "reason");
+    const std::string_view reason = json_string(payload, "reason");
+    if (state == "interrupted") return !reason.empty() && reason.size() <= 64;
+    return reason_item == nullptr ||
+           (cJSON_IsString(reason_item) && reason_item->valuestring != nullptr && reason.empty());
+  }
   case ControlType::transcript_final:
     return nonempty("text");
   case ControlType::tts_lifecycle: {
     const std::string_view state = json_string(payload, "state");
-    return state == "start" || state == "stop" ||
-           ((state == "sentence_start" || state == "sentence_end") &&
-            nonempty("text"));
+    const std::string_view text = json_string(payload, "text");
+    if (state == "start" || state == "stop") return text.empty();
+    return (state == "sentence_start" || state == "sentence_end") && !text.empty();
   }
   case ControlType::agent_status:
-    return nonempty("state");
+    return bounded_nonempty_string(payload, "state", 64);
   case ControlType::ui_card:
     return json_object(payload, "ui") != nullptr;
-  case ControlType::ui_state:
-    return nonempty("emotion");
+  case ControlType::ui_state: {
+    const std::string_view emotion = json_string(payload, "emotion");
+    if (!string_in(emotion, {"idle", "listening", "thinking", "speaking", "tool_executing", "interrupted", "error"})) return false;
+    const cJSON* tool_item = cJSON_GetObjectItemCaseSensitive(payload, "tool_name");
+    const std::string_view tool_name = json_string(payload, "tool_name");
+    if (emotion == "tool_executing") return !tool_name.empty();
+    return tool_item == nullptr ||
+           (cJSON_IsString(tool_item) && tool_item->valuestring != nullptr && tool_name.empty());
+  }
   case ControlType::alarm_fired:
-    return nonempty("alarm_id") && nonempty("message") && nonempty("fire_at");
+    return bounded_nonempty_string(payload, "alarm_id", 128) &&
+           bounded_nonempty_string(payload, "message", 512) && nonempty("fire_at");
   case ControlType::schedule_updated:
-    return nonempty("message") && nonempty("fire_at");
+    return bounded_nonempty_string(payload, "message", 512) && nonempty("fire_at");
   case ControlType::config_update: {
     RuntimeConfigPatch ignored{};
     return parse_runtime_config(payload, ignored);
   }
   case ControlType::protocol_error:
-    return nonempty("code") && nonempty("message");
+    return bounded_nonempty_string(payload, "code", 64) &&
+           bounded_nonempty_string(payload, "message", 1024);
   default:
     return true;
   }

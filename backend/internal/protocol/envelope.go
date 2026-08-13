@@ -352,6 +352,14 @@ type ReadyPayload struct {
 	ConfigVersion int64          `json:"config_version"`
 }
 
+func validateConfigVersion(version int64) error {
+	const maximumExactJSONInteger int64 = 9_007_199_254_740_991
+	if version < 0 || version > maximumExactJSONInteger {
+		return fmt.Errorf("config_version must be within 0..%d", maximumExactJSONInteger)
+	}
+	return nil
+}
+
 func (p ReadyPayload) Validate() error {
 	if p.Transport != Transport {
 		return fmt.Errorf("unsupported transport %q", p.Transport)
@@ -359,8 +367,8 @@ func (p ReadyPayload) Validate() error {
 	if p.AudioParams != DownlinkAudioParams() {
 		return fmt.Errorf("unsupported audio params: got %+v, want %+v", p.AudioParams, DownlinkAudioParams())
 	}
-	if p.ConfigVersion < 0 {
-		return fmt.Errorf("config_version must be non-negative")
+	if err := validateConfigVersion(p.ConfigVersion); err != nil {
+		return err
 	}
 	if p.Config != nil {
 		return p.Config.ValidateDeviceSnapshot()
@@ -464,8 +472,8 @@ type ConfigReportPayload struct {
 }
 
 func (p ConfigReportPayload) Validate() error {
-	if p.ConfigVersion < 0 {
-		return fmt.Errorf("config_version must be non-negative")
+	if err := validateConfigVersion(p.ConfigVersion); err != nil {
+		return err
 	}
 	return p.Config.ValidateDeviceSnapshot()
 }
@@ -476,8 +484,8 @@ type ConfigUpdatePayload struct {
 }
 
 func (p ConfigUpdatePayload) Validate() error {
-	if p.ConfigVersion < 0 {
-		return fmt.Errorf("config_version must be non-negative")
+	if err := validateConfigVersion(p.ConfigVersion); err != nil {
+		return err
 	}
 	return p.Config.ValidateDeviceSnapshot()
 }
@@ -553,6 +561,14 @@ type UICardPayload struct {
 func (p UICardPayload) Validate() error {
 	if p.UI == nil {
 		return fmt.Errorf("ui is required")
+	}
+	raw, err := json.Marshal(p.UI)
+	if err != nil {
+		return fmt.Errorf("encode ui: %w", err)
+	}
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) < 2 || trimmed[0] != '{' || trimmed[len(trimmed)-1] != '}' {
+		return fmt.Errorf("ui must be a JSON object")
 	}
 	return nil
 }

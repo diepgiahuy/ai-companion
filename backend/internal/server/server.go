@@ -866,15 +866,20 @@ func (s *session) processInbound(messageID string, data []byte, action func() er
 		return previous.outcome
 	}
 	outcome := action()
+	if outcome != nil {
+		// Failed actions are not replay records: transient pre-commit failures
+		// must be retryable with the same message_id in the live session.
+		return outcome
+	}
 	const maximumRememberedMessages = 256
 	if len(s.seenOrder) == maximumRememberedMessages {
 		delete(s.seenInbound, s.seenOrder[0])
 		copy(s.seenOrder, s.seenOrder[1:])
 		s.seenOrder = s.seenOrder[:maximumRememberedMessages-1]
 	}
-	s.seenInbound[messageID] = inboundRecord{digest: digest, outcome: outcome}
+	s.seenInbound[messageID] = inboundRecord{digest: digest}
 	s.seenOrder = append(s.seenOrder, messageID)
-	return outcome
+	return nil
 }
 
 func (s *session) send(ctx context.Context, message outbound) error {
