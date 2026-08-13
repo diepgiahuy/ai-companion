@@ -25,7 +25,7 @@ jobs:
       - name: Format and test durable native mutations
         run: |
           docker build -f Dockerfile.test -t issue27-native-test .
-          docker run --rm issue27-native-test bash -lc '
+          docker run --rm issue27-native-test bash -c '
             gofmt -w backend/internal/domain/idempotency_ports.go backend/internal/providers/tools/idempotency.go backend/internal/providers/tools/native.go backend/internal/providers/tools/native_test.go backend/internal/store/idempotency_run.go backend/internal/store/idempotent_domain.go &&
             cd backend &&
             go test ./internal/idempotency ./internal/store ./internal/providers/tools &&
@@ -34,7 +34,7 @@ jobs:
           git diff --check
       - name: Format host workspace before commit
         run: |
-          docker run --rm -v "$PWD:/src" -w /src issue27-native-test bash -lc 'gofmt -w backend/internal/domain/idempotency_ports.go backend/internal/providers/tools/idempotency.go backend/internal/providers/tools/native.go backend/internal/providers/tools/native_test.go backend/internal/store/idempotency_run.go backend/internal/store/idempotent_domain.go'
+          docker run --rm -v "$PWD:/src" -w /src issue27-native-test bash -c 'gofmt -w backend/internal/domain/idempotency_ports.go backend/internal/providers/tools/idempotency.go backend/internal/providers/tools/native.go backend/internal/providers/tools/native_test.go backend/internal/store/idempotency_run.go backend/internal/store/idempotent_domain.go'
           git diff --check
       - name: Commit and remove one-shot helpers
         run: |
