@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -12,10 +13,41 @@ type panicRecorder struct{}
 
 func (panicRecorder) TryRecord(Event) bool { panic("exporter failed") }
 
+func TestCorrelatorPseudonymizesClientControlledIDs(t *testing.T) {
+	correlator := NewCorrelator("server-session-seed")
+	raw := "patient@example.com"
+	first := correlator.Opaque(raw)
+	second := correlator.Opaque(raw)
+	other := correlator.Opaque("another-turn")
+	if first != second {
+		t.Fatalf("same identifier must correlate within a session: %q != %q", first, second)
+	}
+	if first == other {
+		t.Fatal("different identifiers must not collapse")
+	}
+	if !strings.HasPrefix(first, "c_") || len(first) != 34 {
+		t.Fatalf("unexpected pseudonym format %q", first)
+	}
+	if strings.Contains(first, raw) {
+		t.Fatalf("raw client identifier leaked into pseudonym %q", first)
+	}
+	if correlator.Opaque("") != "" {
+		t.Fatal("empty correlation id must stay empty")
+	}
+}
+
+func TestDifferentCorrelatorsDoNotCreateStableCrossSessionIdentifier(t *testing.T) {
+	left := NewCorrelator("session-a")
+	right := NewCorrelator("session-b")
+	if left.Opaque("same-client-id") == right.Opaque("same-client-id") {
+		t.Fatal("correlation pseudonym must not be stable across runtime sessions")
+	}
+}
+
 func TestRingRecorderCarriesCorrelationAndBoundsCapacity(t *testing.T) {
 	recorder := NewRingRecorder(1)
 	ctx := WithRecorder(context.Background(), recorder)
-	ctx = WithCorrelation(ctx, Correlation{SessionID: "session-1", TurnID: "turn-1", GenerationID: 2})
+	ctx = WithCorrelation(ctx, Correlation{SessionID: "c_0123456789abcdef0123456789abcdef", TurnID: "c_fedcba9876543210fedcba9876543210", GenerationID: 2})
 	if !Record(ctx, Event{Name: EventTurnStart}) {
 		t.Fatal("first event should be accepted")
 	}
@@ -26,7 +58,7 @@ func TestRingRecorderCarriesCorrelationAndBoundsCapacity(t *testing.T) {
 	if snapshot.SchemaVersion != SchemaVersion || len(snapshot.Events) != 1 || snapshot.Dropped != 1 {
 		t.Fatalf("unexpected snapshot: %+v", snapshot)
 	}
-	if got := snapshot.Events[0].Correlation; got.SessionID != "session-1" || got.TurnID != "turn-1" || got.GenerationID != 2 {
+	if got := snapshot.Events[0].Correlation; got.SessionID != "c_0123456789abcdef0123456789abcdef" || got.TurnID != "c_fedcba9876543210fedcba9876543210" || got.GenerationID != 2 {
 		t.Fatalf("correlation drifted: %+v", got)
 	}
 }
