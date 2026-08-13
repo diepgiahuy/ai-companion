@@ -28,9 +28,11 @@ import (
 )
 
 const (
-	maximumControlQueue = 32
-	maximumMediaQueue   = 24
-	helloTimeout        = 10 * time.Second
+	maximumControlQueue     = 32
+	maximumMediaQueue       = 24
+	helloTimeout            = 10 * time.Second
+	sessionLoopJoinTimeout  = time.Second
+	turnCancellationJoinMax = 250 * time.Millisecond
 )
 
 type Server struct {
@@ -256,6 +258,7 @@ type turn struct {
 	pcm        []byte
 	ctx        context.Context
 	cancel     context.CancelFunc
+	done       chan struct{}
 	generation uint64
 }
 
@@ -337,11 +340,15 @@ func newSession(connection *websocket.Conn, components pipeline.Components, hub 
 func (s *session) run(parent context.Context) error {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
-	defer s.cancelActive()
-	defer s.connection.Close(websocket.StatusNormalClosure, "session closed")
+	defer s.connection.CloseNow()
 
+	loopExited := make(chan struct{}, 2)
 	writerDone := make(chan error, 1)
-	go func() { writerDone <- s.writeLoop(ctx) }()
+	loopCount := 1
+	go func() {
+		defer func() { loopExited <- struct{}{} }()
+		writerDone <- s.writeLoop(ctx)
+	}()
 
 	helloCtx, helloCancel := context.WithTimeout(ctx, helloTimeout)
 	kind, data, err := s.connection.Read(helloCtx)
@@ -388,15 +395,34 @@ func (s *session) run(parent context.Context) error {
 	}
 
 	readDone := make(chan error, 1)
-	go func() { readDone <- s.readLoop(ctx) }()
+	loopCount++
+	go func() {
+		defer func() { loopExited <- struct{}{} }()
+		readDone <- s.readLoop(ctx)
+	}()
+	var runErr error
 	select {
-	case err := <-readDone:
-		return err
-	case err := <-writerDone:
-		return err
+	case runErr = <-readDone:
+	case runErr = <-writerDone:
 	case <-ctx.Done():
-		return ctx.Err()
+		runErr = ctx.Err()
 	}
+	cancel()
+	s.connection.CloseNow()
+	if !s.cancelActiveAndJoin(turnCancellationJoinMax) {
+		s.logger.Warn("active turn did not join before session cancellation bound", "session_id", s.id, "join_ms", turnCancellationJoinMax.Milliseconds())
+	}
+	joinTimer := time.NewTimer(sessionLoopJoinTimeout)
+	defer joinTimer.Stop()
+	for joined := 0; joined < loopCount; joined++ {
+		select {
+		case <-loopExited:
+		case <-joinTimer.C:
+			s.logger.Warn("session loop did not join before shutdown bound", "session_id", s.id, "joined", joined, "expected", loopCount)
+			return runErr
+		}
+	}
+	return runErr
 }
 
 func (s *session) readLoop(ctx context.Context) error {
@@ -554,10 +580,16 @@ func (s *session) startTurn(parent context.Context, turnID string) error {
 		Correlation: observability.Correlation{SessionID: s.id, TurnID: turnID, GenerationID: generation},
 	})
 	if interrupted != nil {
+		joinStarted := time.Now()
+		joined := waitForTurn(interrupted, turnCancellationJoinMax)
+		joinDuration := time.Since(joinStarted)
 		observability.RecordTo(s.observer, observability.Event{
-			Name: observability.EventTurnInterrupted, Outcome: "cancelled", Reason: "barge_in",
+			Name: observability.EventTurnInterrupted, Outcome: "cancelled", Reason: "barge_in", DurationMS: joinDuration.Milliseconds(),
 			Correlation: observability.Correlation{SessionID: s.id, TurnID: interrupted.id, GenerationID: interrupted.generation},
 		})
+		if !joined {
+			s.logger.Warn("barge-in turn exceeded cancellation join bound", "session_id", s.id, "turn_id", interrupted.id, "join_ms", joinDuration.Milliseconds())
+		}
 		// This terminal notification is intentionally not generation-scoped: it
 		// must survive invalidation of the old turn and tell the device to drop
 		// any already-buffered playback immediately.
@@ -601,9 +633,13 @@ func (s *session) stopTurn(turnID string) error {
 	}
 	s.active.state = "processing"
 	current := s.active
+	current.done = make(chan struct{})
 	pcm := append([]byte(nil), current.pcm...)
 	s.mu.Unlock()
-	go s.processTurn(current, pcm)
+	go func() {
+		defer close(current.done)
+		s.processTurn(current, pcm)
+	}()
 	return nil
 }
 
@@ -769,14 +805,30 @@ func (s *session) setTurnState(candidate *turn, state string) {
 	}
 }
 
-func (s *session) cancelActive() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.active != nil {
-		s.active.cancel()
-		s.active = nil
-		s.generation++ // invalidate queued turn-scoped output
+func waitForTurn(current *turn, timeout time.Duration) bool {
+	if current == nil || current.done == nil {
+		return true
 	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-current.done:
+		return true
+	case <-timer.C:
+		return false
+	}
+}
+
+func (s *session) cancelActiveAndJoin(timeout time.Duration) bool {
+	s.mu.Lock()
+	current := s.active
+	if current != nil {
+		current.cancel()
+		s.active = nil
+		s.generation++
+	}
+	s.mu.Unlock()
+	return waitForTurn(current, timeout)
 }
 
 func (s *session) interruptActive(ctx context.Context, reason string) {
@@ -785,13 +837,19 @@ func (s *session) interruptActive(ctx context.Context, reason string) {
 	if current != nil {
 		current.cancel()
 		s.active = nil
-		s.generation++ // invalidate any already-queued old audio/control
+		s.generation++
 	}
 	s.mu.Unlock()
 	if current != nil {
+		joinStarted := time.Now()
+		joined := waitForTurn(current, turnCancellationJoinMax)
+		joinDuration := time.Since(joinStarted)
 		observability.RecordTo(s.observer, observability.Event{
-			Name: observability.EventTurnInterrupted, Outcome: "cancelled", Reason: reason, Correlation: s.turnCorrelation(current),
+			Name: observability.EventTurnInterrupted, Outcome: "cancelled", Reason: reason, DurationMS: joinDuration.Milliseconds(), Correlation: s.turnCorrelation(current),
 		})
+		if !joined {
+			s.logger.Warn("interrupted turn exceeded cancellation join bound", "session_id", s.id, "turn_id", current.id, "reason", reason, "join_ms", joinDuration.Milliseconds())
+		}
 		_ = s.sendJSONMeta(ctx, protocol.TurnStateType, protocol.Metadata{
 			TurnID: current.id, GenerationID: current.generation,
 		}, protocol.TurnStatePayload{State: "interrupted", Reason: reason})
