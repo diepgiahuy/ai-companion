@@ -67,7 +67,7 @@ go vet -tags "adk,mcp,nolibopusfile" ./...
 go test -tags "adk,mcp,nolibopusfile" -race -count=1 ./...
 ```
 
-There is intentionally no `go.offline.mod`, checked-in dependency shim graph, secondary offline backend E2E path, custom Qwen runtime, or runtime agent selector. Git history/data restore is the rollback mechanism.
+There is intentionally no checked-in dependency shim graph, secondary offline backend E2E path, custom Qwen runtime, or runtime agent selector. Git history/data restore is the rollback mechanism.
 
 ## Current product-provider limitations
 
