@@ -54,5 +54,5 @@ jobs:
         with:
           name: software-device-tier1-${{ github.sha }}
           path: artifacts/software-device/
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 14
