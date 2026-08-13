@@ -16,9 +16,11 @@ type Supervisor struct {
 	cancel context.CancelCauseFunc
 	logger *slog.Logger
 
-	wg      sync.WaitGroup
-	errOnce sync.Once
-	errCh   chan error
+	wg       sync.WaitGroup
+	waitOnce sync.Once
+	done     chan struct{}
+	errOnce  sync.Once
+	errCh    chan error
 }
 
 func New(parent context.Context, logger *slog.Logger) *Supervisor {
@@ -29,7 +31,7 @@ func New(parent context.Context, logger *slog.Logger) *Supervisor {
 		logger = slog.Default()
 	}
 	ctx, cancel := context.WithCancelCause(parent)
-	return &Supervisor{ctx: ctx, cancel: cancel, logger: logger, errCh: make(chan error, 1)}
+	return &Supervisor{ctx: ctx, cancel: cancel, logger: logger, done: make(chan struct{}), errCh: make(chan error, 1)}
 }
 
 func (s *Supervisor) Context() context.Context { return s.ctx }
@@ -85,15 +87,18 @@ func (s *Supervisor) Stop(cause error) {
 }
 
 // Wait joins workers until ctx expires. A cancellation-ignoring worker therefore
-// becomes a bounded shutdown error instead of hanging the process forever.
+// becomes a bounded shutdown error instead of hanging the process forever. The
+// underlying join goroutine is started once, so repeated timed waits cannot pile
+// up waiter goroutines around one stuck worker set.
 func (s *Supervisor) Wait(ctx context.Context) error {
-	done := make(chan struct{})
-	go func() {
-		s.wg.Wait()
-		close(done)
-	}()
+	s.waitOnce.Do(func() {
+		go func() {
+			s.wg.Wait()
+			close(s.done)
+		}()
+	})
 	select {
-	case <-done:
+	case <-s.done:
 		return nil
 	case <-ctx.Done():
 		return fmt.Errorf("supervisor shutdown: %w", ctx.Err())
