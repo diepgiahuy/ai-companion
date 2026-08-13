@@ -1,18 +1,14 @@
 #include "companion/app.hpp"
 #include "companion/esp32_audio.hpp"
 #include "companion/gpio_button.hpp"
-#include "companion/mock_backend.hpp"
 #include "companion/ssd1306_display.hpp"
-
-#if CONFIG_COMPANION_USE_WEBSOCKET
 #include "companion/websocket_voice_backend.hpp"
 #include "companion/wifi_station.hpp"
-#include "esp_mac.h"
-#include "nvs_flash.h"
-#endif
 
 #include "esp_log.h"
+#include "esp_mac.h"
 #include "esp_timer.h"
+#include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -30,6 +26,8 @@ extern "C" void app_main() {
   static Esp32Audio audio;
   static Ssd1306Display display;
   static GpioButton button;
+  static WifiStation wifi;
+  static WebSocketVoiceBackend backend;
 
   if (!display.initialize()) {
     ESP_LOGE(kTag, "SSD1306 initialization failed");
@@ -46,10 +44,6 @@ extern "C" void app_main() {
     return;
   }
 
-  VoiceBackend* backend = nullptr;
-#if CONFIG_COMPANION_USE_WEBSOCKET
-  static WifiStation wifi;
-  static WebSocketVoiceBackend websocket_backend;
   esp_err_t nvs_result = nvs_flash_init();
   if (nvs_result == ESP_ERR_NVS_NO_FREE_PAGES ||
       nvs_result == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -65,23 +59,19 @@ extern "C" void app_main() {
   if (!wifi.start_time_sync(CONFIG_COMPANION_TZ_RULE)) {
     ESP_LOGW(kTag, "SNTP time sync initialization failed; idle clock will show --:--");
   }
+
   std::array<uint8_t, 6> mac{};
   ESP_ERROR_CHECK(esp_read_mac(mac.data(), ESP_MAC_WIFI_STA));
   std::array<char, 32> device_id{};
   std::snprintf(device_id.data(), device_id.size(), "%02x:%02x:%02x:%02x:%02x:%02x",
                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-  if (!websocket_backend.initialize(CONFIG_COMPANION_SERVER_URL,
-                                    CONFIG_COMPANION_DEVICE_TOKEN,
-                                    device_id.data(), device_id.data())) {
+  if (!backend.initialize(CONFIG_COMPANION_SERVER_URL,
+                          CONFIG_COMPANION_DEVICE_TOKEN,
+                          device_id.data(), device_id.data())) {
     ESP_LOGE(kTag, "WebSocket backend initialization failed");
     display.show(UiState::error, "NETWORK ERROR");
     return;
   }
-  backend = &websocket_backend;
-#else
-  static MockVoiceBackend mock_backend;
-  backend = &mock_backend;
-#endif
 
   AppConfig app_config{};
   app_config.idle_after_ms = CONFIG_COMPANION_IDLE_AFTER_MS;
@@ -95,13 +85,10 @@ extern "C" void app_main() {
 #else
   app_config.smart_vad_enabled = false;
 #endif
-  static CompanionApp app(audio, audio, display, button, *backend, app_config);
+
+  static CompanionApp app(audio, audio, display, button, backend, app_config);
   app.start(now_ms());
-#if CONFIG_COMPANION_USE_WEBSOCKET
-  ESP_LOGI(kTag, "hardware POC using WebSocket backend");
-#else
-  ESP_LOGI(kTag, "hardware POC using deterministic mock backend");
-#endif
+  ESP_LOGI(kTag, "hardware POC using WebSocket protocol v2 backend");
 
   while (true) {
     app.tick(now_ms());
