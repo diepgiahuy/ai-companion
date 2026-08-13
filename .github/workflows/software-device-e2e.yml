@@ -1,0 +1,58 @@
+name: software-device-e2e
+
+on:
+  pull_request:
+    paths:
+      - "host/companion_software_device/**"
+      - "components/companion_app/**"
+      - "backend/**"
+      - "testdata/scenarios/**"
+      - "evidence/**"
+      - "scripts/check_evidence.py"
+      - ".github/workflows/software-device-e2e.yml"
+  push:
+    branches: [main]
+    paths:
+      - "host/companion_software_device/**"
+      - "components/companion_app/**"
+      - "backend/**"
+      - "testdata/scenarios/**"
+      - "evidence/**"
+      - "scripts/check_evidence.py"
+      - ".github/workflows/software-device-e2e.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: software-device-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  tier1-orchestration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build pinned host software-device image
+        run: docker build -f host/companion_software_device/Dockerfile -t companion-software-device .
+      - name: Run real-backend Tier-1 scenarios
+        run: |
+          mkdir -p artifacts/software-device
+          docker run --rm \
+            -e GITHUB_SHA="${GITHUB_SHA}" \
+            -e COMPANION_EVIDENCE_OUT=/artifacts/software-device/evidence.json \
+            -v "$PWD/artifacts:/artifacts" \
+            companion-software-device
+      - name: Validate evidence artifact
+        run: python3 host/companion_software_device/validate_evidence.py artifacts/software-device/evidence.json
+      - name: Upload orchestration evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: software-device-tier1-${{ github.sha }}
+          path: artifacts/software-device/
+          if-no-files-found: error
+          retention-days: 14
