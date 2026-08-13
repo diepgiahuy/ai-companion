@@ -22,9 +22,22 @@ emission, or v1 compatibility behavior.
 An Envelope v2 contains the message type, `message_id`, optional correlation and
 session fields, `idempotency_key`, RFC3339 `occurred_at`, and a typed JSON-object
 payload. Interaction messages require non-empty `message_id`, `idempotency_key`,
-and `occurred_at`; the server scopes idempotency by authenticated actor and type.
-It returns the original outcome for an equivalent duplicate, and rejects reuse
-with a different target or normalized payload before any state mutation.
+and `occurred_at`.
+
+`message_id` and `idempotency_key` have intentionally different responsibilities:
+
+- `message_id` is transport/session identity. The live WebSocket session keeps a
+  bounded replay cache so an equivalent duplicate can reuse the recorded outcome
+  and conflicting reuse of the same ID is rejected while that ID remains cached.
+- `idempotency_key` is domain mutation identity. Any interaction that can be retried
+  after reconnect or process restart must persist this key at the authoritative
+  domain boundary, scoped by authenticated actor, operation/type, and canonical
+  request content. The persistence layer replays the original committed outcome for
+  an equivalent retry and rejects the same key with different canonical content.
+
+The protocol layer therefore does **not** claim exactly-once delivery. WebSocket
+replay suppression is a bounded optimization; durable at-least-once correctness is
+owned by the stateful feature implementation (#5 for voice mail and #7 for pairing).
 
 Envelope decoding uses these stable errors from `envelope.go`:
 
@@ -50,24 +63,37 @@ credentials.
 | --- | --- |
 | `version` | Required integer; exactly `2`. |
 | `type` | Required member of the canonical taxonomy below. |
-| `message_id` | Required opaque ID, 1-128 bytes. |
+| `message_id` | Required opaque transport/session message ID, 1-128 bytes. |
 | `correlation_id` | Optional request/event correlation ID. |
 | `session_id` | Required after `session.ready`; omitted by the initial hello. |
 | `turn_id` | Required for turn-scoped controls. |
 | `generation_id` | Optional monotonic turn generation used to discard stale media/control. |
-| `idempotency_key` | Required for state-changing interaction commands. |
+| `idempotency_key` | Required for state-changing interaction commands; durable semantics are implemented by the authoritative domain store. |
 | `occurred_at` | Required RFC3339 timestamp for interaction events. |
 | `payload` | Required typed JSON object, at most 4 KiB; the envelope is at most 8 KiB. |
 
 Root and payload fields are strict. Unknown fields, invalid direction, and malformed
 payloads fail before state mutation.
 
+### Session replay cache
+
+The current WebSocket implementation remembers at most 256 inbound `message_id`
+records per live session. FIFO eviction is intentional and is **not** a durable
+idempotency guarantee: after eviction or reconnect, the same transport message may
+reach domain handling again. State-changing handlers must therefore rely on the
+persisted `idempotency_key` contract, not on the session cache, for correctness.
+
+The cache may replay a deterministic/terminal outcome for an equivalent duplicate.
+A retryable infrastructure failure must not be treated as proof that the domain
+mutation committed; feature implementations must define retryable versus terminal
+outcomes together with durable idempotency records.
+
 ### Core control taxonomy
 
 | Type | Direction | Payload |
 | --- | --- | --- |
 | `session.hello` | device -> backend | transport and uplink audio parameters |
-| `session.ready` | backend -> device | transport, downlink audio parameters, optional resolved config |
+| `session.ready` | backend -> device | transport, downlink audio parameters, and an optional resolved config snapshot; if config is present it must be complete and valid |
 | `session.ping` / `session.pong` | either | empty object; pong correlates to ping |
 | `turn.listen` | device -> backend | `state` (`start`/`stop`) and start `mode` |
 | `turn.abort` | device -> backend | bounded `reason` |
@@ -85,15 +111,15 @@ payloads fail before state mutation.
 
 All payloads are strictly decoded as typed JSON objects. Unknown fields are
 rejected; a schema change is a new v2 message type or a coordinated breaking change.
-Delivery is at least once, so callers deduplicate before state mutation. WebSocket
-ordering only applies within one connection; server resource state and time are
-authoritative after reconnect.
+Delivery may be at least once. WebSocket ordering only applies within one connection;
+server resource state and time are authoritative after reconnect. Stateful feature
+handlers deduplicate durable mutations with `idempotency_key` before commit.
 
 ### Gesture
 
 | Type | Payload | Rules |
 | --- | --- | --- |
-| `gesture.notification` | `gesture`, `sender_device_id` | Both identifiers are required. Delivery is best effort, and the recipient uses the idempotency key to suppress duplicate visual or haptic UX. |
+| `gesture.notification` | `gesture`, `sender_device_id` | Both identifiers are required. Delivery is best effort; a recipient may use message/idempotency identity to suppress duplicate visual or haptic UX. |
 
 The backend authorizes the sender/recipient relationship. A device ID, gesture, or
 proximity observation is not an authorization grant.
@@ -151,11 +177,13 @@ succeeded, rejected, expired --> terminal
 
 ## Consequences
 
-Backend, firmware, host simulator, and fixtures must move together to Envelope v2.
-The state helpers reject duplicate and terminal transitions; implementations must
-deduplicate commands before using them. Rollback is a Git revert of the coordinated
-change, not a protocol fallback.
+Backend, firmware, host simulator, and fixtures move together to Envelope v2. The
+state helpers reject duplicate and terminal transitions. Live-session replay
+suppression remains bounded; durable feature handlers must implement the
+`idempotency_key` contract before any reconnect-safe mutation is considered proven.
+Rollback is a Git revert of the coordinated change, not a protocol fallback.
 
-Issue #5 owns voice-mail persistence and media access. Issue #6 owns device
-notification and deliberate playback UX. Issue #7 owns proximity observation,
-pairing persistence, nonce verification, rate limits, and two-device HIL.
+Issue #5 owns voice-mail persistence, durable mutation idempotency, and media access.
+Issue #6 owns device notification and deliberate playback UX. Issue #7 owns pairing
+persistence, durable mutation idempotency, proximity observation, nonce verification,
+rate limits, and two-device HIL.
