@@ -6,6 +6,7 @@
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
+#include <boost/beast/websocket.hpp>
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -165,7 +166,8 @@ struct ScenarioResult {
 };
 
 ScenarioResult run_scenario(std::string id, const std::function<void(ScenarioResult&)>& body) {
-  ScenarioResult result{.id = std::move(id)};
+  ScenarioResult result{};
+  result.id = std::move(id);
   const auto started = std::chrono::steady_clock::now();
   try {
     body(result);
