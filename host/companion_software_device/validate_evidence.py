@@ -21,17 +21,19 @@ if not re.fullmatch(r"[0-9a-f]{40}", data.get("commit", "")):
 if not re.fullmatch(r"[0-9a-f]{64}", data.get("backend_config_sha256", "")):
     raise SystemExit("software-device evidence: config fingerprint is not SHA-256")
 
+providers = {"asr": "mock", "agent": "adk_fake_model", "tts": "mock"}
 scenario_set = data.get("scenario_set")
 expected = {
     "core": {
-        "providers": {"asr": "mock", "agent": "mock", "tts": "mock"},
+        "providers": providers,
         "scenarios": {
             "hello_turn_tts", "duplicate_message_id", "barge_in_generation",
             "reconnect_new_session", "config_update_report", "protocol_v1_rejected",
+            "enrolled_auth_rejects_wrong_and_revoked",
         },
     },
     "tool": {
-        "providers": {"asr": "mock", "agent": "fake_model", "tts": "mock"},
+        "providers": providers,
         "scenarios": {"agent_tool_authoritative_mutation"},
     },
 }.get(scenario_set)
@@ -54,6 +56,6 @@ for scenario_id, item in by_id.items():
     if not isinstance(item.get("elapsed_ms"), int) or item["elapsed_ms"] < 0:
         raise SystemExit(f"software-device evidence: {scenario_id} missing elapsed_ms")
 print(
-    f"SOFTWARE DEVICE EVIDENCE PASS: {scenario_set} Tier-1 orchestration only; "
-    "no physical/provider promotion"
+    f"SOFTWARE DEVICE EVIDENCE PASS: {scenario_set} Tier-1 ADK orchestration only; "
+    "no physical/real-provider promotion"
 )
