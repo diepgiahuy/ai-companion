@@ -1,0 +1,41 @@
+name: issue27-schema-apply
+
+on:
+  push:
+    branches: [agent/issue-27-idempotency]
+    paths: [.github/workflows/issue27-schema-apply.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: agent/issue-27-idempotency
+          fetch-depth: 0
+      - name: Guard branch
+        run: test "$GITHUB_REF_NAME" = "agent/issue-27-idempotency"
+      - name: Apply exact-state migration patch
+        run: python3 scripts/issue27_schema_patch.py
+      - name: Format and test store migration
+        run: |
+          gofmt -w backend/internal/store/*.go
+          cd backend
+          go test ./internal/idempotency ./internal/store
+          go test -race ./internal/idempotency ./internal/store
+          cd ..
+          git diff --check
+      - name: Commit and remove one-shot helpers
+        run: |
+          git config user.name "Diệp Gia Huy"
+          git config user.email "30974088+diepgiahuy@users.noreply.github.com"
+          git rm .github/workflows/issue27-schema-apply.yml scripts/issue27_schema_patch.py
+          git add backend/internal/store
+          git diff --cached --check
+          git commit -m "feat: migrate idempotency schema to actor scope"
+          git push origin HEAD:agent/issue-27-idempotency
