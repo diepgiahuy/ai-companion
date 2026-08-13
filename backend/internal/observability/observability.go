@@ -95,7 +95,14 @@ func Record(ctx context.Context, event Event) bool {
 	return RecordTo(RecorderFrom(ctx), event)
 }
 
-func RecordTo(recorder Recorder, event Event) bool {
+func RecordTo(recorder Recorder, event Event) (accepted bool) {
+	// Observability is strictly auxiliary. A buggy future exporter must not turn
+	// a voice/tool/domain success into an application failure or process panic.
+	defer func() {
+		if recover() != nil {
+			accepted = false
+		}
+	}()
 	if recorder == nil {
 		return true
 	}
