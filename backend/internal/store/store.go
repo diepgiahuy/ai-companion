@@ -46,13 +46,13 @@ func (s *Store) migrate() error {
 	statements := []string{
 		`PRAGMA journal_mode=WAL`, `PRAGMA foreign_keys=ON`,
 		`CREATE TABLE IF NOT EXISTS turn_results (turn_id TEXT PRIMARY KEY,response TEXT NOT NULL,created_at TEXT NOT NULL)`,
-		`CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY AUTOINCREMENT,idempotency_key TEXT NOT NULL UNIQUE,user_id TEXT NOT NULL DEFAULT '',content TEXT NOT NULL,created_at TEXT NOT NULL)`,
-		`CREATE TABLE IF NOT EXISTS expenses (id INTEGER PRIMARY KEY AUTOINCREMENT,idempotency_key TEXT NOT NULL UNIQUE,user_id TEXT NOT NULL DEFAULT '',amount_vnd INTEGER NOT NULL CHECK(amount_vnd>0),category TEXT NOT NULL,description TEXT NOT NULL,occurred_at TEXT NOT NULL,created_at TEXT NOT NULL)`,
-		`CREATE TABLE IF NOT EXISTS journal_entries (id INTEGER PRIMARY KEY AUTOINCREMENT,idempotency_key TEXT NOT NULL UNIQUE,user_id TEXT NOT NULL DEFAULT '',content TEXT NOT NULL,occurred_at TEXT NOT NULL,created_at TEXT NOT NULL)`,
-		`CREATE TABLE IF NOT EXISTS reminders (id INTEGER PRIMARY KEY AUTOINCREMENT,idempotency_key TEXT NOT NULL UNIQUE,user_id TEXT NOT NULL DEFAULT '',device_id TEXT NOT NULL DEFAULT '',kind TEXT NOT NULL DEFAULT 'reminder',title TEXT NOT NULL,fire_at TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',attempts INTEGER NOT NULL DEFAULT 0,next_attempt_at TEXT NOT NULL DEFAULT '',paused_remaining_seconds INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY AUTOINCREMENT,idempotency_key TEXT NOT NULL,user_id TEXT NOT NULL DEFAULT '',content TEXT NOT NULL,created_at TEXT NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS expenses (id INTEGER PRIMARY KEY AUTOINCREMENT,idempotency_key TEXT NOT NULL,user_id TEXT NOT NULL DEFAULT '',amount_vnd INTEGER NOT NULL CHECK(amount_vnd>0),category TEXT NOT NULL,description TEXT NOT NULL,occurred_at TEXT NOT NULL,created_at TEXT NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS journal_entries (id INTEGER PRIMARY KEY AUTOINCREMENT,idempotency_key TEXT NOT NULL,user_id TEXT NOT NULL DEFAULT '',content TEXT NOT NULL,occurred_at TEXT NOT NULL,created_at TEXT NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS reminders (id INTEGER PRIMARY KEY AUTOINCREMENT,idempotency_key TEXT NOT NULL,user_id TEXT NOT NULL DEFAULT '',device_id TEXT NOT NULL DEFAULT '',kind TEXT NOT NULL DEFAULT 'reminder',title TEXT NOT NULL,fire_at TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',attempts INTEGER NOT NULL DEFAULT 0,next_attempt_at TEXT NOT NULL DEFAULT '',paused_remaining_seconds INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS conversation_messages (id INTEGER PRIMARY KEY AUTOINCREMENT,turn_key TEXT NOT NULL,user_id TEXT NOT NULL DEFAULT '',thread_id TEXT NOT NULL DEFAULT 'default',role TEXT NOT NULL CHECK(role IN ('user','assistant')),content TEXT NOT NULL,created_at TEXT NOT NULL,UNIQUE(turn_key,role))`,
 		`CREATE TABLE IF NOT EXISTS budgets (user_id TEXT NOT NULL DEFAULT '',period TEXT NOT NULL,limit_vnd INTEGER NOT NULL CHECK(limit_vnd>=0),updated_at TEXT NOT NULL,PRIMARY KEY(user_id,period))`,
-		`CREATE TABLE IF NOT EXISTS voice_memos (id INTEGER PRIMARY KEY AUTOINCREMENT,idempotency_key TEXT NOT NULL UNIQUE,user_id TEXT NOT NULL DEFAULT '',device_id TEXT NOT NULL DEFAULT '',path TEXT NOT NULL,transcript TEXT NOT NULL DEFAULT '',duration_ms INTEGER NOT NULL CHECK(duration_ms>=0),created_at TEXT NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS voice_memos (id INTEGER PRIMARY KEY AUTOINCREMENT,idempotency_key TEXT NOT NULL,user_id TEXT NOT NULL DEFAULT '',device_id TEXT NOT NULL DEFAULT '',path TEXT NOT NULL,transcript TEXT NOT NULL DEFAULT '',duration_ms INTEGER NOT NULL CHECK(duration_ms>=0),created_at TEXT NOT NULL)`,
 	}
 	for _, q := range statements {
 		if _, err := s.db.Exec(q); err != nil {
@@ -126,7 +126,16 @@ func (s *Store) migrate() error {
 			return err
 		}
 	}
+	if err := s.migrateIdempotency(); err != nil {
+		return err
+	}
+	if err := s.migrateLegacyIdempotencyUniqueness(); err != nil {
+		return err
+	}
 	if err := s.migratePlatform(); err != nil {
+		return err
+	}
+	if err := s.migrateMarketWatchIdempotencyUniqueness(); err != nil {
 		return err
 	}
 	return nil
@@ -274,7 +283,8 @@ func (s *Store) CreateNote(ctx context.Context, userID, key, content string) err
 	if content == "" {
 		return fmt.Errorf("note content is required")
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO notes(idempotency_key,user_id,content,created_at) VALUES(?,?,?,?)`, key, owner(userID), content, time.Now().UTC().Format(time.RFC3339Nano))
+	user := owner(userID)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO notes(idempotency_key,user_id,content,created_at) SELECT ?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM notes WHERE user_id=? AND idempotency_key=?)`, key, user, content, time.Now().UTC().Format(time.RFC3339Nano), user, key)
 	return err
 }
 func (s *Store) ListNotes(ctx context.Context, userID string, limit int) ([]Note, error) {
@@ -335,7 +345,8 @@ func (s *Store) CreateExpenses(ctx context.Context, userID, key string, items []
 		if len(items) > 1 {
 			k = fmt.Sprintf("%s:%d", key, i)
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO expenses(idempotency_key,user_id,amount_vnd,category,description,occurred_at,created_at) VALUES(?,?,?,?,?,?,?)`, k, owner(userID), x.AmountVND, x.Category, x.Description, x.OccurredAt.UTC().Format(time.RFC3339Nano), now); err != nil {
+		user := owner(userID)
+		if _, err := tx.ExecContext(ctx, `INSERT INTO expenses(idempotency_key,user_id,amount_vnd,category,description,occurred_at,created_at) SELECT ?,?,?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM expenses WHERE user_id=? AND idempotency_key=?)`, k, user, x.AmountVND, x.Category, x.Description, x.OccurredAt.UTC().Format(time.RFC3339Nano), now, user, k); err != nil {
 			return err
 		}
 	}
@@ -396,7 +407,8 @@ func (s *Store) CreateJournal(ctx context.Context, userID, key, content string, 
 	if occurredAt.IsZero() {
 		return fmt.Errorf("journal occurred_at is required")
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO journal_entries(idempotency_key,user_id,content,occurred_at,created_at) VALUES(?,?,?,?,?)`, key, owner(userID), content, occurredAt.UTC().Format(time.RFC3339Nano), time.Now().UTC().Format(time.RFC3339Nano))
+	user := owner(userID)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO journal_entries(idempotency_key,user_id,content,occurred_at,created_at) SELECT ?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM journal_entries WHERE user_id=? AND idempotency_key=?)`, key, user, content, occurredAt.UTC().Format(time.RFC3339Nano), time.Now().UTC().Format(time.RFC3339Nano), user, key)
 	return err
 }
 func (s *Store) ListJournal(ctx context.Context, userID string, from, to time.Time, limit int) ([]JournalEntry, error) {
@@ -491,7 +503,8 @@ func (s *Store) createScheduled(ctx context.Context, userID, key, deviceID, kind
 	if kind != "reminder" && kind != "timer" {
 		return fmt.Errorf("invalid scheduled kind")
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO reminders(idempotency_key,user_id,device_id,kind,title,fire_at,status,attempts,next_attempt_at,paused_remaining_seconds,created_at) VALUES(?,?,?,?,?,?,'pending',0,'',0,?)`, key, owner(userID), strings.TrimSpace(deviceID), kind, title, fireAt.UTC().Format(time.RFC3339Nano), time.Now().UTC().Format(time.RFC3339Nano))
+	user := owner(userID)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO reminders(idempotency_key,user_id,device_id,kind,title,fire_at,status,attempts,next_attempt_at,paused_remaining_seconds,created_at) SELECT ?,?,?,?,?,?,'pending',0,'',0,? WHERE NOT EXISTS (SELECT 1 FROM reminders WHERE user_id=? AND idempotency_key=?)`, key, user, strings.TrimSpace(deviceID), kind, title, fireAt.UTC().Format(time.RFC3339Nano), time.Now().UTC().Format(time.RFC3339Nano), user, key)
 	return err
 }
 func (s *Store) ListReminders(ctx context.Context, userID, deviceID, status string, limit int) ([]Reminder, error) {
@@ -762,7 +775,8 @@ func (s *Store) CreateVoiceMemo(ctx context.Context, userID, key, deviceID, path
 	if durationMS < 0 {
 		return fmt.Errorf("voice memo duration must be non-negative")
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO voice_memos(idempotency_key,user_id,device_id,path,transcript,duration_ms,created_at) VALUES(?,?,?,?,?,?,?)`, key, owner(userID), strings.TrimSpace(deviceID), path, strings.TrimSpace(transcript), durationMS, time.Now().UTC().Format(time.RFC3339Nano))
+	user := owner(userID)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO voice_memos(idempotency_key,user_id,device_id,path,transcript,duration_ms,created_at) SELECT ?,?,?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM voice_memos WHERE user_id=? AND idempotency_key=?)`, key, user, strings.TrimSpace(deviceID), path, strings.TrimSpace(transcript), durationMS, time.Now().UTC().Format(time.RFC3339Nano), user, key)
 	return err
 }
 func (s *Store) VoiceMemoByKey(ctx context.Context, userID, key string) (VoiceMemo, bool, error) {
