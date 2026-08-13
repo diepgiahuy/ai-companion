@@ -9,14 +9,19 @@
 
 The current ESP-IDF composition root instantiates `Ssd1306Display`; its single
 source of truth for the breadboard pin map has separate I2S microphone, I2S
-speaker, button, and SSD1306 I2C signals.  The current target is ESP32-S3 with
-16 MB flash/PSRAM enabled.  Replacing only the OLED adds display, haptic, LED,
+speaker, button, and SSD1306 I2C signals. The current target is ESP32-S3 with
+16 MB flash/PSRAM enabled. Replacing only the OLED adds display, haptic, LED,
 and enclosure work to an already audio- and radio-constrained breadboard.
 
 Issue #8 requires a reversible selection, exact wiring/power ownership, and a
-same-workload comparison of graphics stacks.  No physical finalist board or
-instrumented supply is available to this decision.  Therefore this ADR makes no
+same-workload comparison of graphics stacks. No physical finalist board or
+instrumented supply is available to this decision. Therefore this ADR makes no
 FPS, power, acoustic, RF, tearing, or reliability claim.
+
+The repository firmware build is already pinned to **ESP-IDF 6.0.2**. Hardware
+benchmarks must run on that same toolchain unless a separate ADR demonstrates a
+blocking BSP/component incompatibility and defines an explicit migration plan. A
+display spike is not allowed to silently create a second firmware baseline.
 
 ## Options compared
 
@@ -32,8 +37,8 @@ FPS, power, acoustic, RF, tearing, or reliability claim.
 
 Espressif documents ESP-VoCat v1.2 with the 360x360 QSPI display, dual
 microphone array, 3 W speaker, 16 MB flash/PSRAM, USB-C programming, battery
-support, IMU, and boot/reset controls.  Its board catalog explicitly positions
-it for companion/interactive-toy products.  Korvo-2 is a credible maintained
+support, IMU, and boot/reset controls. Its board catalog explicitly positions
+it for companion/interactive-toy products. Korvo-2 is a credible maintained
 alternative with dual microphones, codec/ADC, 3 W amp, buttons, battery socket,
 debug bridge, and an LCD accessory, but its multi-board physical assembly is a
 poorer first companion prototype.
@@ -46,70 +51,77 @@ Primary sources: [ESP-VoCat v1.2 guide](https://docs.espressif.com/projects/esp-
 ## Decision
 
 1. Select **ESP-VoCat v1.2**, subject to human purchase approval, as the
-   reversible prototype finalist.  Do not remove the current SSD1306 adapter
+   reversible prototype finalist. Do not remove the current SSD1306 adapter
    before the chosen board passes the benchmark and a basic boot/peripheral
    smoke test.
 2. Use **ESP-IDF `esp_lcd` + `esp_lvgl_port`** as the baseline UI stack for
-   the prototype.  It is the vendor-maintained path used by the selected
+   the prototype. It is the vendor-maintained path used by the selected
    board/BSP and separates panel transport from UI.
 3. Keep **LovyanGFX** as the benchmark alternative, not a mandated dependency.
    It supports ESP-IDF, ESP32-S3 hardware LCD/CAM paths, DMA overlap, and
    sprites, so it may win only if the physical same-board measurement meets
    the promotion rule below.
-4. Do not select TFT_eSPI for new ESP-IDF work.  It has no demonstrated
+4. Do not select TFT_eSPI for new ESP-IDF work. It has no demonstrated
    repository-fit advantage over the two candidates.
 5. No discrete haptic motor, WS2812, or accelerometer is approved for the
-   first ESP-VoCat prototype.  The board's built-in BMI270 is sufficient to
-   decide whether a motion interaction is valuable.  A haptic/LED add-on is
+   first ESP-VoCat prototype. The board's built-in BMI270 is sufficient to
+   decide whether a motion interaction is valuable. A haptic/LED add-on is
    an explicit follow-up purchase and wiring gate.
 
 `esp_lcd` provides a common panel abstraction across SPI, I80, RGB, and
-other interfaces, and exposes color-transfer completion callbacks.  The
+other interfaces, and exposes color-transfer completion callbacks. The
 `esp_lvgl_port` registry component is actively developed, integrates
-`esp_lcd`, and supports LVGL 8 and 9.  LovyanGFX advertises ESP-IDF/S3,
+`esp_lcd`, and supports LVGL 8 and 9. LovyanGFX advertises ESP-IDF/S3,
 DMA-overlapped transfers, and sprite transforms, but those capabilities are
 not a device-level result.
 
 Sources: [ESP-IDF LCD API](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/api-reference/peripherals/lcd/index.html),
+[ESP-IDF 6.0 peripheral migration guide](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/migration-guides/release-6.x/6.0/peripherals.html),
 [esp_lvgl_port](https://components.espressif.com/components/espressif/esp_lvgl_port),
 and [LovyanGFX](https://github.com/lovyan03/LovyanGFX).
 
 ## Version and dependency constraints
 
-- ESP-IDF: `>=5.4,<6.0` for the first prototype.  Re-evaluate before IDF 6:
-  its LCD API migration changes configuration fields.
-- `esp_lcd`: supplied by that ESP-IDF range.
-- `esp_lvgl_port`: `^2.8.0`; LVGL: `^8.3` initially.  Record the resolved
-  exact versions and component hashes in the first hardware benchmark result;
-  do not rely on floating resolution for a comparison.
-- Board support: use the exact ESP-VoCat v1.2 BSP/board revision named in the
-  benchmark evidence.
-- LovyanGFX: pin an explicit reviewed commit SHA only in the alternative
-  benchmark build.  A package is not added to production firmware unless it
-  wins the physical gate.
+- **ESP-IDF: exactly `v6.0.2` for the first benchmark**, matching the repository
+  firmware build. Any toolchain change requires a coordinated repository decision,
+  not a display-only downgrade.
+- `esp_lcd`: use the API supplied by ESP-IDF 6.0.2 and account for the documented
+  6.0 LCD/peripheral migration changes in benchmark code.
+- `esp_lvgl_port`: select a release explicitly compatible with ESP-IDF 6.0.2 and
+  pin the exact resolved component version/hash in the benchmark lock/evidence.
+  Do not use a floating semver range as final benchmark evidence.
+- LVGL: use the version resolved by the selected `esp_lvgl_port`/BSP combination;
+  record the exact version/hash rather than pre-committing to LVGL 8 versus 9 before
+  the BSP/component graph is resolved on IDF 6.0.2.
+- Board support: use the exact ESP-VoCat v1.2 BSP/board revision and resolved
+  component hashes named in benchmark evidence.
+- LovyanGFX: pin an explicit reviewed commit SHA only in the alternative benchmark
+  build. A package is not added to production firmware unless it wins the physical
+  gate.
 
 ## Measurable promotion rule
 
-Run both stacks on the same ESP-VoCat v1.2, same IDF/configuration, panel
-clock, 16-bit color format, asset set, audio playback, Wi-Fi transfer, and BLE
-state.  Each run must record at least 300 frames for full and partial updates:
-p50/p95/max frame time, dropped frames, free/minimum/largest internal and
-PSRAM heap, firmware binary size, visible defects during flash/storage
-activity, and recovery result.
+Run both stacks on the same ESP-VoCat v1.2, same ESP-IDF 6.0.2 configuration,
+panel clock, 16-bit color format, asset set, audio playback, Wi-Fi transfer, and
+BLE state. Each run must record at least 300 frames for full and partial updates:
+p50/p95/max frame time, dropped frames, free/minimum/largest internal and PSRAM
+heap, firmware binary size, visible defects during flash/storage activity, and
+recovery result.
 
-The initial experience target is p95 <= 33 ms (30 FPS).  Choose LovyanGFX only
+The initial experience target is p95 <= 33 ms (30 FPS). Choose LovyanGFX only
 if it both passes every correctness/coexistence check and materially improves
 p95 or memory versus the baseline without increasing binary size enough to
-threaten the two 4 MiB OTA slots.  Otherwise retain the vendor stack.  This is
+threaten the two 4 MiB OTA slots. Otherwise retain the vendor stack. This is
 a decision rule, not a pre-measured result.
 
 ## Consequences and rollback
 
 Issue #9 may create a board-specific display/input adapter, UI task, and
-haptic/LED port only after revalidating board revision, resolved dependencies,
-pin plan, and this benchmark.  It must not change the hardware-independent
-`companion_app` contract or remove SSD1306 until the gate is attached.
+haptic/LED port only after revalidating board revision, the **ESP-IDF 6.0.2**
+component graph, pin plan, and this benchmark. It must not change the
+hardware-independent `companion_app` contract or remove SSD1306 until the gate is
+attached.
 
-Rollback is to the existing SSD1306 build and breadboard map.  No eFuses,
-secure-boot changes, purchases, custom PCB, or irreversible enclosure change
-are authorized by this ADR.
+Rollback is to the existing SSD1306 build and breadboard map. No eFuses,
+secure-boot changes, purchases, custom PCB, or irreversible enclosure change are
+authorized by this ADR.
