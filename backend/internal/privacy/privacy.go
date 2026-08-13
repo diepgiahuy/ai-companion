@@ -40,7 +40,10 @@ func (s *Service) Policy(ctx context.Context, user string) (Policy, error) {
 	if ok {
 		return p, nil
 	}
-	return Policy{UserID: user, SaveVoiceAudio: true, LongTermMemoryEnabled: true}, nil
+	// No persisted consent is explicit denial. Product callers must not infer
+	// permission to retain voice audio or long-term personal memory from a
+	// missing policy row.
+	return Policy{UserID: user, SaveVoiceAudio: false, LongTermMemoryEnabled: false}, nil
 }
 func (s *Service) Set(ctx context.Context, p Policy) error {
 	if p.UserID == "" {
