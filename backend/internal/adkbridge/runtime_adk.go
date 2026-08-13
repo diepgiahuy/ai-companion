@@ -65,9 +65,12 @@ func newWithModel(cfg Config, llm model.LLM) (*Runtime, error) {
 	if cfg.Tools == nil {
 		return nil, fmt.Errorf("tool registry is required")
 	}
-	tools, err := buildRepresentativeTools(cfg.Tools)
+	tools, err := buildRegistryTools(cfg.Tools)
 	if err != nil {
 		return nil, err
+	}
+	if len(tools) == 0 {
+		return nil, fmt.Errorf("tool registry is empty")
 	}
 	agent, err := llmagent.New(llmagent.Config{
 		Name: "companion", Description: "Single-user voice companion coordinator", Model: llm,
@@ -80,7 +83,8 @@ func newWithModel(cfg Config, llm model.LLM) (*Runtime, error) {
 	if appName == "" {
 		appName = "companion"
 	}
-	// Temporary until the durable ADK session adapter is proven.
+	// Session ownership is replaced in the next migration step. Until then this
+	// remains explicitly non-authoritative; Companion stores own durable state.
 	r, err := runner.NewInMemory(appName, agent)
 	if err != nil {
 		return nil, fmt.Errorf("create ADK runner: %w", err)
@@ -116,7 +120,7 @@ func (r *Runtime) Stream(ctx context.Context, turnID, transcript string, emit fu
 	}
 
 	// Destructive authorization is intentionally NOT inferred from model/user
-	// text here. ToolRegistry policy now requires a server-issued confirmation
+	// text here. ToolRegistry policy requires a server-issued confirmation
 	// scoped to owner + exact tool + canonical arguments + expiry.
 	turn, _ := pipeline.CurrentTurn(ctx)
 	if strings.TrimSpace(turn.TurnID) == "" {
@@ -223,25 +227,34 @@ func emitPresentations(ps []capability.Presentation, emit func(pipeline.AgentStr
 	return nil
 }
 
-func buildRepresentativeTools(registry *capability.ToolRegistry) ([]tool.Tool, error) {
+// buildRegistryTools adapts the complete current Companion ToolRegistry into
+// ADK FunctionTools. ToolRegistry remains the source of truth for schema,
+// authorization, idempotency and execution; this layer only translates calls.
+func buildRegistryTools(registry *capability.ToolRegistry) ([]tool.Tool, error) {
+	definitions := registry.Definitions()
 	executor := HostToolExecutor{Registry: registry}
-	var out []tool.Tool
-	add := func(t tool.Tool, err error) error { if err != nil { return err }; out = append(out, t); return nil }
-	if err := add(newHostTool[ExpenseLogArgs](registry, executor, ToolExpenseLog)); err != nil { return nil, err }
-	if err := add(newHostTool[BudgetGetArgs](registry, executor, ToolBudgetGet)); err != nil { return nil, err }
-	if err := add(newHostTool[TimerCreateArgs](registry, executor, ToolTimerCreate)); err != nil { return nil, err }
-	if err := add(newHostTool[MemoryRecallArgs](registry, executor, ToolMemoryRecall)); err != nil { return nil, err }
+	out := make([]tool.Tool, 0, len(definitions))
+	for _, def := range definitions {
+		name := strings.TrimSpace(def.Name)
+		if name == "" {
+			return nil, fmt.Errorf("registered tool has empty name")
+		}
+		schema, err := schemaFromMap(def.Parameters)
+		if err != nil {
+			return nil, fmt.Errorf("tool %s schema: %w", name, err)
+		}
+		adapted, err := functiontool.New[map[string]any, map[string]any](
+			functiontool.Config{Name: name, Description: def.Description, InputSchema: schema},
+			func(ctx adkagent.Context, args map[string]any) (map[string]any, error) {
+				return executor.Execute(ctx, name, ctx.FunctionCallID(), args)
+			},
+		)
+		if err != nil {
+			return nil, fmt.Errorf("adapt tool %s: %w", name, err)
+		}
+		out = append(out, adapted)
+	}
 	return out, nil
-}
-
-func newHostTool[TArgs any](registry *capability.ToolRegistry, executor HostToolExecutor, name string) (tool.Tool, error) {
-	def, ok := registry.Definition(name)
-	if !ok { return nil, fmt.Errorf("required host tool %q is not registered", name) }
-	schema, err := schemaFromMap(def.Parameters)
-	if err != nil { return nil, fmt.Errorf("tool %s schema: %w", name, err) }
-	return functiontool.New[TArgs, map[string]any](functiontool.Config{Name: name, Description: def.Description, InputSchema: schema}, func(ctx adkagent.Context, args TArgs) (map[string]any, error) {
-		return executor.Execute(ctx, name, ctx.FunctionCallID(), args)
-	})
 }
 
 func schemaFromMap(input map[string]any) (*jsonschema.Schema, error) {
