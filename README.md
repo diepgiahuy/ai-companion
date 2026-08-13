@@ -29,7 +29,9 @@ The table below distinguishes **implemented** from **production-proven**. A gree
 | PostgreSQL + Atlas/Ent + River | ⚪ unproven | Migration/job/backup/restart gates pending |
 | External MCP interoperability | ⚪ unproven | SDK bridge compiles; real external MCP contract test pending |
 | WebRTC real-network latency | ⚪ unproven | Must measure p50/p95 first-audio, loss recovery and barge-in |
-| Canonical protocol v2 | 🟡 implemented | Backend, firmware, host tests and golden fixture use one v2 envelope; physical-device evidence remains pending |
+| Tier-1 headless software device | 🟡 partial | Real Go `/v2/device` + production `CompanionApp`/protocol v2; six mock-provider orchestration scenarios pass; no provider/physical promotion |
+| Canonical protocol v2 | 🟡 partial | Backend, firmware and host share v2; Tier-1 proves v2 session/turn flow plus deterministic v1 rejection; physical-device evidence remains pending |
+| Wokwi targeted firmware simulation | ⚪ unproven | Tier-2 is defined in the evidence ladder, but no repository simulation run is recorded yet |
 | Security default-deny | ⚪ unproven | Security hardening is active work; requires adversarial integration evidence |
 | Privacy explicit consent | ⚪ unproven | Retention/memory consent workflow needs end-to-end proof |
 | 24h real-device soak | ⚪ unproven | Hardware-in-the-loop soak pending |
@@ -50,6 +52,7 @@ The current `main` branch includes foundations for the next production stages wi
 - **WebRTC Opus bridge** — Pion WebRTC adapter in parallel with the existing WebSocket transport; latency target remains unproven until measured on real networks.
 - **Expanded GitHub CI/CD** — module lock, race/vet, govulncheck, CodeQL, evidence truth gate, dependency review capability detection, release provenance foundation.
 - **Physical HIL workflow** — fail-closed ESP-IDF build/flash/serial test using `pytest-embedded`; it never falls back to a mock result and runs only when a maintainer manually selects a trusted ref and explicit device port.
+- **Tier-1 headless software device** — production C++ `CompanionApp` + protocol v2 connect to real `companiond` through a host-only WebSocket/libopus adapter; mock-provider evidence is classified `orchestration_only`, never real voice evidence.
 
 See merged PR #1 for the original implementation diff and deliberately unclaimed gates.
 
@@ -174,6 +177,7 @@ If the required real-world evidence is missing, status remains `unproven`.
 - [`docs/ADR-001-REPLACEABLE-PROVIDERS.md`](docs/ADR-001-REPLACEABLE-PROVIDERS.md) — provider/adapter boundaries.
 - [`docs/STATIC_REVIEW_GATE.md`](docs/STATIC_REVIEW_GATE.md) — mandatory independent review dimensions.
 - [`docs/TEST_PLAN.md`](docs/TEST_PLAN.md) — test tiers and verification plan.
+- [`docs/TEST_EVIDENCE_LADDER.md`](docs/TEST_EVIDENCE_LADDER.md) — Tier 0/1/2/3 evidence classes, promotion limits and current software-device/Wokwi boundaries.
 - [`docs/VERIFICATION.md`](docs/VERIFICATION.md) — verification procedures/evidence.
 - [`docs/checkpoints/README.md`](docs/checkpoints/README.md) — checkpoint/tag index and rollback history.
 - [`ai_development_workflow.md`](ai_development_workflow.md) — AI-assisted engineering workflow.
