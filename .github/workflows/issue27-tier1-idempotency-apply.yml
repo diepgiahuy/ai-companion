@@ -18,17 +18,19 @@ jobs:
         with:
           ref: agent/issue-27-tier1-evidence
           fetch-depth: 0
-      - name: Repair exact run_e2e insertion anchor
+      - name: Repair run_e2e insertion anchor in guarded patch
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          import re
           p = Path('scripts/issue27_tier1_idempotency_patch.py')
           text = p.read_text()
-          old = "anchor = '''# Verify revoke lifecycle after all tool scenarios. The old credential must no\\n# longer authorize a WebSocket upgrade.\\n'''"
-          new = "anchor = '''# Verify revoked credential cannot authorize a new WebSocket upgrade.\\n'''"
-          if text.count(old) != 1:
-              raise SystemExit('patch-script anchor declaration drifted')
-          p.write_text(text.replace(old, new))
+          pattern = r"anchor = '''# Verify revoke lifecycle after all tool scenarios\.[\s\S]*?WebSocket upgrade\.\n'''"
+          replacement = "anchor = '''# Verify revoked credential cannot authorize a new WebSocket upgrade.\n'''"
+          updated, count = re.subn(pattern, replacement, text, count=1)
+          if count != 1:
+              raise SystemExit(f'patch-script anchor declaration drifted: {count}')
+          p.write_text(updated)
           PY
       - name: Apply guarded Tier-1 idempotency patch
         run: python3 scripts/issue27_tier1_idempotency_patch.py
