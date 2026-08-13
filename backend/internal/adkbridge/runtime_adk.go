@@ -41,7 +41,9 @@ func New(cfg Config) (pipeline.Agent, error) {
 		client = &http.Client{Timeout: 60 * time.Second}
 	}
 	llm, err := openaimodel.NewModel(context.Background(), cfg.ModelName, &openaimodel.ClientConfig{
-		APIKey: cfg.APIKey, BaseURL: strings.TrimSpace(cfg.BaseURL), HTTPClient: client,
+		APIKey:     cfg.APIKey,
+		BaseURL:    strings.TrimSpace(cfg.BaseURL),
+		HTTPClient: client,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create ADK OpenAI-compatible model: %w", err)
@@ -61,17 +63,27 @@ func newWithModel(cfg Config, llm model.LLM) (*Runtime, error) {
 	if promptVersion == "" {
 		return nil, fmt.Errorf("ADK prompt version/fingerprint is required")
 	}
-	llm = &meteredLLM{inner: llm, modelName: strings.TrimSpace(cfg.ModelName), promptVersion: promptVersion, guard: cfg.UsageGuard, meter: cfg.UsageMeter}
+	llm = &meteredLLM{
+		inner:         llm,
+		modelName:     strings.TrimSpace(cfg.ModelName),
+		promptVersion: promptVersion,
+		guard:         cfg.UsageGuard,
+		meter:         cfg.UsageMeter,
+	}
 	if cfg.Tools == nil {
 		return nil, fmt.Errorf("tool registry is required")
 	}
-	tools, err := buildRepresentativeTools(cfg.Tools)
+	tools, err := buildHostTools(cfg.Tools)
 	if err != nil {
 		return nil, err
 	}
 	agent, err := llmagent.New(llmagent.Config{
-		Name: "companion", Description: "Single-user voice companion coordinator", Model: llm,
-		Instruction: instruction, Tools: tools, Mode: llmagent.ModeChat,
+		Name:        "companion",
+		Description: "Single-user voice companion coordinator",
+		Model:       llm,
+		Instruction: instruction,
+		Tools:       tools,
+		Mode:        llmagent.ModeChat,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create ADK llm agent: %w", err)
@@ -80,7 +92,8 @@ func newWithModel(cfg Config, llm model.LLM) (*Runtime, error) {
 	if appName == "" {
 		appName = "companion"
 	}
-	// Temporary until the durable ADK session adapter is proven.
+	// ADK's in-memory runner is still temporary. Companion-owned durable
+	// conversation/session semantics are the remaining session-parity gate in #15.
 	r, err := runner.NewInMemory(appName, agent)
 	if err != nil {
 		return nil, fmt.Errorf("create ADK runner: %w", err)
@@ -115,9 +128,6 @@ func (r *Runtime) Stream(ctx context.Context, turnID, transcript string, emit fu
 		return fmt.Errorf("transcript is required")
 	}
 
-	// Destructive authorization is intentionally NOT inferred from model/user
-	// text here. ToolRegistry policy now requires a server-issued confirmation
-	// scoped to owner + exact tool + canonical arguments + expiry.
 	turn, _ := pipeline.CurrentTurn(ctx)
 	if strings.TrimSpace(turn.TurnID) == "" {
 		turn.TurnID = turnID
@@ -184,32 +194,52 @@ func (r *Runtime) Stream(ctx context.Context, turnID, transcript string, emit fu
 }
 
 func contentText(content *genai.Content) string {
-	if content == nil { return "" }
+	if content == nil {
+		return ""
+	}
 	var b strings.Builder
 	for _, part := range content.Parts {
-		if part != nil && part.Text != "" { b.WriteString(part.Text) }
+		if part != nil && part.Text != "" {
+			b.WriteString(part.Text)
+		}
 	}
 	return b.String()
 }
 
 func eventStatus(content *genai.Content) (string, string, []string) {
-	if content == nil { return "", "", nil }
+	if content == nil {
+		return "", "", nil
+	}
 	var callIDs []string
 	toolName := ""
 	for _, part := range content.Parts {
 		if part != nil && part.FunctionCall != nil {
 			callIDs = append(callIDs, part.FunctionCall.ID)
-			if toolName == "" { toolName = strings.TrimSpace(part.FunctionCall.Name) }
+			if toolName == "" {
+				toolName = strings.TrimSpace(part.FunctionCall.Name)
+			}
 		}
 	}
-	if len(callIDs) > 0 { return "tool_running", toolName, callIDs }
+	if len(callIDs) > 0 {
+		return "tool_running", toolName, callIDs
+	}
 	return "", "", nil
 }
 
-type presentationQueue struct { mu sync.Mutex; items []capability.Presentation }
-func (q *presentationQueue) Push(p capability.Presentation) { q.mu.Lock(); q.items = append(q.items, p); q.mu.Unlock() }
+type presentationQueue struct {
+	mu    sync.Mutex
+	items []capability.Presentation
+}
+
+func (q *presentationQueue) Push(p capability.Presentation) {
+	q.mu.Lock()
+	q.items = append(q.items, p)
+	q.mu.Unlock()
+}
+
 func (q *presentationQueue) Drain() []capability.Presentation {
-	q.mu.Lock(); defer q.mu.Unlock()
+	q.mu.Lock()
+	defer q.mu.Unlock()
 	out := append([]capability.Presentation(nil), q.items...)
 	q.items = q.items[:0]
 	return out
@@ -217,37 +247,69 @@ func (q *presentationQueue) Drain() []capability.Presentation {
 
 func emitPresentations(ps []capability.Presentation, emit func(pipeline.AgentStreamEvent) error) error {
 	for _, p := range ps {
-		ui := &pipeline.UICard{Kind: p.Kind, Title: p.Title, Primary: p.Primary, Secondary: p.Secondary, Progress: p.Progress}
-		if err := emit(pipeline.AgentStreamEvent{UI: ui}); err != nil { return err }
+		ui := &pipeline.UICard{
+			Kind: p.Kind, Title: p.Title, Primary: p.Primary,
+			Secondary: p.Secondary, Progress: p.Progress,
+		}
+		if err := emit(pipeline.AgentStreamEvent{UI: ui}); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-func buildRepresentativeTools(registry *capability.ToolRegistry) ([]tool.Tool, error) {
+// buildHostTools adapts every current Companion ToolRegistry definition into ADK.
+// ToolRegistry remains the canonical schema/policy/execution boundary; ADK owns only
+// model-facing invocation plumbing.
+func buildHostTools(registry *capability.ToolRegistry) ([]tool.Tool, error) {
+	definitions := registry.Definitions()
+	if len(definitions) == 0 {
+		return nil, fmt.Errorf("tool registry exposes no tools")
+	}
 	executor := HostToolExecutor{Registry: registry}
-	var out []tool.Tool
-	add := func(t tool.Tool, err error) error { if err != nil { return err }; out = append(out, t); return nil }
-	if err := add(newHostTool[ExpenseLogArgs](registry, executor, ToolExpenseLog)); err != nil { return nil, err }
-	if err := add(newHostTool[BudgetGetArgs](registry, executor, ToolBudgetGet)); err != nil { return nil, err }
-	if err := add(newHostTool[TimerCreateArgs](registry, executor, ToolTimerCreate)); err != nil { return nil, err }
-	if err := add(newHostTool[MemoryRecallArgs](registry, executor, ToolMemoryRecall)); err != nil { return nil, err }
+	out := make([]tool.Tool, 0, len(definitions))
+	for _, definition := range definitions {
+		hostTool, err := newHostTool(registry, executor, definition)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, hostTool)
+	}
 	return out, nil
 }
 
-func newHostTool[TArgs any](registry *capability.ToolRegistry, executor HostToolExecutor, name string) (tool.Tool, error) {
-	def, ok := registry.Definition(name)
-	if !ok { return nil, fmt.Errorf("required host tool %q is not registered", name) }
-	schema, err := schemaFromMap(def.Parameters)
-	if err != nil { return nil, fmt.Errorf("tool %s schema: %w", name, err) }
-	return functiontool.New[TArgs, map[string]any](functiontool.Config{Name: name, Description: def.Description, InputSchema: schema}, func(ctx adkagent.Context, args TArgs) (map[string]any, error) {
+func newHostTool(registry *capability.ToolRegistry, executor HostToolExecutor, definition capability.ToolDefinition) (tool.Tool, error) {
+	name := strings.TrimSpace(definition.Name)
+	if name == "" {
+		return nil, fmt.Errorf("registered tool has empty name")
+	}
+	if _, ok := registry.Definition(name); !ok {
+		return nil, fmt.Errorf("registered tool %q disappeared while building ADK tools", name)
+	}
+	schema, err := schemaFromMap(definition.Parameters)
+	if err != nil {
+		return nil, fmt.Errorf("tool %s schema: %w", name, err)
+	}
+	return functiontool.New[map[string]any, map[string]any](functiontool.Config{
+		Name:        name,
+		Description: definition.Description,
+		InputSchema: schema,
+	}, func(ctx adkagent.Context, args map[string]any) (map[string]any, error) {
 		return executor.Execute(ctx, name, ctx.FunctionCallID(), args)
 	})
 }
 
 func schemaFromMap(input map[string]any) (*jsonschema.Schema, error) {
+	if len(input) == 0 {
+		input = map[string]any{"type": "object", "additionalProperties": true}
+	}
 	payload, err := json.Marshal(input)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	var schema jsonschema.Schema
-	if err := json.Unmarshal(payload, &schema); err != nil { return nil, err }
+	if err := json.Unmarshal(payload, &schema); err != nil {
+		return nil, err
+	}
 	return &schema, nil
 }
