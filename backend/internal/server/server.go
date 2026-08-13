@@ -19,6 +19,7 @@ import (
 	"companion-server/internal/capability"
 	"companion-server/internal/controlplane"
 	"companion-server/internal/domain"
+	"companion-server/internal/observability"
 	"companion-server/internal/pipeline"
 	"companion-server/internal/privacy"
 	"companion-server/internal/protocol"
@@ -48,6 +49,7 @@ type Server struct {
 	firmware          *controlplane.FirmwareService
 	privacy           *privacy.Service
 	featureCatalog    *controlplane.FeatureCatalog
+	observer          observability.Recorder
 }
 
 type Option func(*Server)
@@ -103,6 +105,14 @@ func WithDeviceAuthenticator(a DeviceAuthenticator) Option {
 	return func(s *Server) { s.deviceAuth = a }
 }
 
+func WithObservabilityRecorder(recorder observability.Recorder) Option {
+	return func(s *Server) {
+		if recorder != nil {
+			s.observer = recorder
+		}
+	}
+}
+
 func WithLocation(location *time.Location) Option {
 	return func(s *Server) {
 		if location != nil {
@@ -116,7 +126,7 @@ func New(components pipeline.Components, logger *slog.Logger, options ...Option)
 		logger = slog.Default()
 	}
 	service := &Server{
-		components: components, logger: logger,
+		components: components, logger: logger, observer: observability.Nop(),
 		hub: newSessionHub(), schedulerInterval: 2 * time.Second, location: time.Local, identityResolver: HeaderIdentityResolver{DefaultUserID: "default"},
 	}
 	for _, option := range options {
@@ -216,14 +226,20 @@ func (s *Server) handleDevice(writer http.ResponseWriter, request *http.Request)
 		}
 		return s.data.AcknowledgeReminder(ctx, identity.UserID, identity.DeviceID, id)
 	}
-	session, err := newSession(connection, s.components, s.hub, identity.DeviceID, identity.UserID, identity.ThreadID, identity.TenantID, identity.Plan, ack, s.controlPlane, s.logger)
+	session, err := newSession(connection, s.components, s.hub, identity.DeviceID, identity.UserID, identity.ThreadID, identity.TenantID, identity.Plan, ack, s.controlPlane, s.observer, s.logger)
 	if err != nil {
 		connection.Close(websocket.StatusInternalError, "codec unavailable")
 		s.logger.Error("initialize Opus session", "error", err)
 		return
 	}
-	if err := session.run(request.Context()); err != nil && !errors.Is(err, context.Canceled) {
-		s.logger.Info("device session ended", "session_id", session.id, "error", err)
+	sessionStarted := time.Now()
+	sessionErr := session.run(request.Context())
+	observability.RecordTo(s.observer, observability.Event{
+		Name: observability.EventSessionEnd, DurationMS: time.Since(sessionStarted).Milliseconds(),
+		Outcome: observabilityOutcome(sessionErr), Correlation: observability.Correlation{SessionID: session.id},
+	})
+	if sessionErr != nil && !errors.Is(sessionErr, context.Canceled) {
+		s.logger.Info("device session ended", "session_id", session.id, "error", sessionErr)
 	}
 }
 
@@ -255,6 +271,7 @@ type session struct {
 	components    pipeline.Components
 	hub           *sessionHub
 	logger        *slog.Logger
+	observer      observability.Recorder
 	controlWrites chan outbound
 	mediaWrites   chan outbound
 	mu            sync.Mutex
@@ -272,7 +289,7 @@ type inboundRecord struct {
 	outcome error
 }
 
-func newSession(connection *websocket.Conn, components pipeline.Components, hub *sessionHub, deviceID, userID, threadID, tenantID, plan string, ack func(context.Context, int64) error, control *controlplane.Service, logger *slog.Logger) (*session, error) {
+func newSession(connection *websocket.Conn, components pipeline.Components, hub *sessionHub, deviceID, userID, threadID, tenantID, plan string, ack func(context.Context, int64) error, control *controlplane.Service, observer observability.Recorder, logger *slog.Logger) (*session, error) {
 	if components.Codecs == nil {
 		return nil, fmt.Errorf("codec factory is required")
 	}
@@ -293,6 +310,9 @@ func newSession(connection *websocket.Conn, components pipeline.Components, hub 
 			threadID = "default"
 		}
 	}
+	if observer == nil {
+		observer = observability.Nop()
+	}
 	return &session{
 		id:            id,
 		deviceID:      deviceID,
@@ -305,6 +325,7 @@ func newSession(connection *websocket.Conn, components pipeline.Components, hub 
 		components:    components,
 		hub:           hub,
 		logger:        logger,
+		observer:      observer,
 		controlWrites: make(chan outbound, maximumControlQueue),
 		mediaWrites:   make(chan outbound, maximumMediaQueue),
 		codec:         codec,
@@ -357,6 +378,10 @@ func (s *session) run(parent context.Context) error {
 	if err := s.sendJSONMeta(ctx, protocol.SessionReadyType, protocol.Metadata{CorrelationID: hello.MessageID}, response); err != nil {
 		return err
 	}
+	observability.RecordTo(s.observer, observability.Event{
+		Name: observability.EventSessionReady, Outcome: "ok",
+		Correlation: observability.Correlation{SessionID: s.id},
+	})
 	if s.hub != nil {
 		s.hub.register(s.deviceID, s)
 		defer s.hub.unregister(s.deviceID, s)
@@ -524,7 +549,15 @@ func (s *session) startTurn(parent context.Context, turnID string) error {
 	}
 	s.mu.Unlock()
 
+	observability.RecordTo(s.observer, observability.Event{
+		Name: observability.EventTurnStart, Outcome: "ok",
+		Correlation: observability.Correlation{SessionID: s.id, TurnID: turnID, GenerationID: generation},
+	})
 	if interrupted != nil {
+		observability.RecordTo(s.observer, observability.Event{
+			Name: observability.EventTurnInterrupted, Outcome: "cancelled", Reason: "barge_in",
+			Correlation: observability.Correlation{SessionID: s.id, TurnID: interrupted.id, GenerationID: interrupted.generation},
+		})
 		// This terminal notification is intentionally not generation-scoped: it
 		// must survive invalidation of the old turn and tell the device to drop
 		// any already-buffered playback immediately.
@@ -574,6 +607,23 @@ func (s *session) stopTurn(turnID string) error {
 	return nil
 }
 
+func (s *session) turnCorrelation(current *turn) observability.Correlation {
+	if current == nil {
+		return observability.Correlation{SessionID: s.id}
+	}
+	return observability.Correlation{SessionID: s.id, TurnID: current.id, GenerationID: current.generation}
+}
+
+func observabilityOutcome(err error) string {
+	if err == nil {
+		return "ok"
+	}
+	if errors.Is(err, context.Canceled) {
+		return "cancelled"
+	}
+	return "error"
+}
+
 func (s *session) processTurn(current *turn, pcm []byte) {
 	turnStarted := time.Now()
 	runtimeTurn := pipeline.TurnContext{UserID: s.userID, ThreadID: s.threadID, DeviceID: s.deviceID, TenantID: s.tenantID, Plan: s.plan, SessionID: s.id, TurnID: current.id}
@@ -584,10 +634,13 @@ func (s *session) processTurn(current *turn, pcm []byte) {
 			runtimeTurn.VoiceKey = twin.Desired.VoiceKey
 		}
 	}
-	runtimeCtx := pipeline.WithTurnContext(current.ctx, runtimeTurn)
+	runtimeCtx := observability.WithRecorder(current.ctx, s.observer)
+	runtimeCtx = observability.WithCorrelation(runtimeCtx, s.turnCorrelation(current))
+	runtimeCtx = pipeline.WithTurnContext(runtimeCtx, runtimeTurn)
 	asrStarted := turnStarted
 	transcript, err := s.components.ASR.Transcribe(runtimeCtx, pcm)
 	asrDuration := time.Since(asrStarted)
+	observability.Record(runtimeCtx, observability.Event{Name: observability.EventTurnStage, Stage: "asr", DurationMS: asrDuration.Milliseconds(), Outcome: observabilityOutcome(err)})
 	if err != nil {
 		s.failTurn(current, "asr_failed", err)
 		return
@@ -600,7 +653,7 @@ func (s *session) processTurn(current *turn, pcm []byte) {
 	runtimeTurn.Transcript = transcript
 	runtimeTurn.PCM16Mono = pcm
 	runtimeTurn.SampleRate = protocol.UplinkSampleRate
-	agentCtx := pipeline.WithTurnContext(current.ctx, runtimeTurn)
+	agentCtx := pipeline.WithTurnContext(runtimeCtx, runtimeTurn)
 	var reply string
 	var ui *pipeline.UICard
 	agentStarted := time.Now()
@@ -612,12 +665,20 @@ func (s *session) processTurn(current *turn, pcm []byte) {
 	})
 	if streaming, ok := s.components.Agent.(pipeline.StreamingAgent); ok {
 		metrics, streamErr := s.processStreamingReply(current, agentCtx, transcript, streaming)
+		observability.Record(agentCtx, observability.Event{Name: observability.EventTurnStage, Stage: "agent_stream", DurationMS: metrics.AgentTotal.Milliseconds(), Outcome: observabilityOutcome(streamErr)})
+		if metrics.FirstSegmentAt > 0 {
+			observability.Record(agentCtx, observability.Event{Name: observability.EventTurnStage, Stage: "first_segment", DurationMS: metrics.FirstSegmentAt.Milliseconds(), Outcome: "ok"})
+		}
+		if metrics.TTSActive > 0 {
+			observability.Record(agentCtx, observability.Event{Name: observability.EventTurnStage, Stage: "tts_stream", DurationMS: metrics.TTSActive.Milliseconds(), Outcome: observabilityOutcome(streamErr)})
+		}
 		if streamErr != nil {
 			if !errors.Is(streamErr, context.Canceled) {
 				s.failTurn(current, "agent_stream_failed", streamErr)
 			}
 			return
 		}
+		observability.Record(agentCtx, observability.Event{Name: observability.EventTurnEnd, DurationMS: time.Since(turnStarted).Milliseconds(), Outcome: "ok"})
 		s.logger.Info("streaming voice turn completed",
 			"turn_id", current.id, "session_id", s.id, "device_id", s.deviceID, "user_id", s.userID,
 			"asr_ms", asrDuration.Milliseconds(), "agent_total_ms", metrics.AgentTotal.Milliseconds(),
@@ -637,6 +698,7 @@ func (s *session) processTurn(current *turn, pcm []byte) {
 		reply, err = s.components.Agent.Respond(agentCtx, current.id, transcript)
 	}
 	agentDuration := time.Since(agentStarted)
+	observability.Record(agentCtx, observability.Event{Name: observability.EventTurnStage, Stage: "agent", DurationMS: agentDuration.Milliseconds(), Outcome: observabilityOutcome(err)})
 	if err != nil {
 		s.failTurn(current, "agent_failed", err)
 		return
@@ -667,6 +729,8 @@ func (s *session) processTurn(current *turn, pcm []byte) {
 		}
 		return s.sendTurn(current.ctx, current, outbound{kind: websocket.MessageBinary, data: packet})
 	})
+	ttsDuration := time.Since(ttsStarted)
+	observability.Record(agentCtx, observability.Event{Name: observability.EventTurnStage, Stage: "tts", DurationMS: ttsDuration.Milliseconds(), Outcome: observabilityOutcome(err)})
 	if err != nil {
 		if !errors.Is(err, context.Canceled) {
 			s.failTurn(current, "tts_failed", err)
@@ -680,7 +744,7 @@ func (s *session) processTurn(current *turn, pcm []byte) {
 		s.failTurn(current, "media_write_failed", err)
 		return
 	}
-	ttsDuration := time.Since(ttsStarted)
+	observability.Record(agentCtx, observability.Event{Name: observability.EventTurnEnd, DurationMS: time.Since(turnStarted).Milliseconds(), Outcome: "ok"})
 	s.logger.Info("voice turn completed",
 		"turn_id", current.id, "session_id", s.id, "device_id", s.deviceID, "user_id", s.userID,
 		"asr_ms", asrDuration.Milliseconds(), "agent_ms", agentDuration.Milliseconds(), "tts_ms", ttsDuration.Milliseconds(), "total_ms", time.Since(turnStarted).Milliseconds())
@@ -725,6 +789,9 @@ func (s *session) interruptActive(ctx context.Context, reason string) {
 	}
 	s.mu.Unlock()
 	if current != nil {
+		observability.RecordTo(s.observer, observability.Event{
+			Name: observability.EventTurnInterrupted, Outcome: "cancelled", Reason: reason, Correlation: s.turnCorrelation(current),
+		})
 		_ = s.sendJSONMeta(ctx, protocol.TurnStateType, protocol.Metadata{
 			TurnID: current.id, GenerationID: current.generation,
 		}, protocol.TurnStatePayload{State: "interrupted", Reason: reason})
@@ -745,6 +812,7 @@ func (s *session) failTurn(current *turn, code string, err error) {
 	if !s.isCurrent(current) {
 		return
 	}
+	observability.RecordTo(s.observer, observability.Event{Name: observability.EventTurnEnd, Outcome: "error", Reason: code, Correlation: s.turnCorrelation(current)})
 	s.sendTurnError(current.ctx, current, code, err.Error())
 	s.mu.Lock()
 	if s.active == current {
@@ -891,6 +959,10 @@ func (s *session) send(ctx context.Context, message outbound) error {
 	case queue <- message:
 		return nil
 	default:
+		observability.RecordTo(s.observer, observability.Event{
+			Name: observability.EventQueueFull, Outcome: "error", Queue: label, QueueCapacity: cap(queue),
+			Correlation: observability.Correlation{SessionID: s.id, GenerationID: message.generation},
+		})
 		return fmt.Errorf("client %s write queue is full", label)
 	}
 }

@@ -7,6 +7,9 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
+
+	"companion-server/internal/observability"
 )
 
 type ToolDefinition struct {
@@ -101,14 +104,24 @@ func (r *ToolRegistry) DefinitionsForPacks(packs []string) []ToolDefinition {
 	return out
 }
 func (r *ToolRegistry) Execute(ctx context.Context, name string, req ToolRequest) (result ToolResult) {
-	// Tool implementations are extension boundaries. A panic in one tool must
-	// not tear down the voice/session process or leak the panic payload back to
-	// the model. Observability can attach richer internal diagnostics later; the
-	// model-facing failure remains deliberately generic.
+	started := time.Now()
+	recordedName := "unsupported"
+	risk := ""
 	defer func() {
 		if recover() != nil {
 			result = Failure(fmt.Errorf("internal tool execution failed"))
 		}
+		outcome := "error"
+		var marker struct {
+			OK bool `json:"ok"`
+		}
+		if json.Unmarshal([]byte(result.Content), &marker) == nil && marker.OK {
+			outcome = "ok"
+		}
+		observability.Record(ctx, observability.Event{
+			Name: observability.EventToolEnd, DurationMS: time.Since(started).Milliseconds(),
+			Outcome: outcome, ToolName: recordedName, ToolRisk: risk,
+		})
 	}()
 
 	r.mu.RLock()
@@ -118,7 +131,9 @@ func (r *ToolRegistry) Execute(ctx context.Context, name string, req ToolRequest
 	if t == nil {
 		return Failure(fmt.Errorf("unsupported tool %q", name))
 	}
+	recordedName = t.Name()
 	if d := t.Definition(); d != nil {
+		risk = d.Risk
 		if err := ValidateArguments(d.Parameters, req.Arguments); err != nil {
 			return Failure(fmt.Errorf("tool arguments rejected: %w", err))
 		}
