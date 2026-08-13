@@ -1,0 +1,79 @@
+name: issue27-tier1-idempotency-v3
+
+on:
+  push:
+    branches: [agent/issue-27-tier1-evidence]
+    paths: [.github/workflows/issue27-tier1-idempotency-v3.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: agent/issue-27-tier1-evidence
+          fetch-depth: 0
+      - name: Apply guarded Tier-1 idempotency patch
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          p = Path('scripts/issue27_tier1_idempotency_patch.py')
+          text = p.read_text()
+          pattern = r"anchor = '''# Verify revoke lifecycle after all tool scenarios\.[\s\S]*?WebSocket upgrade\.\n'''"
+          replacement = "anchor = '''# Re-open the same authoritative DB only to exercise the final credential\n'''"
+          updated, count = re.subn(pattern, replacement, text, count=1)
+          if count != 1:
+              raise SystemExit(f'patch-script anchor declaration drifted: {count}')
+          p.write_text(updated)
+          PY
+          python3 scripts/issue27_tier1_idempotency_patch.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('host/companion_software_device/run_e2e.sh')
+          text = p.read_text()
+          start = text.index('# Durable idempotency evidence uses a dedicated authoritative database.')
+          end = text.index('# Re-open the same authoritative DB only to exercise the final credential', start)
+          section = text[start:end]
+          updated = section.replace('\nstart_server\n', '\nstart_server "$TOOL_SERVER_LOG"\n')
+          if updated.count('start_server "$TOOL_SERVER_LOG"') != 4:
+              raise SystemExit('expected four idempotency start_server calls')
+          p.write_text(text[:start] + updated + text[end:])
+          PY
+      - name: Build production-shaped software-device image
+        run: docker build -f host/companion_software_device/Dockerfile -t issue27-tier1 .
+      - name: Run full Tier-1 including durable idempotency scenarios
+        run: |
+          mkdir -p artifacts/software-device
+          docker run --rm \
+            -e GITHUB_SHA="${GITHUB_SHA}" \
+            -e COMPANION_EVIDENCE_OUT=/artifacts/software-device/evidence.json \
+            -v "$PWD/artifacts:/artifacts" \
+            issue27-tier1
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          data = json.loads(Path('artifacts/software-device/evidence-idempotency-db.json').read_text())
+          assert data['result'] == 'passed'
+          assert data['equivalent_restart_replay_rows'] == 1
+          assert data['conflicting_retry_mutations'] == 0
+          assert data['concurrent_equivalent_rows'] == 1
+          assert data['expense_log_ledger_records'] == 2
+          assert data['expense_log_actor_count'] == 1
+          assert data['expense_log_key_count'] == 2
+          print('TIER1 DURABLE IDEMPOTENCY PASS')
+          PY
+      - name: Commit evidence harness and remove all one-shot helpers
+        run: |
+          git config user.name "Diệp Gia Huy"
+          git config user.email "30974088+diepgiahuy@users.noreply.github.com"
+          git rm .github/workflows/issue27-tier1-idempotency-v3.yml .github/workflows/issue27-tier1-idempotency-v2.yml .github/workflows/issue27-tier1-idempotency-apply.yml scripts/issue27_tier1_idempotency_patch.py
+          git add host/companion_software_device
+          git diff --cached --check
+          git commit -m "test: prove durable idempotency through Tier-1 backend"
+          git push origin HEAD:agent/issue-27-tier1-evidence
