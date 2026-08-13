@@ -3,7 +3,7 @@
 ESP32-S3 personal voice companion with a Go backend, realtime audio, durable personal tools, typed UI state, replaceable AI providers, and an evidence-driven production rollout.
 
 > **Stable checkpoint:** [`CP-SW2.3-20260812`](https://github.com/diepgiahuy/ai-companion/tree/CP-SW2.3-20260812)
-> **Active baseline:** the production evidence platform from merged PR #1; physical/provider gates remain unproven
+> **Active baseline:** `main` includes protocol v2, Tier-1 evidence, repository governance and the ADK/auth single-path hard cut through merged PR #34; physical/provider gates remain unproven
 > **Updated:** 2026-08-13
 > **Truth rule:** README is the human-readable source of truth. `evidence/status.json` is the machine-verifiable backing for production claims. Mock/fake tests may verify logic, but they cannot promote a production gate to `passed`.
 
@@ -46,10 +46,11 @@ The current `main` branch includes foundations for the next production stages wi
 - **Typed UI state** — `thinking`, `speaking`, `tool_executing`, etc., with tool metadata for firmware rendering.
 - **Smart-turn primitives** — partial-transcript-aware turn detector and streaming-ASR contract; real ASR/VAD benchmark still pending.
 - **Destructive authorization hardening** — owner + exact tool + canonical args hash + expiry scope; keyword intent no longer grants destructive authority.
-- **Native MCP bridge** — official MCP Go SDK behind the Companion `ToolRegistry`/policy boundary, with endpoint validation and SSRF-safe defaults.
+- **MCP adapter foundation** — official MCP Go SDK helper code exists behind the Companion `ToolRegistry`/policy boundary; product startup wiring and real external interoperability remain owned by #19 and are not claimed yet.
 - **Expanded GitHub CI/CD** — module lock, race/vet, govulncheck, CodeQL, evidence truth gate, dependency review capability detection, release provenance foundation.
 - **Physical HIL workflow** — fail-closed ESP-IDF build/flash/serial test using `pytest-embedded`; it never falls back to a mock result and runs only when a maintainer manually selects a trusted ref and explicit device port.
 - **Tier-1 headless software device** — production C++ `CompanionApp` + protocol v2 connect to real `companiond` through a host-only WebSocket/libopus adapter; the harness covers reconnect/barge-in/replay/config, wrong/revoked device credentials, ADK tool loops, and representative authoritative mutations for expense/budget/note/journal/reminder/timer/memory. Deterministic providers remain `orchestration_only`.
+- **Observability contract (#25 in progress)** — Companion-owned bounded/non-blocking event schema with safe session/turn/generation correlation, tool outcome timing and Tier-1 JSON snapshots; no hosted telemetry vendor is selected by the runtime contract.
 
 See merged PR #1 for the original implementation diff and deliberately unclaimed gates.
 
@@ -88,7 +89,7 @@ Capability + policy boundary
         │
         ▼
 Authoritative state
-  ├─ current SQLite compatibility store
+  ├─ current authoritative SQLite store
   ├─ PostgreSQL/Ent/Atlas target
   ├─ River durable jobs target
   ├─ conversation store
@@ -173,6 +174,7 @@ If the required real-world evidence is missing, status remains `unproven`.
 - [`docs/STATIC_REVIEW_GATE.md`](docs/STATIC_REVIEW_GATE.md) — mandatory independent review dimensions.
 - [`docs/TEST_PLAN.md`](docs/TEST_PLAN.md) — test tiers and verification plan.
 - [`docs/TEST_EVIDENCE_LADDER.md`](docs/TEST_EVIDENCE_LADDER.md) — Tier 0/1/2/3 evidence classes, promotion limits and current software-device/Wokwi boundaries.
+- [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md) — metric/event naming, correlation, cardinality/privacy and exporter contract.
 - [`docs/VERIFICATION.md`](docs/VERIFICATION.md) — verification procedures/evidence.
 - [`docs/checkpoints/README.md`](docs/checkpoints/README.md) — checkpoint/tag index and rollback history.
 - [`ai_development_workflow.md`](ai_development_workflow.md) — AI-assisted engineering workflow.
@@ -184,4 +186,4 @@ Production checkpoints are immutable Git tags. Current software lineage includes
 
 `CP0-20260812` → `CP-SW1-20260812` → `CP-SW2.1-20260812` → `CP-SW2.2-20260812` → **`CP-SW2.3-20260812`**
 
-The active PR is intentionally **not** a new production checkpoint yet. It remains draft until its scope is reviewed, synced with `main`, CI reruns on the merged tree, independent static review is recorded, and every production claim has matching evidence.
+`main` is currently ahead of the last immutable software tag after the verified Wave-0 merges. A new production checkpoint is created only after the next intended scope is reviewed, exact-head CI and post-merge verification pass, independent static review is recorded, and every promoted production claim has matching evidence.

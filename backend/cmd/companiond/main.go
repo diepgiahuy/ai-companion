@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -20,6 +21,7 @@ import (
 	"companion-server/internal/events"
 	"companion-server/internal/market"
 	"companion-server/internal/memory"
+	"companion-server/internal/observability"
 	"companion-server/internal/pipeline"
 	"companion-server/internal/policy"
 	"companion-server/internal/privacy"
@@ -35,6 +37,8 @@ import (
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	observer, flushObservability := configureObservability(logger)
+	defer flushObservability()
 	runtimeCfg, err := runtimeconfig.Load()
 	if err != nil {
 		logger.Error("load runtime configuration", "error", err)
@@ -196,6 +200,7 @@ func main() {
 		server.WithControlPlane(control), server.WithFirmwareService(firmwareService), server.WithPrivacyService(privacyService), server.WithFeatureCatalog(featureCatalog), server.WithAdminToken(os.Getenv("COMPANION_ADMIN_TOKEN")),
 		server.WithDeviceCredentialManager(data), server.WithEntitlementManager(data),
 		server.WithDeviceAuthenticator(data),
+		server.WithObservabilityRecorder(observer),
 	}
 	service := server.New(components, logger, serverOptions...)
 	rootCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -227,6 +232,39 @@ func main() {
 	if err := httpServer.Shutdown(ctx); err != nil {
 		logger.Error("graceful shutdown failed", "error", err)
 	}
+}
+
+func configureObservability(logger *slog.Logger) (observability.Recorder, func()) {
+	path := strings.TrimSpace(os.Getenv("COMPANION_OBSERVABILITY_FILE"))
+	if path == "" {
+		return observability.Nop(), func() {}
+	}
+	capacity := 4096
+	if raw := strings.TrimSpace(os.Getenv("COMPANION_OBSERVABILITY_CAPACITY")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			capacity = parsed
+		}
+	}
+	recorder := observability.NewRingRecorder(capacity)
+	flush := func() {
+		snapshot := recorder.Snapshot()
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			logger.Error("create observability snapshot directory", "error", err)
+			return
+		}
+		file, err := os.Create(path)
+		if err != nil {
+			logger.Error("create observability snapshot", "error", err)
+			return
+		}
+		defer file.Close()
+		if err := observability.WriteSnapshot(file, snapshot); err != nil {
+			logger.Error("write observability snapshot", "error", err)
+			return
+		}
+		logger.Info("observability snapshot written", "events", len(snapshot.Events), "dropped", snapshot.Dropped)
+	}
+	return recorder, flush
 }
 
 func loadPromptBundle(cfg runtimeconfig.Config) (*promptpkg.Bundle, error) {

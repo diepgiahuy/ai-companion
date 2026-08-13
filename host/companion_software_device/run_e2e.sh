@@ -5,6 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 OUT="${COMPANION_EVIDENCE_OUT:-$ROOT/software-device-evidence.json}"
 TOOL_OUT="${OUT%.json}-tool.json"
 TOOL_DB_OUT="${OUT%.json}-tool-db.json"
+CORE_OBS_OUT="${OUT%.json}-observability-core.json"
 TMP="$(mktemp -d)"
 SERVER_LOG="$TMP/companiond.log"
 TOOL_SERVER_LOG="$TMP/companiond-tool.log"
@@ -105,6 +106,7 @@ COMPANION_EVIDENCE_CONFIG_SHA256="$(printf '%s\n' \
   'profile=test' 'allow_mock=true' 'agent=adk:fake_responses' \
   'auth=database_enrolled' 'asr=mock:tier1 transcript' \
   'tts=mock' 'protocol=v2' | sha256sum | awk '{print $1}')"
+export COMPANION_OBSERVABILITY_FILE="$CORE_OBS_OUT"
 start_server "$SERVER_LOG"
 CORE_CREDENTIAL="$(enroll_device "$CORE_DEVICE")"
 expect_unauthorized "$CORE_DEVICE" "wrong-tier1-credential"
@@ -119,6 +121,7 @@ revoke_device "$CORE_DEVICE"
 expect_unauthorized "$CORE_DEVICE" "$CORE_CREDENTIAL"
 python3 "$ROOT/host/companion_software_device/validate_evidence.py" "$OUT"
 stop_server
+python3 "$ROOT/host/companion_software_device/validate_observability.py" "$CORE_OBS_OUT" core
 
 # Representative ADK tool parity. The same durable SQLite database and enrolled
 # device are reused across process restarts. Restarting only changes MockASR's
@@ -128,22 +131,23 @@ TOOL_DEVICE="software-device-tool"
 export COMPANION_DATABASE="$TMP/tool.db"
 TOOL_CREDENTIAL=""
 TOOL_CASES=(
-  "expense|Tier1 expense 50k|$TOOL_OUT"
-  "budget|Tier1 budget weekly|${OUT%.json}-tool-budget.json"
-  "note|Tier1 note|${OUT%.json}-tool-note.json"
-  "journal|Tier1 journal|${OUT%.json}-tool-journal.json"
-  "reminder|Tier1 reminder|${OUT%.json}-tool-reminder.json"
-  "timer|Tier1 timer|${OUT%.json}-tool-timer.json"
-  "memory|Tier1 memory|${OUT%.json}-tool-memory.json"
+  "expense|Tier1 expense 50k|$TOOL_OUT|expense.log"
+  "budget|Tier1 budget weekly|${OUT%.json}-tool-budget.json|budget.set"
+  "note|Tier1 note|${OUT%.json}-tool-note.json|note.create"
+  "journal|Tier1 journal|${OUT%.json}-tool-journal.json|journal.create"
+  "reminder|Tier1 reminder|${OUT%.json}-tool-reminder.json|reminder.create"
+  "timer|Tier1 timer|${OUT%.json}-tool-timer.json|timer.create"
+  "memory|Tier1 memory|${OUT%.json}-tool-memory.json|memory.remember"
 )
 
 for spec in "${TOOL_CASES[@]}"; do
-  IFS='|' read -r case_id transcript evidence_path <<<"$spec"
+  IFS='|' read -r case_id transcript evidence_path expected_tool <<<"$spec"
   export MOCK_TRANSCRIPT="$transcript"
   COMPANION_EVIDENCE_CONFIG_SHA256="$(printf '%s\n' \
     'profile=test' 'allow_mock=true' 'agent=adk:fake_responses' \
     'auth=database_enrolled' "asr=mock:${transcript}" \
     'tts=mock' 'protocol=v2' "tool_case=${case_id}" | sha256sum | awk '{print $1}')"
+  export COMPANION_OBSERVABILITY_FILE="${evidence_path%.json}-observability.json"
   start_server "$TOOL_SERVER_LOG"
   if [[ -z "$TOOL_CREDENTIAL" ]]; then
     TOOL_CREDENTIAL="$(enroll_device "$TOOL_DEVICE")"
@@ -159,11 +163,13 @@ for spec in "${TOOL_CASES[@]}"; do
     --evidence "$evidence_path"
   python3 "$ROOT/host/companion_software_device/validate_evidence.py" "$evidence_path"
   stop_server
+  python3 "$ROOT/host/companion_software_device/validate_observability.py" "${evidence_path%.json}-observability.json" tool "$expected_tool"
 done
 
 # Re-open the same authoritative DB only to exercise the final credential
 # lifecycle. A revoked credential must fail before WebSocket upgrade.
 export MOCK_TRANSCRIPT="Tier1 memory"
+export COMPANION_OBSERVABILITY_FILE="$TMP/final-auth-observability.json"
 start_server "$TOOL_SERVER_LOG"
 revoke_device "$TOOL_DEVICE"
 expect_unauthorized "$TOOL_DEVICE" "$TOOL_CREDENTIAL"
