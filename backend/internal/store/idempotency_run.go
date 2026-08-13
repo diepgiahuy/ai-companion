@@ -17,6 +17,9 @@ type idempotentOutcome struct {
 }
 
 func (s *Store) runIdempotentMutation(ctx context.Context, request idempotency.Request, mutate func(*sql.Tx) (any, error)) (idempotentOutcome, error) {
+	if err := s.migrateIdempotency(); err != nil {
+		return idempotentOutcome{}, err
+	}
 	request.Actor = strings.TrimSpace(request.Actor)
 	request.Operation = strings.TrimSpace(request.Operation)
 	request.Key = strings.TrimSpace(request.Key)

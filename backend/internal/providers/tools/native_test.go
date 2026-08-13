@@ -30,7 +30,7 @@ func TestNativeRegistrySeparatesTimerFromReminderAndReadsResources(t *testing.T)
 	if err := RegisterNative(registry, NativeDependencies{Store: data, Resources: resources, Now: func() time.Time { return now }}); err != nil {
 		t.Fatal(err)
 	}
-	ctx := pipeline.WithTurnContext(context.Background(), pipeline.TurnContext{DeviceID: "device-a"})
+	ctx := pipeline.WithTurnContext(context.Background(), pipeline.TurnContext{UserID: "user-a", DeviceID: "device-a"})
 
 	timer := registry.Execute(ctx, "timer.create", capability.ToolRequest{Key: "timer-1", Arguments: `{"title":"tea","delay_seconds":60}`})
 	if !strings.Contains(timer.Content, `"ok":true`) {
@@ -41,7 +41,7 @@ func TestNativeRegistrySeparatesTimerFromReminderAndReadsResources(t *testing.T)
 		t.Fatalf("reminder = %s", reminder.Content)
 	}
 
-	timers, err := data.ListTimers(ctx, "device-a", "device-a", "pending", 10)
+	timers, err := data.ListTimers(ctx, "user-a", "device-a", "pending", 10)
 	if err != nil {
 		t.Fatal(err)
 	}

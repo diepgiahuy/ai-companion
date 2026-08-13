@@ -14,6 +14,7 @@ import (
 	"companion-server/internal/capability"
 	conversationctx "companion-server/internal/conversation"
 	"companion-server/internal/domain"
+	"companion-server/internal/idempotency"
 	"companion-server/internal/pipeline"
 	"companion-server/internal/recording"
 )
@@ -28,7 +29,7 @@ type VoicePrivacy interface {
 }
 
 type NativeDependencies struct {
-	Store         domain.Repositories
+	Store         domain.DurableRepositories
 	Conversation  ConversationControl
 	Resources     *capability.ResourceRegistry
 	VoicePrivacy  VoicePrivacy
@@ -100,7 +101,13 @@ func nativeTools(d NativeDependencies) []capability.Tool {
 			if err != nil {
 				return capability.Failure(err)
 			}
-			if err = d.Store.CreateExpense(ctx, currentUser(ctx), r.Key, a.AmountVND, normalizeCategory(a.Category), strings.TrimSpace(a.Description), at); err != nil {
+			category := normalizeCategory(a.Category)
+			description := strings.TrimSpace(a.Description)
+			request, err := durableMutationRequest(ctx, "expense.create", r.Key, map[string]any{"amount_vnd": a.AmountVND, "category": category, "description": description, "occurred_at": at.UTC().Format(time.RFC3339Nano)})
+			if err != nil {
+				return capability.Failure(err)
+			}
+			if err = d.Store.CreateExpenseMutation(ctx, request, currentUser(ctx), a.AmountVND, category, description, at); err != nil {
 				return capability.Failure(err)
 			}
 			return capability.Success(map[string]any{"saved": "expense", "amount_vnd": a.AmountVND})
@@ -127,7 +134,11 @@ func nativeTools(d NativeDependencies) []capability.Tool {
 				items = append(items, domain.ExpenseInput{AmountVND: x.AmountVND, Category: normalizeCategory(x.Category), Description: strings.TrimSpace(x.Description), OccurredAt: at})
 				total += x.AmountVND
 			}
-			if err := d.Store.CreateExpenses(ctx, currentUser(ctx), r.Key, items); err != nil {
+			request, err := durableMutationRequest(ctx, "expense.log", r.Key, items)
+			if err != nil {
+				return capability.Failure(err)
+			}
+			if err := d.Store.CreateExpensesMutation(ctx, request, currentUser(ctx), items); err != nil {
 				return capability.Failure(err)
 			}
 			return capability.Success(map[string]any{"saved": "expenses", "count": len(items), "total_vnd": total})
@@ -218,12 +229,20 @@ func nativeTools(d NativeDependencies) []capability.Tool {
 			if err != nil {
 				return capability.Failure(err)
 			}
-			if err = d.Store.UpdateExpense(ctx, currentUser(ctx), a.ID, a.Amount, normalizeCategory(a.Category), a.Description, at); err != nil {
+			category := normalizeCategory(a.Category)
+			description := strings.TrimSpace(a.Description)
+			request, err := durableMutationRequest(ctx, "expense.update", r.Key, map[string]any{"id": a.ID, "amount_vnd": a.Amount, "category": category, "description": description, "occurred_at": at.UTC().Format(time.RFC3339Nano)})
+			if err != nil {
+				return capability.Failure(err)
+			}
+			if err = d.Store.UpdateExpenseMutation(ctx, request, currentUser(ctx), a.ID, a.Amount, category, description, at); err != nil {
 				return capability.Failure(err)
 			}
 			return capability.Success(map[string]any{"updated": "expense", "id": a.ID})
 		}),
-		define("expense", "expense.delete", "Xóa một khoản chi theo id", obj(map[string]any{"id": idField}, "id"), deleteID(func(ctx context.Context, u string, id int64) error { return d.Store.DeleteExpense(ctx, u, id) }, "expense")),
+		define("expense", "expense.delete", "Xóa một khoản chi theo id", obj(map[string]any{"id": idField}, "id"), deleteMutationID("expense.delete", "expense", func(ctx context.Context, request idempotency.Request, u string, id int64) error {
+			return d.Store.DeleteExpenseMutation(ctx, request, u, id)
+		})),
 
 		define("budget", "budget.get", "Đọc budget ngày/tuần/tháng", obj(map[string]any{"period": periodField}, "period"), func(ctx context.Context, r capability.ToolRequest) capability.ToolResult {
 			var a struct {
@@ -246,9 +265,15 @@ func nativeTools(d NativeDependencies) []capability.Tool {
 			if err := json.Unmarshal([]byte(r.Arguments), &a); err != nil {
 				return capability.Failure(err)
 			}
-			if err := d.Store.SetBudget(ctx, currentUser(ctx), a.Period, a.Limit); err != nil {
+			period := strings.ToLower(strings.TrimSpace(a.Period))
+			request, err := durableMutationRequest(ctx, "budget.set", r.Key, map[string]any{"period": period, "limit_vnd": a.Limit})
+			if err != nil {
 				return capability.Failure(err)
 			}
+			if err := d.Store.SetBudgetMutation(ctx, request, currentUser(ctx), period, a.Limit); err != nil {
+				return capability.Failure(err)
+			}
+			a.Period = period
 			return capability.Success(map[string]any{"period": a.Period, "limit_vnd": a.Limit})
 		}),
 		define("budget", "budget.delete", "Xóa budget", obj(map[string]any{"period": periodField}, "period"), func(ctx context.Context, r capability.ToolRequest) capability.ToolResult {
@@ -258,9 +283,15 @@ func nativeTools(d NativeDependencies) []capability.Tool {
 			if err := json.Unmarshal([]byte(r.Arguments), &a); err != nil {
 				return capability.Failure(err)
 			}
-			if err := d.Store.DeleteBudget(ctx, currentUser(ctx), a.Period); err != nil {
+			period := strings.ToLower(strings.TrimSpace(a.Period))
+			request, err := durableMutationRequest(ctx, "budget.delete", r.Key, map[string]any{"period": period})
+			if err != nil {
 				return capability.Failure(err)
 			}
+			if err := d.Store.DeleteBudgetMutation(ctx, request, currentUser(ctx), period); err != nil {
+				return capability.Failure(err)
+			}
+			a.Period = period
 			return capability.Success(map[string]any{"deleted": "budget", "period": a.Period})
 		}),
 
@@ -271,7 +302,12 @@ func nativeTools(d NativeDependencies) []capability.Tool {
 			if err := json.Unmarshal([]byte(r.Arguments), &a); err != nil {
 				return capability.Failure(err)
 			}
-			if err := d.Store.CreateNote(ctx, currentUser(ctx), r.Key, a.Content); err != nil {
+			content := strings.TrimSpace(a.Content)
+			request, err := durableMutationRequest(ctx, "note.create", r.Key, map[string]any{"content": content})
+			if err != nil {
+				return capability.Failure(err)
+			}
+			if err := d.Store.CreateNoteMutation(ctx, request, currentUser(ctx), content); err != nil {
 				return capability.Failure(err)
 			}
 			return capability.Success(map[string]any{"saved": "note"})
@@ -297,12 +333,19 @@ func nativeTools(d NativeDependencies) []capability.Tool {
 			if err := json.Unmarshal([]byte(r.Arguments), &a); err != nil {
 				return capability.Failure(err)
 			}
-			if err := d.Store.UpdateNote(ctx, currentUser(ctx), a.ID, a.Content); err != nil {
+			content := strings.TrimSpace(a.Content)
+			request, err := durableMutationRequest(ctx, "note.update", r.Key, map[string]any{"id": a.ID, "content": content})
+			if err != nil {
+				return capability.Failure(err)
+			}
+			if err := d.Store.UpdateNoteMutation(ctx, request, currentUser(ctx), a.ID, content); err != nil {
 				return capability.Failure(err)
 			}
 			return capability.Success(map[string]any{"updated": "note", "id": a.ID})
 		}),
-		define("note", "note.delete", "Xóa ghi chú", obj(map[string]any{"id": idField}, "id"), deleteID(func(ctx context.Context, u string, id int64) error { return d.Store.DeleteNote(ctx, u, id) }, "note")),
+		define("note", "note.delete", "Xóa ghi chú", obj(map[string]any{"id": idField}, "id"), deleteMutationID("note.delete", "note", func(ctx context.Context, request idempotency.Request, u string, id int64) error {
+			return d.Store.DeleteNoteMutation(ctx, request, u, id)
+		})),
 
 		define("journal", "journal.create", "Lưu nhật ký", obj(map[string]any{"content": str("Nội dung"), "occurred_at": str("RFC3339")}, "content", "occurred_at"), func(ctx context.Context, r capability.ToolRequest) capability.ToolResult {
 			var a struct {
@@ -316,7 +359,12 @@ func nativeTools(d NativeDependencies) []capability.Tool {
 			if err != nil {
 				return capability.Failure(err)
 			}
-			if err := d.Store.CreateJournal(ctx, currentUser(ctx), r.Key, a.Content, at); err != nil {
+			content := strings.TrimSpace(a.Content)
+			request, err := durableMutationRequest(ctx, "journal.create", r.Key, map[string]any{"content": content, "occurred_at": at.UTC().Format(time.RFC3339Nano)})
+			if err != nil {
+				return capability.Failure(err)
+			}
+			if err := d.Store.CreateJournalMutation(ctx, request, currentUser(ctx), content, at); err != nil {
 				return capability.Failure(err)
 			}
 			return capability.Success(map[string]any{"saved": "journal"})
@@ -353,12 +401,19 @@ func nativeTools(d NativeDependencies) []capability.Tool {
 			if err != nil {
 				return capability.Failure(err)
 			}
-			if err := d.Store.UpdateJournal(ctx, currentUser(ctx), a.ID, a.Content, at); err != nil {
+			content := strings.TrimSpace(a.Content)
+			request, err := durableMutationRequest(ctx, "journal.update", r.Key, map[string]any{"id": a.ID, "content": content, "occurred_at": at.UTC().Format(time.RFC3339Nano)})
+			if err != nil {
+				return capability.Failure(err)
+			}
+			if err := d.Store.UpdateJournalMutation(ctx, request, currentUser(ctx), a.ID, content, at); err != nil {
 				return capability.Failure(err)
 			}
 			return capability.Success(map[string]any{"updated": "journal", "id": a.ID})
 		}),
-		define("journal", "journal.delete", "Xóa nhật ký", obj(map[string]any{"id": idField}, "id"), deleteID(func(ctx context.Context, u string, id int64) error { return d.Store.DeleteJournal(ctx, u, id) }, "journal")),
+		define("journal", "journal.delete", "Xóa nhật ký", obj(map[string]any{"id": idField}, "id"), deleteMutationID("journal.delete", "journal", func(ctx context.Context, request idempotency.Request, u string, id int64) error {
+			return d.Store.DeleteJournalMutation(ctx, request, u, id)
+		})),
 
 		define("schedule", "timer.create", "Tạo timer tương đối", obj(map[string]any{"title": str("Nội dung"), "delay_seconds": map[string]any{"type": "integer", "minimum": 1, "maximum": 604800}}, "delay_seconds"), func(ctx context.Context, r capability.ToolRequest) capability.ToolResult {
 			var a struct {
@@ -374,11 +429,17 @@ func nativeTools(d NativeDependencies) []capability.Tool {
 			if strings.TrimSpace(a.Title) == "" {
 				a.Title = "Hết giờ"
 			}
-			fire := d.Now().Add(time.Duration(a.Delay) * time.Second)
-			if err := d.Store.CreateTimerForDevice(ctx, currentUser(ctx), r.Key, currentDevice(ctx), a.Title, fire); err != nil {
+			a.Title = strings.TrimSpace(a.Title)
+			request, err := durableMutationRequest(ctx, "timer.create", r.Key, map[string]any{"title": a.Title, "delay_seconds": a.Delay})
+			if err != nil {
 				return capability.Failure(err)
 			}
-			return capability.Success(map[string]any{"saved": "timer", "fire_at": fire.UTC().Format(time.RFC3339), "delay_seconds": a.Delay})
+			fire := d.Now().Add(time.Duration(a.Delay) * time.Second)
+			item, err := d.Store.CreateTimerMutation(ctx, request, currentUser(ctx), currentDevice(ctx), a.Title, fire)
+			if err != nil {
+				return capability.Failure(err)
+			}
+			return capability.Success(map[string]any{"saved": "timer", "fire_at": item.FireAt.UTC().Format(time.RFC3339), "delay_seconds": a.Delay})
 		}),
 		define("schedule", "reminder.create", "Tạo lời nhắc tuyệt đối", obj(map[string]any{"title": str("Nội dung"), "fire_at": str("RFC3339")}, "title", "fire_at"), func(ctx context.Context, r capability.ToolRequest) capability.ToolResult {
 			var a struct {
@@ -392,10 +453,16 @@ func nativeTools(d NativeDependencies) []capability.Tool {
 			if err != nil {
 				return capability.Failure(err)
 			}
-			if err := d.Store.CreateReminderForDevice(ctx, currentUser(ctx), r.Key, currentDevice(ctx), a.Title, fire); err != nil {
+			title := strings.TrimSpace(a.Title)
+			request, err := durableMutationRequest(ctx, "reminder.create", r.Key, map[string]any{"title": title, "fire_at": fire.UTC().Format(time.RFC3339Nano)})
+			if err != nil {
 				return capability.Failure(err)
 			}
-			return capability.Success(map[string]any{"saved": "reminder", "fire_at": fire.UTC().Format(time.RFC3339)})
+			item, err := d.Store.CreateReminderMutation(ctx, request, currentUser(ctx), currentDevice(ctx), title, fire)
+			if err != nil {
+				return capability.Failure(err)
+			}
+			return capability.Success(map[string]any{"saved": "reminder", "fire_at": item.FireAt.UTC().Format(time.RFC3339)})
 		}),
 		define("schedule", "reminder.list", "Liệt kê lời nhắc", obj(map[string]any{"status": statusField, "limit": limitField}), func(ctx context.Context, r capability.ToolRequest) capability.ToolResult {
 			var a struct {
@@ -444,7 +511,12 @@ func nativeTools(d NativeDependencies) []capability.Tool {
 			if err != nil {
 				return capability.Failure(err)
 			}
-			if err := d.Store.UpdateScheduledItem(ctx, currentUser(ctx), a.ID, a.Title, fire); err != nil {
+			title := strings.TrimSpace(a.Title)
+			request, err := durableMutationRequest(ctx, "schedule.update", r.Key, map[string]any{"id": a.ID, "title": title, "fire_at": fire.UTC().Format(time.RFC3339Nano)})
+			if err != nil {
+				return capability.Failure(err)
+			}
+			if err := d.Store.UpdateScheduledMutation(ctx, request, currentUser(ctx), a.ID, title, fire); err != nil {
 				return capability.Failure(err)
 			}
 			return capability.Success(map[string]any{"updated": "scheduled_item", "id": a.ID})
@@ -456,7 +528,11 @@ func nativeTools(d NativeDependencies) []capability.Tool {
 			if err := json.Unmarshal([]byte(r.Arguments), &a); err != nil {
 				return capability.Failure(err)
 			}
-			if err := d.Store.PauseTimer(ctx, currentUser(ctx), a.ID, d.Now()); err != nil {
+			request, err := durableMutationRequest(ctx, "timer.pause", r.Key, map[string]any{"id": a.ID})
+			if err != nil {
+				return capability.Failure(err)
+			}
+			if err := d.Store.PauseTimerMutation(ctx, request, currentUser(ctx), a.ID, d.Now()); err != nil {
 				return capability.Failure(err)
 			}
 			return capability.Success(map[string]any{"paused": "timer", "id": a.ID})
@@ -468,13 +544,21 @@ func nativeTools(d NativeDependencies) []capability.Tool {
 			if err := json.Unmarshal([]byte(r.Arguments), &a); err != nil {
 				return capability.Failure(err)
 			}
-			if err := d.Store.ResumeTimer(ctx, currentUser(ctx), a.ID, d.Now()); err != nil {
+			request, err := durableMutationRequest(ctx, "timer.resume", r.Key, map[string]any{"id": a.ID})
+			if err != nil {
+				return capability.Failure(err)
+			}
+			if err := d.Store.ResumeTimerMutation(ctx, request, currentUser(ctx), a.ID, d.Now()); err != nil {
 				return capability.Failure(err)
 			}
 			return capability.Success(map[string]any{"resumed": "timer", "id": a.ID})
 		}),
-		define("schedule", "schedule.cancel", "Hủy timer/reminder theo id", obj(map[string]any{"id": idField}, "id"), deleteID(func(ctx context.Context, u string, id int64) error { return d.Store.CancelScheduledItem(ctx, u, id) }, "scheduled_item")),
-		define("schedule", "schedule.delete", "Xóa timer/reminder theo id", obj(map[string]any{"id": idField}, "id"), deleteID(func(ctx context.Context, u string, id int64) error { return d.Store.DeleteScheduledItem(ctx, u, id) }, "scheduled_item")),
+		define("schedule", "schedule.cancel", "Hủy timer/reminder theo id", obj(map[string]any{"id": idField}, "id"), deleteMutationID("schedule.cancel", "scheduled_item", func(ctx context.Context, request idempotency.Request, u string, id int64) error {
+			return d.Store.CancelScheduledMutation(ctx, request, u, id)
+		})),
+		define("schedule", "schedule.delete", "Xóa timer/reminder theo id", obj(map[string]any{"id": idField}, "id"), deleteMutationID("schedule.delete", "scheduled_item", func(ctx context.Context, request idempotency.Request, u string, id int64) error {
+			return d.Store.DeleteScheduledMutation(ctx, request, u, id)
+		})),
 
 		define("voice", "voice_memo.save", "Lưu audio lượt hiện tại thành WAV", obj(map[string]any{}), func(ctx context.Context, r capability.ToolRequest) capability.ToolResult {
 			turn, ok := pipeline.CurrentTurn(ctx)
@@ -594,7 +678,7 @@ func nativeTools(d NativeDependencies) []capability.Tool {
 	return tools
 }
 
-func deleteID(fn func(context.Context, string, int64) error, label string) func(context.Context, capability.ToolRequest) capability.ToolResult {
+func deleteMutationID(operation, label string, fn func(context.Context, idempotency.Request, string, int64) error) func(context.Context, capability.ToolRequest) capability.ToolResult {
 	return func(ctx context.Context, r capability.ToolRequest) capability.ToolResult {
 		var a struct {
 			ID int64 `json:"id"`
@@ -602,7 +686,11 @@ func deleteID(fn func(context.Context, string, int64) error, label string) func(
 		if err := json.Unmarshal([]byte(r.Arguments), &a); err != nil {
 			return capability.Failure(err)
 		}
-		if err := fn(ctx, currentUser(ctx), a.ID); err != nil {
+		request, err := durableMutationRequest(ctx, operation, r.Key, map[string]any{"id": a.ID})
+		if err != nil {
+			return capability.Failure(err)
+		}
+		if err := fn(ctx, request, currentUser(ctx), a.ID); err != nil {
 			return capability.Failure(err)
 		}
 		return capability.Success(map[string]any{"deleted": label, "id": a.ID})
