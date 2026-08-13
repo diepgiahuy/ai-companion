@@ -12,7 +12,7 @@ COPY backend/go.mod backend/go.sum ./backend/
 RUN cd backend && go mod download
 COPY . .
 RUN go env GOVERSION | grep -Eq '^go1\.26\.5([.]|$)'
-RUN cd backend && go build -tags nolibopusfile -o /usr/local/bin/companiond ./cmd/companiond
+RUN cd backend && go build -tags "adk,nolibopusfile" -o /usr/local/bin/companiond ./cmd/companiond
 RUN cmake -S host/companion_software_device -B /build/software-device -G Ninja -DCMAKE_BUILD_TYPE=Release \
  && cmake --build /build/software-device --target companion_software_device \
  && cp /build/software-device/companion_software_device /usr/local/bin/companion_software_device
