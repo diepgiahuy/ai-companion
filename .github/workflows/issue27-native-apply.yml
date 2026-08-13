@@ -3,7 +3,10 @@ name: issue27-native-apply
 on:
   push:
     branches: [agent/issue-27-native-slice]
-    paths: [.github/workflows/issue27-native-apply.yml]
+    paths:
+      - .github/workflows/issue27-native-apply.yml
+      - scripts/issue27_native_patch.py
+      - Dockerfile.test
 
 permissions:
   contents: write
@@ -41,7 +44,7 @@ jobs:
           git config user.name "Diệp Gia Huy"
           git config user.email "30974088+diepgiahuy@users.noreply.github.com"
           git rm .github/workflows/issue27-native-apply.yml scripts/issue27_native_patch.py
-          git add backend/internal/domain backend/internal/providers/tools backend/internal/store
+          git add Dockerfile.test backend/internal/domain backend/internal/providers/tools backend/internal/store
           git diff --cached --check
           git commit -m "feat: route native mutations through durable idempotency"
           git push origin HEAD:agent/issue-27-native-slice
