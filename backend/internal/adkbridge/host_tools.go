@@ -12,52 +12,6 @@ import (
 	"companion-server/internal/pipeline"
 )
 
-const (
-	ToolExpenseLog   = "expense.log"
-	ToolBudgetGet    = "budget.get"
-	ToolTimerCreate  = "timer.create"
-	ToolMemoryRecall = "memory.recall"
-)
-
-var representativeToolNames = []string{
-	ToolExpenseLog,
-	ToolBudgetGet,
-	ToolTimerCreate,
-	ToolMemoryRecall,
-}
-
-// RepresentativeToolNames returns a copy so callers cannot mutate the bridge's
-// rollout set. CP-SW4 expands this only after the representative parity gate is
-// green.
-func RepresentativeToolNames() []string {
-	return append([]string(nil), representativeToolNames...)
-}
-
-type ExpenseLogArgs struct {
-	Items []ExpenseItem `json:"items"`
-}
-
-type ExpenseItem struct {
-	AmountVND   int64  `json:"amount_vnd"`
-	Category    string `json:"category"`
-	Description string `json:"description"`
-	OccurredAt  string `json:"occurred_at"`
-}
-
-type BudgetGetArgs struct {
-	Period string `json:"period"`
-}
-
-type TimerCreateArgs struct {
-	Title        string `json:"title,omitempty"`
-	DelaySeconds int64  `json:"delay_seconds"`
-}
-
-type MemoryRecallArgs struct {
-	Query string `json:"query"`
-	Limit int    `json:"limit,omitempty"`
-}
-
 // HostToolExecutor is the anti-corruption layer between ADK FunctionTools and
 // Companion's authoritative capability registry. The registry remains the one
 // place that validates JSON Schema, authorizes access, and executes product
@@ -70,7 +24,8 @@ func (e HostToolExecutor) Execute(ctx context.Context, toolName, functionCallID 
 	if e.Registry == nil {
 		return nil, fmt.Errorf("tool registry is required")
 	}
-	if strings.TrimSpace(toolName) == "" {
+	toolName = strings.TrimSpace(toolName)
+	if toolName == "" {
 		return nil, fmt.Errorf("tool name is required")
 	}
 	payload, err := json.Marshal(args)
@@ -113,10 +68,9 @@ func invalidToolResult(ctx context.Context, functionCallID, toolName, risk strin
 	}
 }
 
-// ToolExecutionKey is stable for an ADK function call and scoped far enough to
-// survive device reconnect/reboot turn-id reuse. FunctionCallID is supplied by
-// ADK and is the natural idempotency token for tool retries within an
-// invocation.
+// ToolExecutionKey identifies one ADK tool execution inside a Companion turn.
+// Durable mutation idempotency remains owned by the domain/store contract (#27),
+// not by the model's function-call identifier alone.
 func ToolExecutionKey(turn pipeline.TurnContext, functionCallID, toolName string) string {
 	return "adk:" + tupleDigest(
 		"user", strings.TrimSpace(turn.UserID),
@@ -129,33 +83,31 @@ func ToolExecutionKey(turn pipeline.TurnContext, functionCallID, toolName string
 	)
 }
 
-// SessionIdentity maps a Companion turn to ADK's user/session namespace. It is
-// deterministic and keeps user sessions isolated even if device-local turn IDs
-// restart from zero.
+// SessionIdentity maps a Companion owner/thread to ADK's user/session namespace.
+// Transport SessionID is intentionally excluded: reconnect creates a new socket
+// session but must not discard durable conversational continuity.
 func SessionIdentity(turn pipeline.TurnContext) (userID, sessionID string) {
 	user := strings.TrimSpace(turn.UserID)
 	device := strings.TrimSpace(turn.DeviceID)
-	switch {
-	case user != "":
+	thread := strings.TrimSpace(turn.ThreadID)
+	if user != "" {
 		userID = "user:" + tupleDigest("user", user)
-	case device != "":
+	} else if device != "" {
 		userID = "device:" + tupleDigest("device", device)
-	default:
+	} else {
 		userID = "default"
 	}
-	thread := strings.TrimSpace(turn.ThreadID)
-	nonce := strings.TrimSpace(turn.SessionID)
-	sessionID = "session:" + tupleDigest(
-		"thread", thread,
-		"device", device,
-		"session", nonce,
-	)
+	if thread != "" {
+		sessionID = "thread:" + tupleDigest("user", user, "thread", thread)
+	} else if device != "" {
+		sessionID = "device-thread:" + tupleDigest("user", user, "device", device)
+	} else {
+		sessionID = "default"
+	}
 	return userID, sessionID
 }
 
 // tupleDigest hashes canonical JSON rather than delimiter-joining identifiers.
-// This prevents ambiguous tuples such as ["a:b", "c"] and ["a", "b:c"] from
-// colliding while keeping storage keys bounded and safe for logs/databases.
 func tupleDigest(parts ...string) string {
 	payload, _ := json.Marshal(parts) // []string is always JSON-marshalable.
 	sum := sha256.Sum256(payload)
