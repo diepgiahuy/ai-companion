@@ -24,3 +24,5 @@ jobs:
           grep -RIn --exclude-dir=.git -E 'COMPANION_AGENT_RUNTIME|COMPANION_DEVICE_AUTH|COMPANION_DEVICE_TOKEN|QWEN_(BASE_URL|API_KEY|MODEL|FAST_MODEL|REASONING_MODEL)|fake_qwen|legacy agent|custom Qwen|WebRTC|webrtc' README.md backend docs host .github Makefile scripts 2>/dev/null || true
           echo '=== representative ADK rollout leftovers ==='
           grep -RIn --exclude-dir=.git -E 'RepresentativeToolNames|representativeToolNames|ExpenseLogArgs|BudgetGetArgs|TimerCreateArgs|MemoryRecallArgs' backend/internal/adkbridge || true
+          echo '=== runtimeconfig fields after ADK hard cut ==='
+          grep -RIn --exclude-dir=.git -E 'LLM\.(Temperature|MaxTokens|MaxToolRounds|Router|RouterExamplesFile)|COMPANION_MODEL_ROUTER|COMPANION_LLM_(TEMPERATURE|MAX_TOKENS|MAX_TOOL_ROUNDS)' backend README.md docs || true
