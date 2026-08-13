@@ -34,10 +34,10 @@ type Correlation struct {
 	GenerationID uint64 `json:"generation_id,omitempty"`
 }
 
-// Correlator turns protocol/runtime identifiers into process-local pseudonyms
-// before they reach a Recorder. Client-controlled turn IDs therefore cannot
-// smuggle raw text or PII into telemetry while events in one session remain
-// joinable. The key is never exported or persisted.
+// Correlator turns protocol/runtime identifiers into ephemeral process-local
+// pseudonyms. Client-controlled turn IDs therefore cannot smuggle raw text or
+// PII into telemetry while events from one runtime remain joinable. The key is
+// never exported or persisted.
 type Correlator struct {
 	key [32]byte
 }
@@ -46,8 +46,8 @@ func NewCorrelator(fallbackSeed string) *Correlator {
 	correlator := &Correlator{}
 	if _, err := rand.Read(correlator.key[:]); err != nil {
 		// Observability must never make the application unavailable. The fallback
-		// seed is the already-random server session ID; hashing it still avoids
-		// storing the raw protocol identifier and is only used if OS entropy fails.
+		// remains process-local and still prevents storing raw identifiers; OS
+		// entropy is the normal path.
 		correlator.key = sha256.Sum256([]byte("companion-observability:" + fallbackSeed))
 	}
 	return correlator
@@ -62,6 +62,22 @@ func (c *Correlator) Opaque(value string) string {
 	sum := mac.Sum(nil)
 	return "c_" + hex.EncodeToString(sum[:16])
 }
+
+// Pseudonymize namespaces turn identifiers by their raw session identifier so
+// reusing the same client turn ID in another session does not create a stable
+// cross-session identifier. GenerationID is already server-owned and bounded.
+func (c *Correlator) Pseudonymize(correlation Correlation) Correlation {
+	rawSession := correlation.SessionID
+	if rawSession != "" {
+		correlation.SessionID = c.Opaque("session\x00" + rawSession)
+	}
+	if correlation.TurnID != "" {
+		correlation.TurnID = c.Opaque("turn\x00" + rawSession + "\x00" + correlation.TurnID)
+	}
+	return correlation
+}
+
+var processCorrelator = NewCorrelator(time.Now().UTC().Format(time.RFC3339Nano))
 
 type Event struct {
 	SchemaVersion int         `json:"schema_version"`
@@ -145,6 +161,9 @@ func RecordTo(recorder Recorder, event Event) (accepted bool) {
 	if event.At.IsZero() {
 		event.At = time.Now().UTC()
 	}
+	// Privacy is enforced before the Recorder boundary, not left to individual
+	// exporters. No recorder implementation receives raw protocol correlation IDs.
+	event.Correlation = processCorrelator.Pseudonymize(event.Correlation)
 	return recorder.TryRecord(event)
 }
 
