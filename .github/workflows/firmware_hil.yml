@@ -28,6 +28,10 @@ jobs:
     env:
       HIL_PORT: ${{ inputs.device_port }}
       HIL_ERASE_ALL: ${{ inputs.erase_all }}
+      HIL_WIFI_SSID: ${{ secrets.HIL_WIFI_SSID }}
+      HIL_WIFI_PASSWORD: ${{ secrets.HIL_WIFI_PASSWORD }}
+      HIL_SERVER_URL: ${{ secrets.HIL_SERVER_URL }}
+      HIL_DEVICE_TOKEN: ${{ secrets.HIL_DEVICE_TOKEN }}
 
     steps:
       - name: Checkout trusted repository ref
@@ -47,9 +51,10 @@ jobs:
             echo "- Ref: ${{ github.ref }}"
             echo "- Target: esp32s3"
             echo "- Port: $HIL_PORT"
+            echo "- Product transport: WebSocket protocol v2"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Validate runner prerequisites
+      - name: Validate runner and product-network prerequisites
         shell: bash
         run: |
           set -euo pipefail
@@ -58,6 +63,12 @@ jobs:
           test -e "$HIL_PORT"
           test -r "$HIL_PORT"
           test -w "$HIL_PORT"
+          test -n "$HIL_WIFI_SSID"
+          test -n "$HIL_SERVER_URL"
+          case "$HIL_SERVER_URL" in
+            ws://*|wss://*) ;;
+            *) echo "HIL_SERVER_URL must use ws:// or wss://" >&2; exit 1 ;;
+          esac
           test -f "$HOME/esp/esp-idf/export.sh"
           source "$HOME/esp/esp-idf/export.sh"
           idf.py --version | tee artifacts/idf-version.txt
@@ -71,13 +82,36 @@ jobs:
           source "$HOME/esp/esp-idf/export.sh"
           python -m pip install --requirement tests/firmware/requirements.txt
 
-      - name: Build firmware
+      - name: Build canonical WebSocket firmware
         shell: bash
         run: |
           set -euo pipefail
           source "$HOME/esp/esp-idf/export.sh"
+          defaults="/tmp/companion-hil-sdkconfig.defaults"
+          export HIL_DEFAULTS="$defaults"
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          def kconfig_string(value: str) -> str:
+              return '"' + value.replace('\\', '\\\\').replace('"', '\\"') + '"'
+
+          values = {
+              "CONFIG_COMPANION_WIFI_SSID": os.environ["HIL_WIFI_SSID"],
+              "CONFIG_COMPANION_WIFI_PASSWORD": os.environ.get("HIL_WIFI_PASSWORD", ""),
+              "CONFIG_COMPANION_SERVER_URL": os.environ["HIL_SERVER_URL"],
+              "CONFIG_COMPANION_DEVICE_TOKEN": os.environ.get("HIL_DEVICE_TOKEN", ""),
+          }
+          Path(os.environ["HIL_DEFAULTS"]).write_text(
+              "".join(f"{key}={kconfig_string(value)}\n" for key, value in values.items()),
+              encoding="utf-8",
+          )
+          PY
+          export SDKCONFIG_DEFAULTS="sdkconfig.defaults;$defaults"
+          rm -rf build sdkconfig
           idf.py set-target esp32s3
           idf.py build
+          rm -f "$defaults" sdkconfig
 
       - name: Run physical boot smoke test
         shell: bash
@@ -98,6 +132,13 @@ jobs:
             PYTEST_ARGS+=(--erase-all)
           fi
           python -m pytest "${PYTEST_ARGS[@]}"
+
+      - name: Remove HIL build containing test credentials
+        if: always()
+        shell: bash
+        run: |
+          rm -rf build sdkconfig
+          rm -f /tmp/companion-hil-sdkconfig.defaults
 
       - name: Upload HIL report
         if: always()
