@@ -4,6 +4,10 @@
 This program is intentionally dependency-free so a trusted GitHub Actions runner
 can validate evidence without pretending that a host or simulator measured a
 display. It refuses pending, incomplete, or malformed physical result files.
+
+Structural validation is not provenance attestation: this program cannot prove that
+frame samples came from a physical board or that a syntactically valid commit SHA
+was actually flashed. Raw serial logs and operator/run evidence remain required.
 """
 
 from __future__ import annotations
@@ -11,6 +15,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +43,7 @@ REQUIRED_HEAP = {
     "psram_minimum_free_bytes",
     "psram_largest_block_bytes",
 }
+FULL_GIT_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 
 
 class BenchmarkError(ValueError):
@@ -77,6 +83,8 @@ def validate(document: dict[str, Any]) -> None:
         "recovery",
     ):
         _require_string(document, field)
+    if not FULL_GIT_SHA_RE.fullmatch(document["firmware_commit"]):
+        raise BenchmarkError("firmware_commit must be a full 40-character hexadecimal Git commit SHA")
 
     workload = document["workload"]
     if not isinstance(workload, dict) or set(workload) != REQUIRED_WORKLOADS:
