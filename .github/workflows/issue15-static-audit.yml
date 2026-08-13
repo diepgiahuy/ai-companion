@@ -1,0 +1,26 @@
+name: issue15-static-audit
+
+on:
+  push:
+    branches: [issue-15-single-path-v2]
+    paths:
+      - .github/workflows/issue15-static-audit.yml
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Residual single-path references
+        shell: bash
+        run: |
+          set -u
+          echo '=== imports/references to internal/agent ==='
+          grep -RIn --exclude-dir=.git -E 'internal/agent|agent\.(NewQwen|With|GenerationConfig|ModelSelector|Semantic|StaticModelSelector)' backend || true
+          echo '=== legacy runtime/config markers ==='
+          grep -RIn --exclude-dir=.git -E 'COMPANION_AGENT_RUNTIME|COMPANION_DEVICE_AUTH|COMPANION_DEVICE_TOKEN|QWEN_(BASE_URL|API_KEY|MODEL|FAST_MODEL|REASONING_MODEL)|fake_qwen|legacy agent|custom Qwen|WebRTC|webrtc' README.md backend docs host .github Makefile scripts 2>/dev/null || true
+          echo '=== representative ADK rollout leftovers ==='
+          grep -RIn --exclude-dir=.git -E 'RepresentativeToolNames|representativeToolNames|ExpenseLogArgs|BudgetGetArgs|TimerCreateArgs|MemoryRecallArgs' backend/internal/adkbridge || true
