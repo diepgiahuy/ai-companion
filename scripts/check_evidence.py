@@ -32,6 +32,7 @@ NON_PRODUCTION_EVIDENCE_KINDS = {
     "simulated_provider",
     "tier1_orchestration",
     "wokwi_simulation",
+    "wokwi_unavailable",
 }
 
 
