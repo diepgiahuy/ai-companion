@@ -1,0 +1,34 @@
+name: Apply software-device CI fixes
+
+on:
+  push:
+    branches:
+      - issue-22-evidence-ladder
+    paths:
+      - scripts/apply_software_device_ci_fixes.py
+      - .github/workflows/apply_software_device_ci_fixes.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout issue-22 branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: issue-22-evidence-ladder
+          fetch-depth: 0
+      - name: Apply guarded source fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          python3 scripts/apply_software_device_ci_fixes.py
+          rm scripts/apply_software_device_ci_fixes.py
+          git add -A
+          git diff --cached --check
+          git commit -m "fix(test): unblock software-device compile and turn startup"
+          git push origin HEAD:issue-22-evidence-ladder
