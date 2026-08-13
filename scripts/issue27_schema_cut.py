@@ -13,8 +13,7 @@ def replace(path, old, new, count=1):
 
 # Fresh schemas no longer encode global idempotency. Durable semantics live in
 # the actor+operation ledger at the mutation boundary.
-for table in ("notes", "expenses", "journal_entries", "reminders", "voice_memos"):
-    replace("backend/internal/store/store.go", "idempotency_key TEXT NOT NULL UNIQUE", "idempotency_key TEXT NOT NULL", 1)
+replace("backend/internal/store/store.go", "idempotency_key TEXT NOT NULL UNIQUE", "idempotency_key TEXT NOT NULL", 5)
 replace("backend/internal/store/platform.go", "idempotency_key TEXT NOT NULL UNIQUE", "idempotency_key TEXT NOT NULL", 1)
 
 # Legacy/internal create helpers must not pretend INSERT OR IGNORE is durable
@@ -48,7 +47,6 @@ old_found = '''\tif found {\n\t\tif !idempotency.EqualHash(storedHash, request.R
 new_found = '''\tif found {\n\t\tif !idempotency.EqualHash(storedHash, request.RequestHash) {\n\t\t\treturn idempotentOutcome{}, idempotency.Conflict{Operation: request.Operation, Key: request.Key}\n\t\t}\n\t\treturn idempotentOutcome{JSON: storedOutcome, Replayed: true}, nil\n\t}\n\treserved, err := legacyIdempotencyReserved(ctx, tx, request.Operation, request.Key)\n\tif err != nil {\n\t\treturn idempotentOutcome{}, err\n\t}\n\tif reserved {\n\t\treturn idempotentOutcome{}, idempotency.Conflict{Operation: request.Operation, Key: request.Key}\n\t}\n\tvalue, err := mutate(tx)\n'''
 replace("backend/internal/store/idempotency_run.go", old_found, new_found)
 
-# Replace schema migration helper with reservation-aware version.
 schema = ROOT / "backend/internal/store/idempotency_schema.go"
 schema.write_text(r'''package store
 
@@ -244,7 +242,6 @@ func hasSingleColumnUniqueIndex(db *sql.DB, table, column string) (bool, error) 
 }
 ''', encoding="utf-8")
 
-# Add migration/replay regression coverage.
 test = ROOT / "backend/internal/store/idempotency_schema_cut_test.go"
 test.write_text(r'''package store
 
