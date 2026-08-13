@@ -1,0 +1,33 @@
+name: Apply issue-15 server auth hard cut
+
+on:
+  push:
+    branches: [issue-15-single-path-v2]
+    paths:
+      - scripts/apply_issue15_server_auth.py
+      - .github/workflows/apply_issue15_server_auth.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: issue-15-single-path-v2
+          fetch-depth: 0
+      - name: Apply guarded auth hard cut
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          python3 scripts/apply_issue15_server_auth.py
+          gofmt -w backend/internal/server/server.go
+          git add backend/internal/server/server.go
+          git diff --cached --check
+          git commit -m "refactor(auth): remove shared-token server fallback"
+          git push origin HEAD:issue-15-single-path-v2
