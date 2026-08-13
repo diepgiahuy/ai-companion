@@ -16,7 +16,7 @@ def physical_result():
         "measurement_status": "physical",
         "board": "test board",
         "board_revision": "test revision",
-        "firmware_commit": "0123456789abcdef",
+        "firmware_commit": "0123456789abcdef0123456789abcdef01234567",
         "esp_idf_version": "test",
         "stack": "test",
         "display": "test",
@@ -63,6 +63,14 @@ class DisplayBenchmarkSummaryTests(unittest.TestCase):
         result["workload"]["partial"]["frames_ms"] = [1.0] * 299
         with self.assertRaisesRegex(MODULE.BenchmarkError, "at least 300"):
             MODULE.summarize(result)
+
+    def test_rejects_abbreviated_or_non_hex_firmware_commit(self):
+        for value in ("0123456789abcdef", "g" * 40):
+            with self.subTest(value=value):
+                result = physical_result()
+                result["firmware_commit"] = value
+                with self.assertRaisesRegex(MODULE.BenchmarkError, "40-character hexadecimal"):
+                    MODULE.summarize(result)
 
 
 if __name__ == "__main__":
