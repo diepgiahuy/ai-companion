@@ -19,9 +19,20 @@ const idempotencyLedgerDDL = `CREATE TABLE IF NOT EXISTS idempotency_records (
     PRIMARY KEY(actor_id,operation,idempotency_key)
 )`
 
+const legacyIdempotencyReservationsDDL = `CREATE TABLE IF NOT EXISTS legacy_idempotency_reservations (
+    operation TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    source_table TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(operation,idempotency_key)
+)`
+
 func (s *Store) migrateIdempotency() error {
 	if _, err := s.db.Exec(idempotencyLedgerDDL); err != nil {
 		return fmt.Errorf("idempotency ledger migration: %w", err)
+	}
+	if _, err := s.db.Exec(legacyIdempotencyReservationsDDL); err != nil {
+		return fmt.Errorf("legacy idempotency reservation migration: %w", err)
 	}
 	return nil
 }
@@ -35,4 +46,16 @@ func idempotencyRecord(ctx context.Context, tx *sql.Tx, request idempotency.Requ
 		return "", "", false, err
 	}
 	return hash, outcome, true, nil
+}
+
+func legacyIdempotencyReserved(ctx context.Context, tx *sql.Tx, operation, key string) (bool, error) {
+	var marker int
+	err := tx.QueryRowContext(ctx, `SELECT 1 FROM legacy_idempotency_reservations WHERE operation=? AND idempotency_key=?`, operation, key).Scan(&marker)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }

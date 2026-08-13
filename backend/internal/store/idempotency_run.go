@@ -45,6 +45,13 @@ func (s *Store) runIdempotentMutation(ctx context.Context, request idempotency.R
 		}
 		return idempotentOutcome{JSON: storedOutcome, Replayed: true}, nil
 	}
+	reserved, err := legacyIdempotencyReserved(ctx, tx, request.Operation, request.Key)
+	if err != nil {
+		return idempotentOutcome{}, err
+	}
+	if reserved {
+		return idempotentOutcome{}, idempotency.Conflict{Operation: request.Operation, Key: request.Key}
+	}
 	value, err := mutate(tx)
 	if err != nil {
 		return idempotentOutcome{}, err
