@@ -16,8 +16,8 @@ config COMPANION_SERVER_URL
     string "Backend WebSocket URL"
     default "ws://192.168.1.10:8000/v2/device"
 
-config COMPANION_DEVICE_TOKEN
-    string "Device bearer token (optional for local development)"
+config COMPANION_DEVICE_CREDENTIAL
+    string "Enrolled per-device bearer credential"
     default ""
 
 endmenu
