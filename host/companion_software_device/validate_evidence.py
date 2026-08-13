@@ -22,16 +22,17 @@ if not re.fullmatch(r"[0-9a-f]{64}", data.get("backend_config_sha256", "")):
     raise SystemExit("software-device evidence: config fingerprint is not SHA-256")
 
 scenario_set = data.get("scenario_set")
+adk_fixture = {"asr": "mock", "agent": "adk_fake_responses", "tts": "mock"}
 expected = {
     "core": {
-        "providers": {"asr": "mock", "agent": "mock", "tts": "mock"},
+        "providers": adk_fixture,
         "scenarios": {
             "hello_turn_tts", "duplicate_message_id", "barge_in_generation",
             "reconnect_new_session", "config_update_report", "protocol_v1_rejected",
         },
     },
     "tool": {
-        "providers": {"asr": "mock", "agent": "fake_model", "tts": "mock"},
+        "providers": adk_fixture,
         "scenarios": {"agent_tool_authoritative_mutation"},
     },
 }.get(scenario_set)
