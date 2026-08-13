@@ -1,0 +1,46 @@
+name: issue17-app-frontend-apply-v2
+
+on:
+  push:
+    branches: [agent/issue-17-app-integration]
+    paths: [.github/workflows/issue17-app-frontend-apply-v2.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: agent/issue-17-app-integration
+          fetch-depth: 0
+      - name: Repair exact app start anchor and apply patch
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('scripts/issue17_app_frontend_patch.py')
+          text = p.read_text()
+          if text.count('BACKEND START FAILED') != 1:
+              raise SystemExit('unexpected app-start patch anchor state')
+          p.write_text(text.replace('BACKEND START FAILED', 'NETWORK ERROR'))
+          PY
+          python3 scripts/issue17_app_frontend_patch.py
+      - name: Build and run host firmware tests
+        run: |
+          cmake -S host -B /tmp/companion-host -DCMAKE_BUILD_TYPE=Debug
+          cmake --build /tmp/companion-host -j2
+          ctest --test-dir /tmp/companion-host --output-on-failure
+          git diff --check
+      - name: Commit product changes and remove all app helpers
+        run: |
+          git config user.name "Diệp Gia Huy"
+          git config user.email "30974088+diepgiahuy@users.noreply.github.com"
+          git rm .github/workflows/issue17-app-frontend-apply-v2.yml .github/workflows/issue17-app-frontend-apply.yml scripts/issue17_app_frontend_patch.py
+          git add components/companion_app host
+          git diff --cached --check
+          git commit -m "feat(firmware): route hands-free events through CompanionApp"
+          git push origin HEAD:agent/issue-17-app-integration
