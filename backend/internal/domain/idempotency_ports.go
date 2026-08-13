@@ -27,6 +27,9 @@ type DurableMutationRepository interface {
 	ResumeTimerMutation(context.Context, idempotency.Request, string, int64, time.Time) error
 	CancelScheduledMutation(context.Context, idempotency.Request, string, int64) error
 	DeleteScheduledMutation(context.Context, idempotency.Request, string, int64) error
+	ReplayVoiceMemoMutation(context.Context, idempotency.Request) (VoiceMemo, bool, error)
+	CreateVoiceMemoMutation(context.Context, idempotency.Request, string, string, string, string, int64) (VoiceMemo, error)
+	DeleteVoiceMemoMutation(context.Context, idempotency.Request, string, int64) (VoiceMemo, error)
 }
 
 type DurableRepositories interface {
