@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-08-13T20:38:39+07:00",
+  "updated_at": "2026-08-13T21:05:00+07:00",
   "rules": {
     "allowed_statuses": [
       "passed",
@@ -18,8 +18,8 @@
       "evidence": [
         {
           "kind": "github_actions",
-          "run_id": 31705735289,
-          "commit": "93b7132dd709d5603b14dec239c3fae69ffee5d2",
+          "run_id": 31708039815,
+          "commit": "7ae065f6f8fb73cde8ee71087806d0189634406f",
           "workflow": "production-e2e",
           "assertion": "exact Go 1.26.5 production dependency E2E passed on the observability PR head"
         }
@@ -35,8 +35,8 @@
         },
         {
           "kind": "github_actions",
-          "run_id": 31705735382,
-          "commit": "93b7132dd709d5603b14dec239c3fae69ffee5d2",
+          "run_id": 31708039876,
+          "commit": "7ae065f6f8fb73cde8ee71087806d0189634406f",
           "workflow": "module-lock",
           "assertion": "Go 1.26.5 module tidy/verify gate passed on the observability PR head"
         }
@@ -64,8 +64,8 @@
       "evidence": [
         {
           "kind": "github_actions",
-          "run_id": 31705735256,
-          "commit": "93b7132dd709d5603b14dec239c3fae69ffee5d2",
+          "run_id": 31708039616,
+          "commit": "7ae065f6f8fb73cde8ee71087806d0189634406f",
           "workflow": "codeql",
           "assertion": "CodeQL Go traced build and analysis passed with adk,mcp,nolibopusfile production adapter tags"
         }
@@ -132,11 +132,11 @@
         {
           "kind": "tier1_orchestration",
           "workflow": "software-device-e2e",
-          "run_id": 31705735317,
-          "source_head": "93b7132dd709d5603b14dec239c3fae69ffee5d2",
-          "tested_merge_commit": "7a2a7f44c75694bc311a9b4520e815f8b47803b8",
-          "artifact_id": 9183141099,
-          "artifact_digest": "sha256:3192e4927d5a860d0da325eebc02752c45d62fdf6dd89bf39e88aaf1c474995d",
+          "run_id": 31708039890,
+          "source_head": "7ae065f6f8fb73cde8ee71087806d0189634406f",
+          "tested_merge_commit": "d6b8ddcdd24c62d4291d188a20ee9bade1b90dfa",
+          "artifact_id": 9184091869,
+          "artifact_digest": "sha256:dca97e0b5623611bd9e0689555b581de94e738def9fb32d81599b1a07891c808",
           "promotion": "orchestration_only",
           "assertion": "protocol v2 production CompanionApp session/turn flow succeeds and a v1 client is deterministically rejected; physical-device/network evidence remains separate"
         }
@@ -165,11 +165,11 @@
         {
           "kind": "tier1_orchestration",
           "workflow": "software-device-e2e",
-          "run_id": 31705735317,
-          "source_head": "93b7132dd709d5603b14dec239c3fae69ffee5d2",
-          "tested_merge_commit": "7a2a7f44c75694bc311a9b4520e815f8b47803b8",
-          "artifact_id": 9183141099,
-          "artifact_digest": "sha256:3192e4927d5a860d0da325eebc02752c45d62fdf6dd89bf39e88aaf1c474995d",
+          "run_id": 31708039890,
+          "source_head": "7ae065f6f8fb73cde8ee71087806d0189634406f",
+          "tested_merge_commit": "d6b8ddcdd24c62d4291d188a20ee9bade1b90dfa",
+          "artifact_id": 9184091869,
+          "artifact_digest": "sha256:dca97e0b5623611bd9e0689555b581de94e738def9fb32d81599b1a07891c808",
           "promotion": "orchestration_only",
           "providers": {
             "asr": "mock",
@@ -208,13 +208,13 @@
         {
           "kind": "tier1_orchestration",
           "workflow": "software-device-e2e",
-          "run_id": 31705735317,
-          "source_head": "93b7132dd709d5603b14dec239c3fae69ffee5d2",
-          "tested_merge_commit": "7a2a7f44c75694bc311a9b4520e815f8b47803b8",
-          "artifact_id": 9183141099,
-          "artifact_digest": "sha256:3192e4927d5a860d0da325eebc02752c45d62fdf6dd89bf39e88aaf1c474995d",
+          "run_id": 31708039890,
+          "source_head": "7ae065f6f8fb73cde8ee71087806d0189634406f",
+          "tested_merge_commit": "d6b8ddcdd24c62d4291d188a20ee9bade1b90dfa",
+          "artifact_id": 9184091869,
+          "artifact_digest": "sha256:dca97e0b5623611bd9e0689555b581de94e738def9fb32d81599b1a07891c808",
           "promotion": "orchestration_only",
-          "assertion": "typed session/turn/generation correlation, ASR/agent/TTS timing and all seven representative public tool outcomes validated from product recorder snapshots; deterministic Tier-1 observed zero recorder drops and forbids raw transcript/audio/tool-argument/credential fields"
+          "assertion": "typed session/turn/generation correlation, ASR/agent/TTS timing and all seven representative public tool outcomes validated from product recorder snapshots; deterministic Tier-1 observed zero recorder drops, pseudonymized client/runtime correlation identifiers before the Recorder boundary, and forbids raw transcript/audio/tool-argument/credential fields"
         }
       ],
       "reason": "The bounded non-blocking Companion-owned observability contract is implemented and deterministically exercised, but real-provider latency distributions, deployment exporter/retention policy and physical-device resource telemetry are not production-proven."
