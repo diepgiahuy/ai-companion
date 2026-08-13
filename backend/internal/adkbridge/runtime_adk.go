@@ -69,6 +69,12 @@ func newWithModel(cfg Config, llm model.LLM) (*Runtime, error) {
 	if promptVersion == "" {
 		return nil, fmt.Errorf("ADK prompt version/fingerprint is required")
 	}
+	if cfg.MaxOutputTokens <= 0 {
+		return nil, fmt.Errorf("ADK max output tokens must be positive")
+	}
+	if cfg.MaxToolRounds <= 0 {
+		return nil, fmt.Errorf("ADK max tool rounds must be positive")
+	}
 	llm = &meteredLLM{
 		inner:         llm,
 		modelName:     strings.TrimSpace(cfg.ModelName),
@@ -83,6 +89,8 @@ func newWithModel(cfg Config, llm model.LLM) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
+	temperature := float32(cfg.Temperature)
+	limiter := newModelRoundLimiter(cfg.MaxToolRounds)
 	agent, err := llmagent.New(llmagent.Config{
 		Name:        "companion",
 		Description: "Single-user voice companion coordinator",
@@ -90,6 +98,12 @@ func newWithModel(cfg Config, llm model.LLM) (*Runtime, error) {
 		Instruction: instruction,
 		Tools:       tools,
 		Mode:        llmagent.ModeChat,
+		GenerateContentConfig: &genai.GenerateContentConfig{
+			Temperature:     &temperature,
+			MaxOutputTokens: int32(cfg.MaxOutputTokens),
+		},
+		BeforeModelCallbacks: []llmagent.BeforeModelCallback{limiter.BeforeModel},
+		AfterAgentCallbacks:  []adkagent.AfterAgentCallback{limiter.AfterAgent},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create ADK llm agent: %w", err)
@@ -112,6 +126,40 @@ func newWithModel(cfg Config, llm model.LLM) (*Runtime, error) {
 		return nil, fmt.Errorf("create ADK runner: %w", err)
 	}
 	return &Runtime{runner: r, sessions: sessions, appName: appName}, nil
+}
+
+type modelRoundLimiter struct {
+	mu    sync.Mutex
+	max   int
+	calls map[string]int
+}
+
+func newModelRoundLimiter(max int) *modelRoundLimiter {
+	return &modelRoundLimiter{max: max, calls: make(map[string]int)}
+}
+
+func (l *modelRoundLimiter) BeforeModel(ctx adkagent.CallbackContext, _ *model.LLMRequest) (*model.LLMResponse, error) {
+	invocationID := strings.TrimSpace(ctx.InvocationID())
+	if invocationID == "" {
+		return nil, fmt.Errorf("ADK invocation id is required for model-round limiting")
+	}
+	l.mu.Lock()
+	next := l.calls[invocationID] + 1
+	if next > l.max {
+		delete(l.calls, invocationID)
+		l.mu.Unlock()
+		return nil, fmt.Errorf("tool loop exceeded configured maximum of %d rounds", l.max)
+	}
+	l.calls[invocationID] = next
+	l.mu.Unlock()
+	return nil, nil
+}
+
+func (l *modelRoundLimiter) AfterAgent(ctx adkagent.CallbackContext) (*genai.Content, error) {
+	l.mu.Lock()
+	delete(l.calls, strings.TrimSpace(ctx.InvocationID()))
+	l.mu.Unlock()
+	return nil, nil
 }
 
 func (r *Runtime) Respond(ctx context.Context, turnID, transcript string) (string, error) {
