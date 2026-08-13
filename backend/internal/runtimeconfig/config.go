@@ -17,14 +17,9 @@ const (
 )
 
 type LLM struct {
-	HTTPTimeout       time.Duration
-	Temperature       float64
-	MaxTokens         int
-	MaxToolRounds     int
-	Router            string
-	RouterExamplesFile string
-	PromptDir         string
-	Persona           string
+	HTTPTimeout time.Duration
+	PromptDir   string
+	Persona     string
 }
 
 type Config struct {
@@ -43,27 +38,6 @@ func Load() (Config, error) {
 	if err != nil || timeout <= 0 || timeout > 5*time.Minute {
 		return Config{}, fmt.Errorf("COMPANION_LLM_HTTP_TIMEOUT must be >0 and <=5m")
 	}
-	temperature, err := strconv.ParseFloat(env("COMPANION_LLM_TEMPERATURE", "0.1"), 64)
-	if err != nil || temperature < 0 || temperature > 2 {
-		return Config{}, fmt.Errorf("COMPANION_LLM_TEMPERATURE must be between 0 and 2")
-	}
-	maxTokens, err := strconv.Atoi(env("COMPANION_LLM_MAX_TOKENS", "384"))
-	if err != nil || maxTokens < 16 || maxTokens > 32768 {
-		return Config{}, fmt.Errorf("COMPANION_LLM_MAX_TOKENS must be between 16 and 32768")
-	}
-	maxRounds, err := strconv.Atoi(env("COMPANION_LLM_MAX_TOOL_ROUNDS", "3"))
-	if err != nil || maxRounds < 1 || maxRounds > 12 {
-		return Config{}, fmt.Errorf("COMPANION_LLM_MAX_TOOL_ROUNDS must be between 1 and 12")
-	}
-
-	router := strings.ToLower(strings.TrimSpace(env("COMPANION_MODEL_ROUTER", "static")))
-	if router != "static" && router != "semantic" {
-		return Config{}, fmt.Errorf("COMPANION_MODEL_ROUTER must be static or semantic")
-	}
-	routerExamples := strings.TrimSpace(os.Getenv("COMPANION_MODEL_ROUTER_EXAMPLES"))
-	if router == "semantic" && routerExamples == "" {
-		return Config{}, fmt.Errorf("semantic model router requires COMPANION_MODEL_ROUTER_EXAMPLES")
-	}
 
 	defaultMock := "true"
 	if profile == ProfileProduction {
@@ -81,14 +55,9 @@ func Load() (Config, error) {
 		Profile:   profile,
 		AllowMock: allowMock,
 		LLM: LLM{
-			HTTPTimeout:       timeout,
-			Temperature:       temperature,
-			MaxTokens:         maxTokens,
-			MaxToolRounds:     maxRounds,
-			Router:            router,
-			RouterExamplesFile: routerExamples,
-			PromptDir:         strings.TrimSpace(os.Getenv("COMPANION_PROMPT_DIR")),
-			Persona:           strings.TrimSpace(os.Getenv("COMPANION_PERSONA")),
+			HTTPTimeout: timeout,
+			PromptDir:   strings.TrimSpace(os.Getenv("COMPANION_PROMPT_DIR")),
+			Persona:     strings.TrimSpace(os.Getenv("COMPANION_PERSONA")),
 		},
 	}, nil
 }
