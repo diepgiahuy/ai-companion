@@ -3,7 +3,10 @@ name: issue27-schema-cut-apply
 on:
   push:
     branches: [agent/issue-27-schema-slice]
-    paths: [.github/workflows/issue27-schema-cut-apply.yml]
+    paths:
+      - .github/workflows/issue27-schema-cut-apply.yml
+      - scripts/issue27_schema_cut.py
+      - scripts/issue27_legacy_compat.py
 
 permissions:
   contents: write
@@ -19,7 +22,9 @@ jobs:
           ref: agent/issue-27-schema-slice
           fetch-depth: 0
       - name: Apply guarded schema migration
-        run: python3 scripts/issue27_schema_cut.py
+        run: |
+          python3 scripts/issue27_schema_cut.py
+          python3 scripts/issue27_legacy_compat.py
       - name: Format and test migration
         run: |
           docker build -f Dockerfile.test -t issue27-schema-test .
@@ -35,7 +40,7 @@ jobs:
         run: |
           git config user.name "Diệp Gia Huy"
           git config user.email "30974088+diepgiahuy@users.noreply.github.com"
-          git rm .github/workflows/issue27-schema-cut-apply.yml scripts/issue27_schema_cut.py
+          git rm .github/workflows/issue27-schema-cut-apply.yml scripts/issue27_schema_cut.py scripts/issue27_legacy_compat.py
           git add backend/internal/store
           git diff --cached --check
           git commit -m "feat: hard-cut global mutation idempotency keys"
