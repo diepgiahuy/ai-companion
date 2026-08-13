@@ -76,6 +76,12 @@ Future database/River/firmware instrumentation should extend the same contract r
 
 These snapshots remain `tier1_orchestration` evidence. Mock ASR/TTS and deterministic Responses fixtures cannot promote real ASR/TTS/LLM or physical-device gates.
 
+### Verified deterministic evidence
+
+GitHub Actions `software-device-e2e` run **31705735317** validated the contract on source head `93b7132dd709d5603b14dec239c3fae69ffee5d2` (PR merge test commit `7a2a7f44c75694bc311a9b4520e815f8b47803b8`). Artifact **9183141099** has digest `sha256:3192e4927d5a860d0da325eebc02752c45d62fdf6dd89bf39e88aaf1c474995d`.
+
+The run proved the production CompanionApp/companiond/ADK Responses orchestration path emitted valid core timing/correlation plus `tool.end` events for `expense.log`, `budget.set`, `note.create`, `journal.create`, `reminder.create`, `timer.create`, and `memory.remember`, with zero deterministic recorder drops. This remains orchestration-only evidence; it is not a real-provider latency benchmark or physical HIL result.
+
 ## Downstream metric calculations
 
 #17/#18 can compute reproducible p50/p95 only from a homogeneous evidence set sharing scenario, provider/model, config fingerprint and environment class. Do not mix hosted CI deterministic timings with real-provider/network timings.
