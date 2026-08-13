@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -13,19 +14,21 @@ type panicRecorder struct{}
 
 func (panicRecorder) TryRecord(Event) bool { panic("exporter failed") }
 
+var pseudonymPattern = regexp.MustCompile(`^c_[0-9a-f]{32}$`)
+
 func TestCorrelatorPseudonymizesClientControlledIDs(t *testing.T) {
 	correlator := NewCorrelator("server-session-seed")
-	raw := "patient@example.com"
+	raw := "client-controlled-turn-text"
 	first := correlator.Opaque(raw)
 	second := correlator.Opaque(raw)
 	other := correlator.Opaque("another-turn")
 	if first != second {
-		t.Fatalf("same identifier must correlate within a session: %q != %q", first, second)
+		t.Fatalf("same identifier must correlate within a process: %q != %q", first, second)
 	}
 	if first == other {
 		t.Fatal("different identifiers must not collapse")
 	}
-	if !strings.HasPrefix(first, "c_") || len(first) != 34 {
+	if !pseudonymPattern.MatchString(first) {
 		t.Fatalf("unexpected pseudonym format %q", first)
 	}
 	if strings.Contains(first, raw) {
@@ -36,18 +39,22 @@ func TestCorrelatorPseudonymizesClientControlledIDs(t *testing.T) {
 	}
 }
 
-func TestDifferentCorrelatorsDoNotCreateStableCrossSessionIdentifier(t *testing.T) {
-	left := NewCorrelator("session-a")
-	right := NewCorrelator("session-b")
-	if left.Opaque("same-client-id") == right.Opaque("same-client-id") {
-		t.Fatal("correlation pseudonym must not be stable across runtime sessions")
+func TestTurnPseudonymIsNamespacedBySession(t *testing.T) {
+	correlator := NewCorrelator("process")
+	left := correlator.Pseudonymize(Correlation{SessionID: "session-a", TurnID: "same-client-id", GenerationID: 1})
+	right := correlator.Pseudonymize(Correlation{SessionID: "session-b", TurnID: "same-client-id", GenerationID: 1})
+	if left.TurnID == right.TurnID {
+		t.Fatal("turn pseudonym must not be stable across sessions")
+	}
+	if !pseudonymPattern.MatchString(left.SessionID) || !pseudonymPattern.MatchString(left.TurnID) {
+		t.Fatalf("invalid correlation pseudonyms: %+v", left)
 	}
 }
 
-func TestRingRecorderCarriesCorrelationAndBoundsCapacity(t *testing.T) {
+func TestRecordToPseudonymizesBeforeRecorder(t *testing.T) {
 	recorder := NewRingRecorder(1)
 	ctx := WithRecorder(context.Background(), recorder)
-	ctx = WithCorrelation(ctx, Correlation{SessionID: "c_0123456789abcdef0123456789abcdef", TurnID: "c_fedcba9876543210fedcba9876543210", GenerationID: 2})
+	ctx = WithCorrelation(ctx, Correlation{SessionID: "raw-session", TurnID: "client-controlled-turn-text", GenerationID: 2})
 	if !Record(ctx, Event{Name: EventTurnStart}) {
 		t.Fatal("first event should be accepted")
 	}
@@ -58,8 +65,13 @@ func TestRingRecorderCarriesCorrelationAndBoundsCapacity(t *testing.T) {
 	if snapshot.SchemaVersion != SchemaVersion || len(snapshot.Events) != 1 || snapshot.Dropped != 1 {
 		t.Fatalf("unexpected snapshot: %+v", snapshot)
 	}
-	if got := snapshot.Events[0].Correlation; got.SessionID != "c_0123456789abcdef0123456789abcdef" || got.TurnID != "c_fedcba9876543210fedcba9876543210" || got.GenerationID != 2 {
-		t.Fatalf("correlation drifted: %+v", got)
+	got := snapshot.Events[0].Correlation
+	if !pseudonymPattern.MatchString(got.SessionID) || !pseudonymPattern.MatchString(got.TurnID) || got.GenerationID != 2 {
+		t.Fatalf("correlation was not safely pseudonymized: %+v", got)
+	}
+	encoded, _ := json.Marshal(snapshot)
+	if bytes.Contains(encoded, []byte("raw-session")) || bytes.Contains(encoded, []byte("client-controlled-turn-text")) {
+		t.Fatalf("raw correlation identifier leaked into snapshot: %s", encoded)
 	}
 }
 
