@@ -3,21 +3,26 @@
   "board": "ESP-VoCat",
   "board_revision": "v1.2",
   "firmware_commit": "REPLACE_WITH_TESTED_COMMIT_SHA",
-  "esp_idf_version": "REPLACE_WITH_IDF_VERSION",
-  "stack": "esp_lcd + esp_lvgl_port OR LovyanGFX with immutable revision",
+  "raw_log_sha256": "REPLACE_WITH_RAW_SERIAL_LOG_SHA256",
+  "dependency_lock_sha256": "REPLACE_WITH_COMPONENT_LOCK_SHA256",
+  "esp_idf_version": "v6.0.2",
+  "stack": "esp_lcd + esp_lvgl_port 2.8.0~1 + LVGL 9 OR LovyanGFX with immutable revision",
   "display": "ST77916, 360x360, RGB565, recorded bus/panel clock",
   "workload": {
     "partial": {
-      "frames_ms": []
+      "frames_ms": [],
+      "dropped_frames": 0
     },
     "full": {
-      "frames_ms": []
+      "frames_ms": [],
+      "dropped_frames": 0
     }
   },
   "coexistence": {
     "audio_playback": false,
     "wifi_traffic": false,
-    "ble_activity": "not_supported"
+    "ble_activity": false,
+    "ble_reason": "PENDING: set true, or explain why BLE could not be exercised"
   },
   "binary_size_bytes": 0,
   "heap": {
@@ -27,6 +32,13 @@
     "psram_free_bytes": 0,
     "psram_minimum_free_bytes": 0,
     "psram_largest_block_bytes": 0
+  },
+  "power": {
+    "instrumented": false,
+    "reason": "PENDING: instrument supply current or state why instrumentation was unavailable",
+    "supply_voltage_v": null,
+    "sample_rate_hz": null,
+    "scenarios_ma": {}
   },
   "visual_inspection": "PENDING: tearing/corruption/watchdog/brownout observations",
   "recovery": "PENDING: storage-write and reset recovery observation"
