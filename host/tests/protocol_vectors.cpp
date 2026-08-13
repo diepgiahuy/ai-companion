@@ -50,16 +50,24 @@ int main() {
   std::ifstream fixture(path);
   assert(fixture.good());
 
-  std::array<char, 256> output{};
+  std::array<char, 1024> output{};
   std::string expected;
   size_t index = 0;
   while (std::getline(fixture, expected)) {
     assert(index < kTypes.size());
+    constexpr std::string_view kPayloadMarker = "\"payload\":";
+    const size_t marker = expected.find(kPayloadMarker);
+    assert(marker != std::string::npos);
+    assert(!expected.empty() && expected.back() == '}');
+    const size_t payload_start = marker + kPayloadMarker.size();
+    const std::string payload_json =
+        expected.substr(payload_start, expected.size() - payload_start - 1);
+
     size_t written = 0;
     const companion::protocol::Envelope envelope{
         .type = kTypes[index],
         .message_id = "golden",
-        .payload_json = "{}",
+        .payload_json = payload_json,
         .correlation_id = {},
         .session_id = {},
         .turn_id = {},
@@ -77,5 +85,5 @@ int main() {
     ++index;
   }
   assert(index == kTypes.size());
-  std::cout << "PASS: shared protocol v2 golden vectors\n";
+  std::cout << "PASS: shared protocol v2 typed golden vectors\n";
 }

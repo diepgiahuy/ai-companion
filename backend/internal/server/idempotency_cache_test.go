@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"fmt"
 	"testing"
 )
@@ -22,6 +23,29 @@ func TestProcessInboundReplayCacheIsSessionLocal(t *testing.T) {
 
 	if calls != 2 {
 		t.Fatalf("calls = %d, want 2: replay suppression must not cross sessions", calls)
+	}
+}
+
+func TestProcessInboundDoesNotCacheFailedAction(t *testing.T) {
+	s := &session{}
+	const messageID = "message-retry"
+	data := []byte(`{"version":2,"message_id":"message-retry","payload":{"value":1}}`)
+	calls := 0
+	transient := errors.New("temporary repository failure")
+	if err := s.processInbound(messageID, data, func() error { calls++; return transient }); !errors.Is(err, transient) {
+		t.Fatalf("first error = %v, want transient failure", err)
+	}
+	if _, exists := s.seenInbound[messageID]; exists {
+		t.Fatal("failed action was cached")
+	}
+	if err := s.processInbound(messageID, data, func() error { calls++; return nil }); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if err := s.processInbound(messageID, data, func() error { calls++; return nil }); err != nil {
+		t.Fatalf("successful replay: %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("calls = %d, want 2", calls)
 	}
 }
 
