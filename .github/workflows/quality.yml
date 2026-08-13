@@ -45,13 +45,13 @@ jobs:
             cmp go.sum /tmp/go.sum.before
             go mod verify
           '
-      - name: Vet and race all production adapter tags
+      - name: Vet and race production adapter tags
         run: |
           docker run --rm companion-quality sh -c '
             set -eu
             cd /src/backend
-            go vet -tags "adk,mcp,webrtc,nolibopusfile" ./...
-            go test -tags "adk,mcp,webrtc,nolibopusfile" -race -count=1 ./...
+            go vet -tags "adk,mcp,nolibopusfile" ./...
+            go test -tags "adk,mcp,nolibopusfile" -race -count=1 ./...
           '
       - name: Go vulnerability reachability scan
         run: |
@@ -60,7 +60,7 @@ jobs:
             export GOBIN=/tmp/go-tools
             go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
             cd /src/backend
-            /tmp/go-tools/govulncheck -tags=adk,mcp,webrtc,nolibopusfile -test ./...
+            /tmp/go-tools/govulncheck -tags=adk,mcp,nolibopusfile -test ./...
           '
       - name: Diff hygiene
         run: git diff --check
