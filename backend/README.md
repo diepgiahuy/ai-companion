@@ -1,105 +1,78 @@
 # Companion Go backend
 
-Toolchain: **Go 1.26.5** (`go.mod` + container gate).
+Toolchain: **Go 1.26.5**. The only dependency graph is `go.mod` + `go.sum`.
 
-This server implements the canonical protocol v2 used by the ESP32 POC:
+## Wire/runtime contract
 
-- JSON control uses the typed v2 envelope on `/v2/device`, including
-  `session.hello`, `turn.listen`, `transcript.final`, `tts.lifecycle`,
-  `turn.abort`, and `protocol.error`.
-- Version 1 fails with `unsupported_protocol_version`; a flat v2 control fails
-  with `invalid_envelope`. There is no dual-read or dual-write path.
-- Binary raw Opus (no Ogg container), one 60 ms packet per WebSocket message.
-- Device uplink: 16 kHz mono; server downlink: 24 kHz mono.
-- The server decodes Opus to PCM before ASR and encodes PCM after TTS.
+The server implements the canonical device protocol v2:
 
-## Reproducible test environment
+- JSON control uses typed `protocol.Envelope` v2 on `/v2/device`.
+- v1 is rejected with `unsupported_protocol_version`; there is no flat-message compatibility parser.
+- Raw Opus remains WebSocket binary media, separate from JSON control.
+- Current device uplink is 16 kHz mono; server downlink is 24 kHz mono.
+- One WebSocket reader and one writer serve each connected device session.
+- Active turns are cancellable/generation-scoped; outbound queues are bounded.
+- `message_id` replay suppression is session-local only. Durable reconnect-safe feature mutations must implement persisted `idempotency_key` semantics at their authoritative domain store.
+
+WebSocket is the only current backend/device realtime transport. The speculative WebRTC bridge was removed; a future transport change must be justified by measurements and replace the current path instead of living beside it indefinitely.
+
+## Persistence
+
+SQLite is the sole current authoritative database. Repository ports keep domain code independent from the concrete store, but that seam does not imply multiple stores are active.
+
+PostgreSQL/Ent/Atlas/River remain a future migration. When implemented, the migration must prove data/job/backup/restart semantics and then hard-cut authoritative state rather than leave permanent dual-read/dual-write compatibility.
+
+## Capability boundary
+
+`ToolRegistry` is the canonical source for product tool definitions, JSON schemas, authorization and execution. Native tools and optional external MCP tools register through that boundary. Agent frameworks must adapt to it instead of maintaining their own product semantics.
+
+`ResourceRegistry` exposes application-controlled resources. Authoritative financial, schedule, note/journal, identity and device state stays in domain storage rather than conversation memory.
+
+## Agent runtime migration
+
+There is one known temporary architecture violation tracked by #15: both the custom Qwen runtime and the ADK bridge still exist.
+
+The selected final product runtime is **ADK only**, but the hard cut is blocked until ADK has:
+
+- complete current `ToolRegistry` coverage rather than only representative tools;
+- preserved validation, authorization, idempotency and presentation behavior;
+- durable Companion session/conversation semantics instead of relying on the temporary in-memory ADK runner for required continuity;
+- expense/budget/note/journal/reminder/timer/memory/tool-loop parity;
+- cancellation, race and E2E regression.
+
+After that gate, delete `COMPANION_AGENT_RUNTIME`, the custom Qwen runtime and the product-selectable mock-agent path in the same migration. Git history is the rollback mechanism.
+
+Mocks remain valid **test doubles**. They are not product fallback modes and do not count as provider evidence.
+
+## Reproducible environment
 
 From the repository root:
 
 ```bash
-docker compose run --build --rm test      # C++ host + budget + Go race + real libopus E2E
-docker compose build esp-idf   # ESP32-S3 target compile with managed components
-docker compose up backend      # local mock ASR/TTS backend on :8000
+# Canonical containerized host + Go integration/race regression
+make e2e-container
+
+# ESP32-S3 compile on the repository firmware toolchain
+make esp-idf
 ```
 
-The Go Opus binding uses CGO and system `libopus`; the supplied Debian container
-installs it. Use the `nolibopusfile` build tag because this protocol carries raw
-Opus packets and does not read Ogg/Opus files.
-- One WebSocket reader and one writer per device.
-- One cancellable active turn per device/session, with explicit user + thread identity.
-- Bounded outbound queue and an eight-second input limit.
-- SQLite WAL storage with user-scoped domain ownership, session-safe idempotency keys and legacy migration.
-- Explicit agent-runtime selector: legacy Qwen compatibility path, opt-in ADK v2 bridge, or deterministic mock.
-- The ADK bridge is an anti-corruption layer: ADK types stay out of domain/data packages and host tools delegate back through the authoritative `ToolRegistry`.
-- Provider-neutral `ToolRegistry` and MCP-style `ResourceRegistry`; deterministic ContextRouter preloads application-controlled resources and exposes only relevant tool packs.
-- Typed repository ports isolate Expense/Budget/Schedule/Note/Journal/VoiceMemo logic from SQLite; conversation uses a write-through cache + replaceable store, and `agent.Qwen` does not import SQLite.
-- Deterministic mock ASR and streaming tone TTS for hardware proof.
-
-
-## Backend feature checklist
-
-The root [`README.md`](../README.md) is the source of truth for the complete firmware + backend roadmap. Backend work should preserve these priorities:
-
-- 🟡 relative `timer.create(delay_seconds)`, ACK/retry reminder scheduler + user/device-scoped alarm/schedule push are implemented; Go 1.26.5 E2E rerun pending in this sandbox
-- 🟡 strongly typed expense/budget/note/journal/schedule CRUD (including timer pause/resume) + bounded authoritative queries are implemented; rerun pending here
-- 🟡 voice-note WAV persistence + SQLite metadata + bounded list tool are implemented; rerun pending here
-- 🔴 proactive event delivery with quiet-hours/rate-limit policy
-- 🔴 production ASR/TTS adapters
-- 🔴 long-term memory/RAG, speaker-ID, meeting summaries and external integrations
-- 🔴 device enrollment, TLS/WSS, OTA metadata and offline action replay
-
-Do not mark a backend feature complete until its side effects are idempotent and covered by tests.
-
-## Run
+Direct backend quality gates:
 
 ```bash
-cp config.example.env .env
-set -a; . ./.env; set +a
-
-# Default / rollback runtime. If QWEN_BASE_URL is empty this uses the deterministic mock.
-go run -tags nolibopusfile ./cmd/companiond
-
-# CP-SW2 experimental ADK runtime. Requires the production dependency graph.
-COMPANION_AGENT_RUNTIME=adk go run -tags "adk,nolibopusfile" ./cmd/companiond
+cd backend
+go mod verify
+go vet -tags "adk,mcp,nolibopusfile" ./...
+go test -tags "adk,mcp,nolibopusfile" -race -count=1 ./...
 ```
 
-Runtime selection is explicit: `COMPANION_AGENT_RUNTIME=legacy|adk|mock`. An
-unknown value fails startup rather than silently choosing another provider. The
-legacy path remains the default until ADK session/parity gates pass.
+There is intentionally no `go.offline.mod`, checked-in dependency shim graph, or secondary offline backend E2E path.
 
-The ADK OpenAI adapter targets the **OpenAI Responses API**. `ADK_OPENAI_BASE_URL`
-may point at OpenAI or a compatible local server only when that server implements
-the Responses API; an endpoint that implements only `/chat/completions` must stay
-on the legacy adapter or gain a different `model.LLM` adapter.
+## Current product-provider limitations
 
-The ADK path currently uses ADK's in-memory session runner only as an opt-in
-integration seam. It must not become the default before CP-SW4 replaces that
-service with durable Companion session storage and the full tool/context parity
-suite passes. Host-side authorization, destructive-intent policy, idempotency,
-and token quota/usage accounting remain Companion-owned boundaries.
+Real streaming ASR and real Vietnamese/English TTS remain unproven provider work. The current deterministic ASR/TTS implementations are useful for tests/POC flow only and must not be reported as production voice evidence.
 
-## Verify
+The ADK OpenAI model adapter requires an OpenAI Responses API-compatible endpoint. Provider-specific transport details stay inside the adapter boundary.
 
-```bash
-# Restricted/offline compatibility gate
-GOTOOLCHAIN=local go test -modfile=go.offline.mod -race -count=1 ./...
+## Source of truth
 
-# Production ADK gate — exact toolchain required
-make backend-adk-gate
-```
-
-Real streaming ASR and Vietnamese TTS remain provider-level follow-up work;
-they are deliberately not hidden behind fake production claims.
-
-The Qwen tests use a fake OpenAI-compatible HTTP endpoint. Coverage includes
-single expense compatibility, `expense.log` batch writes, persisted summaries,
-voice-memo WAV save/metadata, and idempotent retries. Capability tests additionally
-cover registry discovery/execution and native resource URIs; future MCP adapters must
-register into these same ports instead of adding a second agent execution path. Server/store tests also
-cover deterministic relative timer creation, reminder claim/recover/fire and device-targeted `alarm.fired` delivery.
-
-This delivery sandbox has Go 1.23.2 while `go.mod` requires Go 1.26.5 and network
-toolchain download is blocked, so the modified Go suite must be rerun with the
-supplied Docker image or a local Go 1.26.5 + libopus environment before those
-features are promoted from 🟡 to ✅ in the root README.
+The root [`README.md`](../README.md) is the current human-readable architecture/status source of truth. `evidence/status.json` is the machine-verifiable production-claim backing. Historical checkpoint documents record past migration states; they are not instructions to preserve old runtime paths.

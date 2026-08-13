@@ -20,10 +20,6 @@ e2e:
 e2e-container:
 	docker compose -f compose.e2e.yaml run --build --rm e2e
 
-.PHONY: e2e-offline
-e2e-offline:
-	bash scripts/e2e_offline.sh
-
 .PHONY: backend-adk-gate
 backend-adk-gate:
 	@cd backend && version="$$(go env GOVERSION)"; \
