@@ -1,0 +1,50 @@
+name: Sync issue-15 branch with protected main
+
+on:
+  push:
+    branches: [issue-15-single-path-v2]
+    paths:
+      - .github/workflows/issue15-sync-main.yml
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: issue-15-single-path-v2
+          fetch-depth: 0
+      - name: Merge main and resolve the verified firmware conflict
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+diepgiahuy@users.noreply.github.com"
+          git fetch origin main
+          set +e
+          git merge --no-commit --no-ff origin/main
+          merge_status=$?
+          set -e
+          if [[ "$merge_status" -ne 0 ]]; then
+            conflicts="$(git diff --name-only --diff-filter=U)"
+            if [[ "$conflicts" != "main/app_main.cpp" ]]; then
+              echo "Unexpected conflict set:" >&2
+              printf '%s\n' "$conflicts" >&2
+              exit 1
+            fi
+            # The issue-15 side already contains main's WebSocket-v2 hard cut plus
+            # the residual credential rename/fail-closed initialization.
+            git checkout --ours main/app_main.cpp
+            git add main/app_main.cpp
+          fi
+          if [[ -n "$(git diff --name-only --diff-filter=U)" ]]; then
+            echo "Unresolved merge conflicts remain" >&2
+            git diff --name-only --diff-filter=U >&2
+            exit 1
+          fi
+          git diff --check --cached
+          git commit -m "merge: sync issue-15 cleanup with current main"
+          git push origin HEAD:issue-15-single-path-v2
