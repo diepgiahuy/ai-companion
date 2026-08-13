@@ -1,5 +1,5 @@
 idf_component_register(
-  SRCS "src/app.cpp" "src/wire_protocol.cpp" "src/mock_backend.cpp"
+  SRCS "src/app.cpp" "src/wire_protocol.cpp"
   INCLUDE_DIRS "include"
 )
 target_compile_features(${COMPONENT_LIB} PUBLIC cxx_std_20)
