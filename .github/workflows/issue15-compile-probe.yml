@@ -1,0 +1,29 @@
+name: issue15-compile-probe
+
+on:
+  push:
+    branches: [issue-15-single-path-v2]
+    paths:
+      - ".github/workflows/issue15-compile-probe.yml"
+      - "backend/**"
+
+permissions:
+  contents: read
+
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Build exact test image
+        run: docker build --pull -f Dockerfile.test -t companion-issue15 .
+      - name: Vet and test ADK product tags
+        run: |
+          docker run --rm companion-issue15 sh -c '
+            set -eu
+            cd /src/backend
+            go vet -tags "adk,mcp,nolibopusfile" ./...
+            go test -tags "adk,mcp,nolibopusfile" -count=1 ./...
+          '
