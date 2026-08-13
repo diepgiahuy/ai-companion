@@ -33,19 +33,22 @@ func TestMemoryRememberAutoTimeReplaysOriginalOutcomeAndConflicts(t *testing.T) 
 	if err := RegisterPlatform(registry, PlatformDependencies{Memory: mem, Now: func() time.Time { return now }}); err != nil { t.Fatal(err) }
 	ctx := pipeline.WithTurnContext(context.Background(), pipeline.TurnContext{UserID: "user-a", TenantID: "tenant-a", DeviceID: "device-a"})
 	args := `{"key":"favorite_food","kind":"semantic","value":"pho"}`
+	args = strings.ReplaceAll(args, `\"`, `"`)
 	firstItem := resultMemory(t, registry.Execute(ctx, "memory.remember", capability.ToolRequest{Key: "memory-request", Arguments: args}))
 	if !firstItem.ValidFrom.Equal(now) { t.Fatalf("first valid_from = %s; want %s", firstItem.ValidFrom, now) }
 	now = now.Add(24 * time.Hour)
 	replayedItem := resultMemory(t, registry.Execute(ctx, "memory.remember", capability.ToolRequest{Key: "memory-request", Arguments: args}))
 	if replayedItem.ID != firstItem.ID || !replayedItem.ValidFrom.Equal(firstItem.ValidFrom) { t.Fatalf("replayed memory = %+v; want original %+v", replayedItem, firstItem) }
-	conflict := registry.Execute(ctx, "memory.remember", capability.ToolRequest{Key: "memory-request", Arguments: `{"key":"favorite_food","kind":"semantic","value":"rice"}`})
+	conflictArgs := strings.ReplaceAll(`{"key":"favorite_food","kind":"semantic","value":"rice"}`, `\"`, `"`)
+	conflict := registry.Execute(ctx, "memory.remember", capability.ToolRequest{Key: "memory-request", Arguments: conflictArgs})
 	if !strings.Contains(conflict.Content, "IDEMPOTENCY_CONFLICT") { t.Fatalf("memory conflict = %s", conflict.Content) }
 	current, err := data.CurrentMemories(ctx, "user-a", now.Add(time.Hour), 20)
 	if err != nil { t.Fatal(err) }
 	if len(current) != 1 || current[0].ID != firstItem.ID || current[0].Value != "pho" { t.Fatalf("current memories = %+v", current) }
-	forgot := registry.Execute(ctx, "memory.forget", capability.ToolRequest{Key: "forget-request", Arguments: `{"key":"favorite_food"}`})
+	forgetArgs := strings.ReplaceAll(`{"key":"favorite_food"}`, `\"`, `"`)
+	forgot := registry.Execute(ctx, "memory.forget", capability.ToolRequest{Key: "forget-request", Arguments: forgetArgs})
 	if !strings.Contains(forgot.Content, `"ok":true`) { t.Fatalf("forget = %s", forgot.Content) }
-	replayedForget := registry.Execute(ctx, "memory.forget", capability.ToolRequest{Key: "forget-request", Arguments: `{"key":"favorite_food"}`})
+	replayedForget := registry.Execute(ctx, "memory.forget", capability.ToolRequest{Key: "forget-request", Arguments: forgetArgs})
 	if !strings.Contains(replayedForget.Content, `"ok":true`) { t.Fatalf("replayed forget = %s", replayedForget.Content) }
 }
 
@@ -57,15 +60,19 @@ func TestMarketWatchCreateDeleteDurableReplayAndConflict(t *testing.T) {
 	registry := capability.NewToolRegistry()
 	if err := RegisterPlatform(registry, PlatformDependencies{Market: quotes, MarketWatches: data}); err != nil { t.Fatal(err) }
 	ctx := pipeline.WithTurnContext(context.Background(), pipeline.TurnContext{UserID: "user-a", TenantID: "tenant-a", DeviceID: "device-a"})
-	firstWatch := resultWatch(t, registry.Execute(ctx, "market.watch.create", capability.ToolRequest{Key: "watch-request", Arguments: `{"provider":"fake-market","symbol":"XAU/USD","currency":"usd","operator":">=","threshold":3500}`}))
-	replayed := registry.Execute(ctx, "market.watch.create", capability.ToolRequest{Key: "watch-request", Arguments: `{"provider":"fake-market","symbol":"XAU/USD","currency":"USD","operator":">=","threshold":3500}`})
+	firstArgs := strings.ReplaceAll(`{"provider":"fake-market","symbol":"XAU/USD","currency":"usd","operator":">=","threshold":3500}`, `\"`, `"`)
+	firstWatch := resultWatch(t, registry.Execute(ctx, "market.watch.create", capability.ToolRequest{Key: "watch-request", Arguments: firstArgs}))
+	replayArgs := strings.ReplaceAll(`{"provider":"fake-market","symbol":"XAU/USD","currency":"USD","operator":">=","threshold":3500}`, `\"`, `"`)
+	replayed := registry.Execute(ctx, "market.watch.create", capability.ToolRequest{Key: "watch-request", Arguments: replayArgs})
 	if got := resultWatch(t, replayed).ID; got != firstWatch.ID { t.Fatalf("replayed watch id = %d; want %d", got, firstWatch.ID) }
-	conflict := registry.Execute(ctx, "market.watch.create", capability.ToolRequest{Key: "watch-request", Arguments: `{"provider":"fake-market","symbol":"XAU/USD","currency":"USD","operator":">=","threshold":3600}`})
+	conflictArgs := strings.ReplaceAll(`{"provider":"fake-market","symbol":"XAU/USD","currency":"USD","operator":">=","threshold":3600}`, `\"`, `"`)
+	conflict := registry.Execute(ctx, "market.watch.create", capability.ToolRequest{Key: "watch-request", Arguments: conflictArgs})
 	if !strings.Contains(conflict.Content, "IDEMPOTENCY_CONFLICT") { t.Fatalf("watch conflict = %s", conflict.Content) }
 	watches, err := data.ListMarketWatches(ctx, "user-a", "device-a", 20)
 	if err != nil { t.Fatal(err) }
 	if len(watches) != 1 || watches[0].ID != firstWatch.ID { t.Fatalf("watches = %+v", watches) }
 	deleteArgs := fmt.Sprintf(`{"id":%d}`, firstWatch.ID)
+	deleteArgs = strings.ReplaceAll(deleteArgs, `\"`, `"`)
 	deleted := registry.Execute(ctx, "market.watch.delete", capability.ToolRequest{Key: "watch-delete", Arguments: deleteArgs})
 	if !strings.Contains(deleted.Content, `"ok":true`) { t.Fatalf("delete = %s", deleted.Content) }
 	replayedDelete := registry.Execute(ctx, "market.watch.delete", capability.ToolRequest{Key: "watch-delete", Arguments: deleteArgs})
