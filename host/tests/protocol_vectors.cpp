@@ -60,6 +60,13 @@ int main() {
         .type = kTypes[index],
         .message_id = "golden",
         .payload_json = "{}",
+        .correlation_id = {},
+        .session_id = {},
+        .turn_id = {},
+        .generation_id = 0,
+        .has_generation_id = false,
+        .idempotency_key = {},
+        .occurred_at = {},
     };
     assert(companion::protocol::encode(envelope, output, written));
     assert(std::string_view(output.data(), written) == expected);
