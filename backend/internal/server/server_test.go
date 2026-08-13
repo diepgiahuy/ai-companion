@@ -662,7 +662,8 @@ func TestOTAManifestPublishAndDeviceCompatibility(t *testing.T) {
 	}
 
 	get, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/ota?board=esp32-s3-devkitc-1&channel=stable&protocol=3&security_version=1&metadata_version=0", nil)
-	get.Header.Set("Authorization", "Bearer device-token")
+	get.Header.Set("Device-Id", "ota-device")
+	get.Header.Set("Authorization", "Bearer test-device-credential")
 	resp, err = http.DefaultClient.Do(get)
 	if err != nil {
 		t.Fatal(err)
@@ -680,7 +681,8 @@ func TestOTAManifestPublishAndDeviceCompatibility(t *testing.T) {
 	}
 
 	get2, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/ota?board=esp32-s3-devkitc-1&channel=stable&protocol=3&security_version=2&metadata_version=7", nil)
-	get2.Header.Set("Authorization", "Bearer device-token")
+	get2.Header.Set("Device-Id", "ota-device")
+	get2.Header.Set("Authorization", "Bearer test-device-credential")
 	resp2, err := http.DefaultClient.Do(get2)
 	if err != nil {
 		t.Fatal(err)
