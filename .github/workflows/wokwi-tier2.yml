@@ -1,0 +1,63 @@
+name: wokwi-tier2
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/wokwi-tier2.yml"
+      - "host/companion_software_device/validate_wokwi_probe.py"
+      - "docs/TEST_EVIDENCE_LADDER.md"
+      - "main/**"
+      - "components/esp32_*/*"
+      - "components/esp32_*/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  capability-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      WOKWI_CLI_TOKEN: ${{ secrets.WOKWI_CLI_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Record token capability without consuming simulation quota
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/wokwi
+          if [[ -z "${WOKWI_CLI_TOKEN:-}" ]]; then
+            cat > artifacts/wokwi/capability.json <<'JSON'
+          {
+            "schema_version": 1,
+            "evidence_class": "tier2_capability_probe",
+            "status": "unavailable",
+            "blocker_code": "missing_wokwi_cli_token",
+            "simulation_ran": false,
+            "promotion": "none"
+          }
+          JSON
+          else
+            cat > artifacts/wokwi/capability.json <<'JSON'
+          {
+            "schema_version": 1,
+            "evidence_class": "tier2_capability_probe",
+            "status": "token_available",
+            "blocker_code": null,
+            "simulation_ran": false,
+            "promotion": "none"
+          }
+          JSON
+          fi
+      - name: Validate capability evidence
+        run: python3 host/companion_software_device/validate_wokwi_probe.py artifacts/wokwi/capability.json
+      - name: Upload Wokwi capability evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wokwi-tier2-capability-${{ github.sha }}
+          path: artifacts/wokwi/capability.json
+          if-no-files-found: error
+          retention-days: 14
