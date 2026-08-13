@@ -1,0 +1,122 @@
+name: issue27-platform-inline-apply
+
+on:
+  push:
+    branches: [agent/issue-27-native-slice]
+    paths: [.github/workflows/issue27-platform-inline-apply.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: agent/issue-27-native-slice
+          fetch-depth: 0
+      - name: Guard branch
+        run: test "$GITHUB_REF_NAME" = "agent/issue-27-native-slice"
+      - name: Apply exact-state platform patch
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          root = Path('.')
+          (root/'backend/internal/store/idempotent_platform.go').write_text(r'''package store
+
+          import (
+            "context"
+            "database/sql"
+            "encoding/json"
+            "fmt"
+            "strings"
+            "time"
+            "companion-server/internal/idempotency"
+            "companion-server/internal/market"
+            "companion-server/internal/memory"
+          )
+
+          func (s *Store) UpsertMemoryMutation(ctx context.Context, request idempotency.Request, m memory.Item) (memory.Item, error) {
+            if m.UserID == "" || strings.TrimSpace(m.Key) == "" || strings.TrimSpace(m.Value) == "" { return m, fmt.Errorf("user, key and value required") }
+            return runMutationValue(ctx, s, request, "memory.remember", func(tx *sql.Tx) (memory.Item, error) {
+              m.Key, m.Value = strings.TrimSpace(m.Key), strings.TrimSpace(m.Value)
+              emb, _ := json.Marshal(m.Embedding)
+              vf := m.ValidFrom.UTC().Format(time.RFC3339Nano)
+              if _, err := tx.ExecContext(ctx, `UPDATE memories SET valid_to=? WHERE user_id=? AND memory_key=? AND valid_to IS NULL AND deleted_at IS NULL`, vf, m.UserID, m.Key); err != nil { return m, err }
+              created := m.CreatedAt; if created.IsZero() { created = time.Now().UTC() }
+              result, err := tx.ExecContext(ctx, `INSERT INTO memories(user_id,memory_key,kind,value,valid_from,source,confidence,embedding,created_at) VALUES(?,?,?,?,?,?,?,?,?)`, m.UserID, m.Key, string(m.Kind), m.Value, vf, m.Source, m.Confidence, string(emb), created.UTC().Format(time.RFC3339Nano)); if err != nil { return m, err }
+              id, err := result.LastInsertId(); if err != nil { return m, err }
+              m.ID, m.CreatedAt = id, created.UTC(); return m, nil
+            })
+          }
+
+          func (s *Store) ForgetMemoryMutation(ctx context.Context, request idempotency.Request, user, key string) error {
+            key = strings.TrimSpace(key); if key == "" { return fmt.Errorf("memory key is required") }
+            return runMutationMarker(ctx, s, request, "memory.forget", func(tx *sql.Tx) error {
+              now := time.Now().UTC().Format(time.RFC3339Nano)
+              result, err := tx.ExecContext(ctx, `UPDATE memories SET deleted_at=?,valid_to=COALESCE(valid_to,?) WHERE user_id=? AND memory_key=? AND deleted_at IS NULL`, now, now, user, key); if err != nil { return err }
+              return requireChanged(result, nil, "memory key")
+            })
+          }
+
+          func (s *Store) CreateMarketWatchMutation(ctx context.Context, request idempotency.Request, user, device, provider, symbol, currency, operator string, threshold float64) (market.Watch, error) {
+            if err := market.ValidateOperator(operator); err != nil { return market.Watch{}, err }; if threshold <= 0 { return market.Watch{}, fmt.Errorf("threshold must be positive") }
+            provider, symbol, currency, device = strings.TrimSpace(provider), strings.TrimSpace(symbol), strings.ToUpper(strings.TrimSpace(currency)), strings.TrimSpace(device)
+            return runMutationValue(ctx, s, request, "market.watch.create", func(tx *sql.Tx) (market.Watch, error) {
+              created := time.Now().UTC(); result, err := tx.ExecContext(ctx, `INSERT INTO market_watches(idempotency_key,user_id,device_id,provider,symbol,currency,operator,threshold,created_at) VALUES(?,?,?,?,?,?,?,?,?)`, request.Key, user, device, provider, symbol, currency, operator, threshold, created.Format(time.RFC3339Nano)); if err != nil { return market.Watch{}, err }
+              id, err := result.LastInsertId(); if err != nil { return market.Watch{}, err }
+              return market.Watch{ID:id, UserID:user, DeviceID:device, Provider:provider, Symbol:symbol, Currency:currency, Operator:operator, Threshold:threshold, Enabled:true, CreatedAt:created}, nil
+            })
+          }
+
+          func (s *Store) DeleteMarketWatchMutation(ctx context.Context, request idempotency.Request, user string, id int64) error {
+            if id < 1 { return fmt.Errorf("market watch id is required") }
+            return runMutationMarker(ctx, s, request, "market.watch.delete", func(tx *sql.Tx) error { result, err := tx.ExecContext(ctx, `DELETE FROM market_watches WHERE id=? AND user_id=?`, id, user); return requireChanged(result, err, "market watch") })
+          }
+          ''', encoding='utf-8')
+
+          (root/'backend/internal/providers/tools/platform_idempotency.go').write_text(r'''package tools
+
+          import (
+            "context"
+            "companion-server/internal/idempotency"
+            "companion-server/internal/market"
+          )
+
+          type durableMarketWatchRepository interface {
+            market.WatchRepository
+            CreateMarketWatchMutation(context.Context, idempotency.Request, string, string, string, string, string, string, float64) (market.Watch, error)
+            DeleteMarketWatchMutation(context.Context, idempotency.Request, string, int64) error
+          }
+          ''', encoding='utf-8')
+
+          p = root/'backend/internal/providers/tools/platform.go'; text=p.read_text(encoding='utf-8')
+          def repl(old,new,label):
+            global text
+            n=text.count(old)
+            if n != 1: raise SystemExit(f'{label} drifted: {n}')
+            text=text.replace(old,new)
+          repl('''\t\t\tat := d.Now()\n\t\t\tif a.ValidFrom != "" {\n\t\t\t\tvar e error\n\t\t\t\tat, e = time.Parse(time.RFC3339, a.ValidFrom)\n\t\t\t\tif e != nil {\n\t\t\t\t\treturn capability.Failure(e)\n\t\t\t\t}\n\t\t\t}\n\t\t\tm, e := d.Memory.Remember(ctx, currentUser(ctx), a.Key, a.Kind, a.Value, "user_explicit", 1, at)\n''','''\t\t\tkey := strings.TrimSpace(a.Key)\n\t\t\tvalue := strings.TrimSpace(a.Value)\n\t\t\tat := d.Now()\n\t\t\tvalidFromHash := "auto"\n\t\t\tif strings.TrimSpace(a.ValidFrom) != "" {\n\t\t\t\tvar e error\n\t\t\t\tat, e = time.Parse(time.RFC3339, strings.TrimSpace(a.ValidFrom))\n\t\t\t\tif e != nil { return capability.Failure(e) }\n\t\t\t\tvalidFromHash = at.UTC().Format(time.RFC3339Nano)\n\t\t\t}\n\t\t\trequest, e := durableMutationRequest(ctx, "memory.remember", q.Key, map[string]any{"key": key, "kind": a.Kind, "value": value, "valid_from": validFromHash})\n\t\t\tif e != nil { return capability.Failure(e) }\n\t\t\tm, e := d.Memory.RememberMutation(ctx, request, currentUser(ctx), key, a.Kind, value, "user_explicit", 1, at)\n''','memory.remember')
+          repl('''\t\t\tif e := d.Memory.Forget(ctx, currentUser(ctx), a.Key); e != nil {\n\t\t\t\treturn capability.Failure(e)\n\t\t\t}\n\t\t\treturn capability.Success(map[string]any{"forgotten": a.Key})\n''','''\t\t\tkey := strings.TrimSpace(a.Key)\n\t\t\trequest, e := durableMutationRequest(ctx, "memory.forget", q.Key, map[string]any{"key": key})\n\t\t\tif e != nil { return capability.Failure(e) }\n\t\t\tif e := d.Memory.ForgetMutation(ctx, request, currentUser(ctx), key); e != nil { return capability.Failure(e) }\n\t\t\treturn capability.Success(map[string]any{"forgotten": key})\n''','memory.forget')
+          repl('''\t\t\tif a.Currency == "" {\n\t\t\t\ta.Currency = "USD"\n\t\t\t}\n\t\t\tw, e := d.MarketWatches.CreateMarketWatch(ctx, currentUser(ctx), currentDevice(ctx), q.Key, a.Provider, a.Symbol, a.Currency, a.Operator, a.Threshold)\n''','''\t\t\tprovider := strings.TrimSpace(a.Provider)\n\t\t\tsymbol := strings.TrimSpace(a.Symbol)\n\t\t\tcurrency := strings.ToUpper(strings.TrimSpace(a.Currency)); if currency == "" { currency = "USD" }\n\t\t\toperator := strings.TrimSpace(a.Operator); deviceID := currentDevice(ctx)\n\t\t\trequest, e := durableMutationRequest(ctx, "market.watch.create", q.Key, map[string]any{"provider": provider, "symbol": symbol, "currency": currency, "operator": operator, "threshold": a.Threshold, "device_id": deviceID})\n\t\t\tif e != nil { return capability.Failure(e) }\n\t\t\tdurable, ok := d.MarketWatches.(durableMarketWatchRepository); if !ok { return capability.Failure(fmt.Errorf("durable market watch repository is unavailable")) }\n\t\t\tw, e := durable.CreateMarketWatchMutation(ctx, request, currentUser(ctx), deviceID, provider, symbol, currency, operator, a.Threshold)\n''','market.watch.create')
+          repl('''\t\t\tif e := d.MarketWatches.DeleteMarketWatch(ctx, currentUser(ctx), a.ID); e != nil {\n\t\t\t\treturn capability.Failure(e)\n\t\t\t}\n''','''\t\t\trequest, e := durableMutationRequest(ctx, "market.watch.delete", q.Key, map[string]any{"id": a.ID})\n\t\t\tif e != nil { return capability.Failure(e) }\n\t\t\tdurable, ok := d.MarketWatches.(durableMarketWatchRepository); if !ok { return capability.Failure(fmt.Errorf("durable market watch repository is unavailable")) }\n\t\t\tif e := durable.DeleteMarketWatchMutation(ctx, request, currentUser(ctx), a.ID); e != nil { return capability.Failure(e) }\n''','market.watch.delete')
+          p.write_text(text,encoding='utf-8')
+          PY
+      - name: Format and test durable platform mutations
+        run: |
+          docker build -f Dockerfile.test -t issue27-platform-test .
+          docker run --rm -v "$PWD:/src" -w /src issue27-platform-test bash -c 'gofmt -w backend/internal/memory/idempotency.go backend/internal/store/idempotent_platform.go backend/internal/providers/tools/platform.go backend/internal/providers/tools/platform_idempotency.go && cd backend && go test ./internal/idempotency ./internal/memory ./internal/store ./internal/providers/tools && go test -race ./internal/memory ./internal/store ./internal/providers/tools'
+          git diff --check
+      - name: Commit and remove one-shot workflow
+        run: |
+          git config user.name "Diệp Gia Huy"
+          git config user.email "30974088+diepgiahuy@users.noreply.github.com"
+          git rm .github/workflows/issue27-platform-inline-apply.yml
+          git add backend/internal/memory backend/internal/store backend/internal/providers/tools
+          git diff --cached --check
+          git commit -m "feat: make memory and market mutations durable"
+          git push origin HEAD:agent/issue-27-native-slice
