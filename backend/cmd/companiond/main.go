@@ -139,7 +139,7 @@ func main() {
 	toolRegistry := capability.NewToolRegistry()
 	if err := toolprovider.RegisterNative(toolRegistry, toolprovider.NativeDependencies{
 		Store: data, Conversation: conversationService, Resources: resourceRegistry,
-		VoicePrivacy: privacyService,
+		VoicePrivacy:  privacyService,
 		RecordingsDir: value("COMPANION_RECORDINGS_DIR", "data/recordings"),
 	}); err != nil {
 		logger.Error("register native tools", "error", err)
@@ -197,7 +197,7 @@ func main() {
 		server.WithDeviceCredentialManager(data), server.WithEntitlementManager(data),
 		server.WithDeviceAuthenticator(data),
 	}
-	service := server.New(components, "", logger, serverOptions...)
+	service := server.New(components, logger, serverOptions...)
 	rootCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	go service.RunBackground(rootCtx)

@@ -18,6 +18,7 @@ import (
 	"companion-server/internal/capability"
 	"companion-server/internal/controlplane"
 	conversationctx "companion-server/internal/conversation"
+	"companion-server/internal/domain"
 	"companion-server/internal/pipeline"
 	"companion-server/internal/protocol"
 	conversationprovider "companion-server/internal/providers/conversation"
@@ -55,6 +56,27 @@ type testEnvelope struct {
 }
 
 var testEnvelopeSequence atomic.Uint64
+
+type testDeviceAuthenticator struct{}
+
+func (testDeviceAuthenticator) AuthenticateDevice(_ context.Context, deviceID, credential string) (domain.Identity, bool, error) {
+	if strings.TrimSpace(deviceID) == "" || credential != "test-device-credential" {
+		return domain.Identity{DeviceID: deviceID}, false, nil
+	}
+	return domain.Identity{UserID: "default", DeviceID: deviceID}, true, nil
+}
+
+func newAuthenticatedTestServer(components pipeline.Components, options ...Option) *Server {
+	options = append(options, WithDeviceAuthenticator(testDeviceAuthenticator{}))
+	return New(components, slog.New(slog.NewTextHandler(io.Discard, nil)), options...)
+}
+
+func testDeviceDialOptions(deviceID string) *websocket.DialOptions {
+	headers := http.Header{}
+	headers.Set("Device-Id", deviceID)
+	headers.Set("Authorization", "Bearer test-device-credential")
+	return &websocket.DialOptions{HTTPHeader: headers}
+}
 
 func (m testEnvelope) MarshalJSON() ([]byte, error) {
 	messageID := m.MessageID
@@ -186,19 +208,19 @@ func (m *testEnvelope) UnmarshalJSON(data []byte) error {
 }
 
 func TestDeviceConversationStreamsAudio(t *testing.T) {
-	service := New(pipeline.Components{
+	service := newAuthenticatedTestServer(pipeline.Components{
 		ASR:    pipeline.MockASR{Transcript: "hôm nay đi chợ 50k"},
 		Agent:  pipeline.MockAgent{Reply: "Đã lưu năm mươi nghìn."},
 		TTS:    pipeline.MockTTS{Frames: 3},
 		Codecs: pipeline.OpusFactory{},
-	}, "", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	})
 	httpServer := httptest.NewServer(service.Handler())
 	defer httpServer.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	url := "ws" + strings.TrimPrefix(httpServer.URL, "http") + "/v2/device"
-	connection, _, err := websocket.Dial(ctx, url, nil)
+	connection, _, err := websocket.Dial(ctx, url, testDeviceDialOptions("device-test"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -302,17 +324,15 @@ func readJSON(t *testing.T, ctx context.Context, connection *websocket.Conn) tes
 }
 
 func TestLegacyClientFailsFastWithoutRegisteringSession(t *testing.T) {
-	service := New(pipeline.Components{
+	service := newAuthenticatedTestServer(pipeline.Components{
 		ASR: pipeline.MockASR{}, Agent: pipeline.MockAgent{}, TTS: pipeline.MockTTS{}, Codecs: pipeline.OpusFactory{},
-	}, "", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	})
 	httpServer := httptest.NewServer(service.Handler())
 	defer httpServer.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	headers := http.Header{}
-	headers.Set("Device-Id", "legacy-device")
-	connection, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(httpServer.URL, "http")+"/v2/device", &websocket.DialOptions{HTTPHeader: headers})
+	connection, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(httpServer.URL, "http")+"/v2/device", testDeviceDialOptions("legacy-device"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -429,9 +449,9 @@ func TestReminderSchedulerPushesAlarmToTargetDevice(t *testing.T) {
 		t.Fatal(err)
 	}
 	repo := &ackSignalRepo{SchedulerRepository: data, acked: make(chan struct{}, 1)}
-	service := New(pipeline.Components{
+	service := newAuthenticatedTestServer(pipeline.Components{
 		ASR: pipeline.MockASR{}, Agent: pipeline.MockAgent{}, TTS: pipeline.MockTTS{}, Codecs: pipeline.OpusFactory{},
-	}, "", slog.New(slog.NewTextHandler(io.Discard, nil)), WithStore(repo), WithSchedulerInterval(20*time.Millisecond))
+	}, WithStore(repo), WithSchedulerInterval(20*time.Millisecond))
 	background, stopBackground := context.WithCancel(context.Background())
 	defer stopBackground()
 	go service.RunBackground(background)
@@ -441,9 +461,7 @@ func TestReminderSchedulerPushesAlarmToTargetDevice(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	url := "ws" + strings.TrimPrefix(httpServer.URL, "http") + "/v2/device"
-	headers := http.Header{}
-	headers.Set("Device-Id", "device-test")
-	connection, _, err := websocket.Dial(ctx, url, &websocket.DialOptions{HTTPHeader: headers})
+	connection, _, err := websocket.Dial(ctx, url, testDeviceDialOptions("device-test"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -549,17 +567,15 @@ func TestExpenseBudgetFullE2EThroughQwenRegistryAndUI(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	service := New(pipeline.Components{
+	service := newAuthenticatedTestServer(pipeline.Components{
 		ASR: pipeline.MockASR{Transcript: "Tuần này tiêu hết bao nhiêu rồi?"}, Agent: qwen,
 		TTS: pipeline.MockTTS{Frames: 2}, Codecs: pipeline.OpusFactory{},
-	}, "", slog.New(slog.NewTextHandler(io.Discard, nil)), WithStore(data), WithLocation(location))
+	}, WithStore(data), WithLocation(location))
 	httpServer := httptest.NewServer(service.Handler())
 	defer httpServer.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	headers := http.Header{}
-	headers.Set("Device-Id", "device-expense-e2e")
-	connection, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(httpServer.URL, "http")+"/v2/device", &websocket.DialOptions{HTTPHeader: headers})
+	connection, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(httpServer.URL, "http")+"/v2/device", testDeviceDialOptions("device-expense-e2e"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -629,7 +645,7 @@ func TestOTAManifestPublishAndDeviceCompatibility(t *testing.T) {
 	}
 	defer data.Close()
 	firmware := controlplane.NewFirmware(data, nil, false)
-	service := New(pipeline.Components{ASR: pipeline.MockASR{}, Agent: pipeline.MockAgent{}, TTS: pipeline.MockTTS{}, Codecs: pipeline.OpusFactory{}}, "device-token", slog.New(slog.NewTextHandler(io.Discard, nil)), WithFirmwareService(firmware), WithAdminToken("admin-token"))
+	service := newAuthenticatedTestServer(pipeline.Components{ASR: pipeline.MockASR{}, Agent: pipeline.MockAgent{}, TTS: pipeline.MockTTS{}, Codecs: pipeline.OpusFactory{}}, "device-token", slog.New(slog.NewTextHandler(io.Discard, nil)), WithFirmwareService(firmware), WithAdminToken("admin-token"))
 	ts := httptest.NewServer(service.Handler())
 	defer ts.Close()
 	manifest := controlplane.FirmwareManifest{Version: "1.2.3", Channel: "stable", Board: "esp32-s3-devkitc-1", ProtocolMin: 1, SecurityVersion: 2, URL: "https://firmware.example/1.2.3.bin", SHA256: strings.Repeat("ab", 32), Size: 1024, ExpiresAt: time.Now().Add(time.Hour), MetadataVersion: 7}
@@ -697,18 +713,18 @@ func (a *blockingStreamAgent) Stream(ctx context.Context, _, _ string, emit func
 
 func TestStreamingAgentStartsTTSBeforeModelFinishes(t *testing.T) {
 	agentRuntime := &blockingStreamAgent{continueCh: make(chan struct{})}
-	service := New(pipeline.Components{
+	service := newAuthenticatedTestServer(pipeline.Components{
 		ASR:    pipeline.MockASR{Transcript: "hello"},
 		Agent:  agentRuntime,
 		TTS:    pipeline.MockTTS{Frames: 1},
 		Codecs: pipeline.OpusFactory{},
-	}, "", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	})
 	ts := httptest.NewServer(service.Handler())
 	defer ts.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(ts.URL, "http")+"/v2/device", nil)
+	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(ts.URL, "http")+"/v2/device", testDeviceDialOptions("stream-device"))
 	if err != nil {
 		t.Fatal(err)
 	}
