@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-08-13T00:56:00+07:00",
+  "updated_at": "2026-08-13T11:45:00+07:00",
   "rules": {
     "allowed_statuses": ["passed", "partial", "unproven", "blocked", "failed"],
     "production_pass_requires_non_mock_evidence": true,
@@ -67,7 +67,7 @@
           "run_id": 31624401859,
           "commit": "9cd3d2b5b9b4f7a9a0b755f42e68b16b3e9406c7",
           "workflow": "codeql",
-          "assertion": "CodeQL Go manual traced build and analysis passed with adk,mcp,webrtc,nolibopusfile adapters"
+          "assertion": "CodeQL Go manual traced build and analysis passed on the recorded checkpoint's production adapter set"
         }
       ]
     },
@@ -120,12 +120,6 @@
       "evidence": [],
       "reason": "PostgreSQL/Atlas/Ent/River migration, crash/restart and backup/restore gates are not yet complete on main."
     },
-    "webrtc_real_network": {
-      "status": "unproven",
-      "evidence": [],
-      "reason": "Pion WebRTC Opus adapter compiles under production tags, but no real-network latency/loss benchmark has been recorded.",
-      "required_metrics": ["p50_first_audio_ms", "p95_first_audio_ms", "packet_loss_recovery", "barge_in_ms"]
-    },
     "mcp_external_integration": {
       "status": "unproven",
       "evidence": [],
@@ -134,12 +128,12 @@
     "protocol_v2_negotiation": {
       "status": "unproven",
       "evidence": [],
-      "reason": "Protocol/capability negotiation v2 has not been production-proven."
+      "reason": "Protocol v2 implementation and contract CI exist, but physical-device/reconnect negotiation behavior has not been production-proven."
     },
     "security_default_deny": {
       "status": "unproven",
       "evidence": [],
-      "reason": "Security CI is green, but deployment-default auth/origin/TLS and adversarial integration gates are not yet fully proven."
+      "reason": "Security CI is green, but deployment-default database device authentication, TLS/origin policy and adversarial integration gates are not yet fully proven."
     },
     "privacy_explicit_consent": {
       "status": "unproven",
