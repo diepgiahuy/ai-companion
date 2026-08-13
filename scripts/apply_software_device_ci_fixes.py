@@ -76,9 +76,3 @@ replace_once(
 }
 ''',
 )
-
-replace_once(
-    ".github/workflows/software-device-e2e.yml",
-    '          if-no-files-found: error\n',
-    '          if-no-files-found: warn\n',
-)
