@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
@@ -58,6 +59,14 @@ func (h *fakeConversationHistory) Recent(_ context.Context, scope conversationpk
 	return messages, nil
 }
 
+func validTestConfig(reg *capability.ToolRegistry, history ConversationHistory) Config {
+	return Config{
+		AppName: "test", Tools: reg, Conversation: history,
+		Instruction: "test instruction", PromptVersion: "test@1#fixture",
+		Temperature: 0.1, MaxOutputTokens: 384, MaxToolRounds: 3,
+	}
+}
+
 func TestADKExposesEveryRegisteredHostTool(t *testing.T) {
 	reg := capability.NewToolRegistry()
 	for _, name := range []string{"expense.create", "note.create", "timer.create"} {
@@ -76,7 +85,7 @@ func TestADKExposesEveryRegisteredHostTool(t *testing.T) {
 	if len(tools) != len(reg.Definitions()) {
 		t.Fatalf("ADK tools=%d registry=%d", len(tools), len(reg.Definitions()))
 	}
-	if _, err := newWithModel(Config{AppName: "test", Tools: reg, Conversation: newFakeConversationHistory(), Instruction: "test instruction", PromptVersion: "test@1#fixture"}, fakeLLM{}); err != nil {
+	if _, err := newWithModel(validTestConfig(reg, newFakeConversationHistory()), fakeLLM{}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -89,7 +98,7 @@ func TestADKRequiresDurableConversationHistory(t *testing.T) {
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := newWithModel(Config{AppName: "test", Tools: reg, Instruction: "test", PromptVersion: "test@1#fixture"}, fakeLLM{}); err == nil {
+	if _, err := newWithModel(validTestConfig(reg, nil), fakeLLM{}); err == nil {
 		t.Fatal("expected missing durable conversation history to fail closed")
 	}
 }
@@ -103,6 +112,29 @@ func TestSessionIdentitySurvivesTransportReconnect(t *testing.T) {
 	if u1 != u2 || s1 != s2 {
 		t.Fatalf("transport reconnect changed ADK identity: %q/%q != %q/%q", u1, s1, u2, s2)
 	}
+}
+
+type limiterContext struct {
+	adkagent.StrictContextMock
+	invocationID string
+}
+func (c limiterContext) InvocationID() string { return c.invocationID }
+
+func TestModelRoundLimiterMatchesConfiguredBound(t *testing.T) {
+	limiter := newModelRoundLimiter(3)
+	ctx := limiterContext{invocationID: "inv-1"}
+	for i := 0; i < 3; i++ {
+		if _, err := limiter.BeforeModel(ctx, nil); err != nil {
+			t.Fatalf("allowed model round %d failed: %v", i+1, err)
+		}
+	}
+	if _, err := limiter.BeforeModel(ctx, nil); err == nil {
+		t.Fatal("expected fourth model round to fail")
+	}
+	if _, err := limiter.BeforeModel(ctx, nil); err != nil {
+		t.Fatalf("limiter did not reset after fail-closed bound: %v", err)
+	}
+	_, _ = limiter.AfterAgent(ctx)
 }
 
 func TestCompanionSessionServiceRecoversDurableHistoryAfterRestart(t *testing.T) {
@@ -132,8 +164,6 @@ func TestCompanionSessionServiceRecoversDurableHistoryAfterRestart(t *testing.T)
 		t.Fatal(err)
 	}
 
-	// A fresh working service simulates a process restart. It must reconstruct
-	// the ADK prompt history from Companion-owned durable conversation storage.
 	service2, err := newCompanionSessionService(history)
 	if err != nil {
 		t.Fatal(err)
