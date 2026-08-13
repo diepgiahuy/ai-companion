@@ -255,6 +255,7 @@ int run(int argc, char** argv) {
   std::string token = "tier1-device-token";
   std::string device_id = "software-device-tier1";
   std::string admin_token = "tier1-admin-token";
+  std::string expected_text = "Tier-1 tool parity ok";
   std::string evidence_path = "software-device-evidence.json";
   std::string scenario_set = "core";
   for (int i = 1; i < argc; ++i) {
@@ -267,6 +268,7 @@ int run(int argc, char** argv) {
     else if (arg == "--device-id") device_id = value("--device-id");
     else if (arg == "--token") token = value("--token");
     else if (arg == "--admin-token") admin_token = value("--admin-token");
+    else if (arg == "--expected-text") expected_text = value("--expected-text");
     else if (arg == "--evidence") evidence_path = value("--evidence");
     else if (arg == "--scenario-set") scenario_set = value("--scenario-set");
     else throw std::runtime_error("unknown argument: " + arg);
@@ -375,7 +377,7 @@ int run(int argc, char** argv) {
       fixture.finish_audio_turn();
       require(fixture.until([&] { return fixture.app.state() == UiState::ready; }),
               "tool turn did not return ready");
-      require(fixture.display.contains("Đã lưu đúng một khoản 50 nghìn"),
+      require(fixture.display.contains(expected_text),
               "deterministic model/tool response was not rendered");
       require(fixture.speaker.samples > 0, "tool turn produced no decoded TTS PCM");
       result.counters = stats_json(fixture.backend.stats());
