@@ -23,13 +23,20 @@ func (fakeLLM) GenerateContent(context.Context, *model.LLMRequest, bool) iter.Se
 	return func(func(*model.LLMResponse, error) bool) {}
 }
 
-func TestADKRepresentativeToolsReuseRegistrySchemas(t *testing.T) {
+func TestADKExposesCompleteRegistryCatalogUsingRegistrySchemas(t *testing.T) {
 	reg := capability.NewToolRegistry()
-	for _, name := range RepresentativeToolNames() {
+	names := []string{"expense.log", "budget.get", "timer.create", "memory.recall", "note.create"}
+	for _, name := range names {
 		name := name
 		def := capability.ToolDefinition{
 			Name: name, Description: name, Pack: "test",
-			Parameters: map[string]any{"type": "object", "additionalProperties": true},
+			Parameters: map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"properties": map[string]any{
+					"value": map[string]any{"type": "string"},
+				},
+			},
 		}
 		if err := reg.Register(capability.FunctionTool{
 			ToolName: name, ToolDefinition: &def,
@@ -40,6 +47,15 @@ func TestADKRepresentativeToolsReuseRegistrySchemas(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+
+	tools, err := buildRegistryTools(reg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tools) != len(names) {
+		t.Fatalf("ADK tool count=%d want=%d", len(tools), len(names))
+	}
+
 	if _, err := newWithModel(Config{
 		AppName:       "test",
 		Tools:         reg,
