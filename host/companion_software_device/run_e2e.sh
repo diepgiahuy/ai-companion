@@ -62,6 +62,15 @@ revoke_device() {
     "http://127.0.0.1:18000/v1/admin/devices/${device_id}/credential" >/dev/null
 }
 
+set_memory_consent() {
+  local user_id="$1"
+  curl -fsS -X PATCH \
+    -H "Authorization: Bearer $COMPANION_ADMIN_TOKEN" \
+    -H 'Content-Type: application/json' \
+    --data '{"save_voice_audio":false,"long_term_memory_enabled":true,"conversation_retention_days":0,"voice_memo_retention_days":0,"memory_retention_days":0}' \
+    "http://127.0.0.1:18000/v1/admin/users/${user_id}/privacy" >/dev/null
+}
+
 expect_unauthorized() {
   local device_id="$1"
   local credential="$2"
@@ -152,6 +161,11 @@ for spec in "${TOOL_CASES[@]}"; do
   if [[ -z "$TOOL_CREDENTIAL" ]]; then
     TOOL_CREDENTIAL="$(enroll_device "$TOOL_DEVICE")"
     expect_unauthorized "$TOOL_DEVICE" "wrong-tier1-credential"
+  fi
+  if [[ "$case_id" == "memory" ]]; then
+    # Memory persistence is default-deny. Tier-1 must prove the real consent
+    # boundary rather than relying on an implicit opt-in default.
+    set_memory_consent "default"
   fi
   "${SOFTWARE_DEVICE_BIN:-/usr/local/bin/companion_software_device}" \
     --url ws://127.0.0.1:18000/v2/device \
