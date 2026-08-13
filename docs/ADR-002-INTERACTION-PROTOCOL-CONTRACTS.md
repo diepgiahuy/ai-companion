@@ -35,6 +35,15 @@ and `occurred_at`.
   request content. The persistence layer replays the original committed outcome for
   an equivalent retry and rejects the same key with different canonical content.
 
+**Current implementation boundary in PR #14:** only the first bullet exists. The
+`message_id` replay cache is scoped to one live WebSocket session and is lost on
+reconnect. PR #14 does **not** implement an actor-scoped or durable
+`idempotency_key` store, and therefore does not prove reconnect/restart payload-
+conflict safety. The actor-scoped rule in the second bullet is a requirement for
+stateful domain handlers, not an implementation claim of this protocol migration.
+The README gate for idempotency payload-conflict safety must remain `unproven` until
+a domain implementation persists and tests that contract.
+
 The protocol layer therefore does **not** claim exactly-once delivery. WebSocket
 replay suppression is a bounded optimization; durable at-least-once correctness is
 owned by the stateful feature implementation (#5 for voice mail and #7 for pairing).
@@ -78,10 +87,11 @@ payloads fail before state mutation.
 ### Session replay cache
 
 The current WebSocket implementation remembers at most 256 inbound `message_id`
-records per live session. FIFO eviction is intentional and is **not** a durable
-idempotency guarantee: after eviction or reconnect, the same transport message may
-reach domain handling again. State-changing handlers must therefore rely on the
-persisted `idempotency_key` contract, not on the session cache, for correctness.
+records per live session. FIFO eviction is intentional and is **not** a durable or
+actor-scoped idempotency guarantee: after eviction or reconnect, the same transport
+message may reach domain handling again. Stateful feature handlers must therefore
+rely on the persisted `idempotency_key` contract, not on the session cache, for
+correctness.
 
 The cache may replay a deterministic/terminal outcome for an equivalent duplicate.
 A retryable infrastructure failure must not be treated as proof that the domain
@@ -179,9 +189,10 @@ succeeded, rejected, expired --> terminal
 
 Backend, firmware, host simulator, and fixtures move together to Envelope v2. The
 state helpers reject duplicate and terminal transitions. Live-session replay
-suppression remains bounded; durable feature handlers must implement the
-`idempotency_key` contract before any reconnect-safe mutation is considered proven.
-Rollback is a Git revert of the coordinated change, not a protocol fallback.
+suppression remains bounded and session-local; durable feature handlers must
+implement the actor-scoped `idempotency_key` contract before any reconnect-safe
+mutation is considered proven. Rollback is a Git revert of the coordinated change,
+not a protocol fallback.
 
 Issue #5 owns voice-mail persistence, durable mutation idempotency, and media access.
 Issue #6 owns device notification and deliberate playback UX. Issue #7 owns pairing
