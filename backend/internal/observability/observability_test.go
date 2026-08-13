@@ -8,6 +8,10 @@ import (
 	"time"
 )
 
+type panicRecorder struct{}
+
+func (panicRecorder) TryRecord(Event) bool { panic("exporter failed") }
+
 func TestRingRecorderCarriesCorrelationAndBoundsCapacity(t *testing.T) {
 	recorder := NewRingRecorder(1)
 	ctx := WithRecorder(context.Background(), recorder)
@@ -41,6 +45,12 @@ func TestRingRecorderContentionDropsWithoutBlocking(t *testing.T) {
 		}
 	case <-time.After(100 * time.Millisecond):
 		t.Fatal("TryRecord blocked under contention")
+	}
+}
+
+func TestRecorderPanicCannotEscapeApplicationPath(t *testing.T) {
+	if RecordTo(panicRecorder{}, Event{Name: EventTurnStart}) {
+		t.Fatal("panicking recorder must be reported as not accepted")
 	}
 }
 
