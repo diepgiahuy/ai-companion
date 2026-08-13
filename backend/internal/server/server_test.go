@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -28,6 +29,162 @@ import (
 	opus "gopkg.in/hraban/opus.v2"
 )
 
+type testEnvelope struct {
+	Type          protocol.MessageType
+	MessageID     string
+	Version       int
+	Transport     string
+	SessionID     string
+	TurnID        string
+	GenerationID  uint64
+	State         string
+	Mode          string
+	Text          string
+	ID            string
+	Message       string
+	FireAt        string
+	Reason        string
+	Code          string
+	Emotion       protocol.UIEmotion
+	ToolName      string
+	AudioParams   *protocol.AudioParams
+	UI            any
+	Config        *protocol.RuntimeConfig
+	ConfigVersion int64
+	Applied       bool
+}
+
+var testEnvelopeSequence atomic.Uint64
+
+func (m testEnvelope) MarshalJSON() ([]byte, error) {
+	messageID := m.MessageID
+	if messageID == "" {
+		messageID = "test-" + fmt.Sprint(testEnvelopeSequence.Add(1))
+	}
+	metadata := protocol.Metadata{
+		MessageID: messageID,
+		SessionID: m.SessionID,
+		TurnID:    m.TurnID,
+	}
+	switch m.Type {
+	case protocol.SessionHelloType:
+		if m.AudioParams == nil {
+			return nil, fmt.Errorf("audio params are required")
+		}
+		return protocol.Encode(m.Type, metadata, protocol.HelloPayload{Transport: m.Transport, AudioParams: *m.AudioParams})
+	case protocol.TurnListenType:
+		mode := m.Mode
+		if m.State == "start" && mode == "" {
+			mode = "manual"
+		}
+		return protocol.Encode(m.Type, metadata, protocol.ListenPayload{State: m.State, Mode: mode})
+	case protocol.TurnAbortType:
+		reason := m.Reason
+		if reason == "" {
+			reason = "client_abort"
+		}
+		return protocol.Encode(m.Type, metadata, protocol.AbortPayload{Reason: reason})
+	case protocol.AlarmAckType:
+		return protocol.Encode(m.Type, metadata, protocol.AlarmAckPayload{AlarmID: m.ID})
+	case protocol.ConfigReportType:
+		if m.Config == nil {
+			return nil, fmt.Errorf("config is required")
+		}
+		return protocol.Encode(m.Type, metadata, protocol.ConfigReportPayload{ConfigVersion: m.ConfigVersion, Applied: m.Applied, Config: *m.Config})
+	case protocol.SessionPingType:
+		return protocol.Encode(m.Type, metadata, protocol.EmptyPayload{})
+	default:
+		return nil, fmt.Errorf("unsupported test input type %q", m.Type)
+	}
+}
+
+func (m *testEnvelope) UnmarshalJSON(data []byte) error {
+	envelope, err := protocol.Decode(data)
+	if err != nil {
+		return err
+	}
+	m.Type = envelope.Type
+	m.Version = int(envelope.Version)
+	m.SessionID = envelope.SessionID
+	m.TurnID = envelope.TurnID
+	m.GenerationID = envelope.GenerationID
+	switch envelope.Type {
+	case protocol.SessionReadyType:
+		payload, err := protocol.DecodePayload[protocol.ReadyPayload](envelope)
+		if err != nil {
+			return err
+		}
+		m.Transport, m.AudioParams = payload.Transport, &payload.AudioParams
+		m.Config, m.ConfigVersion = payload.Config, payload.ConfigVersion
+	case protocol.TranscriptFinalType:
+		payload, err := protocol.DecodePayload[protocol.TextPayload](envelope)
+		if err != nil {
+			return err
+		}
+		m.Text = payload.Text
+	case protocol.TTSLifecycleType:
+		payload, err := protocol.DecodePayload[protocol.TTSLifecyclePayload](envelope)
+		if err != nil {
+			return err
+		}
+		m.State, m.Text = payload.State, payload.Text
+	case protocol.TurnStateType:
+		payload, err := protocol.DecodePayload[protocol.TurnStatePayload](envelope)
+		if err != nil {
+			return err
+		}
+		m.State, m.Reason = payload.State, payload.Reason
+	case protocol.AlarmFiredType:
+		payload, err := protocol.DecodePayload[protocol.AlarmFiredPayload](envelope)
+		if err != nil {
+			return err
+		}
+		m.ID, m.Message, m.FireAt = payload.AlarmID, payload.Message, payload.FireAt
+	case protocol.ScheduleUpdatedType:
+		payload, err := protocol.DecodePayload[protocol.ScheduleUpdatedPayload](envelope)
+		if err != nil {
+			return err
+		}
+		m.Message, m.FireAt = payload.Message, payload.FireAt
+	case protocol.UICardType:
+		payload, err := protocol.DecodePayload[protocol.UICardPayload](envelope)
+		if err != nil {
+			return err
+		}
+		m.UI = payload.UI
+	case protocol.UIStateType:
+		payload, err := protocol.DecodePayload[protocol.UIStatePayload](envelope)
+		if err != nil {
+			return err
+		}
+		m.Emotion, m.ToolName = payload.Emotion, payload.ToolName
+	case protocol.AgentStatusType:
+		payload, err := protocol.DecodePayload[protocol.AgentStatusPayload](envelope)
+		if err != nil {
+			return err
+		}
+		m.State = payload.State
+	case protocol.ConfigUpdateType:
+		payload, err := protocol.DecodePayload[protocol.ConfigUpdatePayload](envelope)
+		if err != nil {
+			return err
+		}
+		m.Config, m.ConfigVersion = &payload.Config, payload.ConfigVersion
+	case protocol.ProtocolErrorType:
+		payload, err := protocol.DecodePayload[protocol.ProtocolErrorPayload](envelope)
+		if err != nil {
+			return err
+		}
+		m.Code, m.Message = payload.Code, payload.Message
+	case protocol.SessionPongType:
+		_, err = protocol.DecodePayload[protocol.EmptyPayload](envelope)
+		return err
+	default:
+		return fmt.Errorf("unsupported test output type %q", envelope.Type)
+	}
+	return nil
+}
+
 func TestDeviceConversationStreamsAudio(t *testing.T) {
 	service := New(pipeline.Components{
 		ASR:    pipeline.MockASR{Transcript: "hôm nay đi chợ 50k"},
@@ -40,7 +197,7 @@ func TestDeviceConversationStreamsAudio(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	url := "ws" + strings.TrimPrefix(httpServer.URL, "http") + "/v1/device"
+	url := "ws" + strings.TrimPrefix(httpServer.URL, "http") + "/v2/device"
 	connection, _, err := websocket.Dial(ctx, url, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -48,18 +205,18 @@ func TestDeviceConversationStreamsAudio(t *testing.T) {
 	defer connection.Close(websocket.StatusNormalClosure, "test done")
 
 	audio := protocol.DefaultAudioParams()
-	writeJSON(t, ctx, connection, protocol.Message{
-		Type: "hello", Version: protocol.Version, Transport: protocol.Transport,
+	writeJSON(t, ctx, connection, testEnvelope{
+		Type: protocol.SessionHelloType, Version: protocol.Version, Transport: protocol.Transport,
 		AudioParams: &audio,
 	})
 	hello := readJSON(t, ctx, connection)
-	if hello.Type != "hello" || hello.SessionID == "" {
+	if hello.Type != protocol.SessionReadyType || hello.SessionID == "" {
 		t.Fatalf("invalid hello response: %+v", hello)
 	}
 
 	turnID := "turn-e2e-1"
-	writeJSON(t, ctx, connection, protocol.Message{
-		Type: "listen", State: "start", Mode: "manual", SessionID: hello.SessionID, TurnID: turnID,
+	writeJSON(t, ctx, connection, testEnvelope{
+		Type: protocol.TurnListenType, State: "start", Mode: "manual", SessionID: hello.SessionID, TurnID: turnID,
 	})
 	uplinkEncoder, err := opus.NewEncoder(protocol.UplinkSampleRate, 1, opus.AppVoIP)
 	if err != nil {
@@ -73,8 +230,8 @@ func TestDeviceConversationStreamsAudio(t *testing.T) {
 	if err := connection.Write(ctx, websocket.MessageBinary, uplink[:n]); err != nil {
 		t.Fatal(err)
 	}
-	writeJSON(t, ctx, connection, protocol.Message{
-		Type: "listen", State: "stop", SessionID: hello.SessionID, TurnID: turnID,
+	writeJSON(t, ctx, connection, testEnvelope{
+		Type: protocol.TurnListenType, State: "stop", SessionID: hello.SessionID, TurnID: turnID,
 	})
 
 	gotSTT := false
@@ -99,16 +256,16 @@ func TestDeviceConversationStreamsAudio(t *testing.T) {
 			binaryFrames++
 			continue
 		}
-		var message protocol.Message
+		var message testEnvelope
 		if err := json.Unmarshal(data, &message); err != nil {
 			t.Fatal(err)
 		}
 		switch {
-		case message.Type == "stt":
+		case message.Type == protocol.TranscriptFinalType:
 			gotSTT = message.Text == "hôm nay đi chợ 50k"
-		case message.Type == "tts" && message.State == "start":
+		case message.Type == protocol.TTSLifecycleType && message.State == "start":
 			gotStart = true
-		case message.Type == "tts" && message.State == "stop":
+		case message.Type == protocol.TTSLifecycleType && message.State == "stop":
 			gotStop = true
 		}
 	}
@@ -117,7 +274,7 @@ func TestDeviceConversationStreamsAudio(t *testing.T) {
 	}
 }
 
-func writeJSON(t *testing.T, ctx context.Context, connection *websocket.Conn, message protocol.Message) {
+func writeJSON(t *testing.T, ctx context.Context, connection *websocket.Conn, message testEnvelope) {
 	t.Helper()
 	data, err := json.Marshal(message)
 	if err != nil {
@@ -128,7 +285,7 @@ func writeJSON(t *testing.T, ctx context.Context, connection *websocket.Conn, me
 	}
 }
 
-func readJSON(t *testing.T, ctx context.Context, connection *websocket.Conn) protocol.Message {
+func readJSON(t *testing.T, ctx context.Context, connection *websocket.Conn) testEnvelope {
 	t.Helper()
 	kind, data, err := connection.Read(ctx)
 	if err != nil {
@@ -137,11 +294,113 @@ func readJSON(t *testing.T, ctx context.Context, connection *websocket.Conn) pro
 	if kind != websocket.MessageText {
 		t.Fatalf("expected text, got %v", kind)
 	}
-	var message protocol.Message
+	var message testEnvelope
 	if err := json.Unmarshal(data, &message); err != nil {
 		t.Fatal(err)
 	}
 	return message
+}
+
+func TestLegacyClientFailsFastWithoutRegisteringSession(t *testing.T) {
+	service := New(pipeline.Components{
+		ASR: pipeline.MockASR{}, Agent: pipeline.MockAgent{}, TTS: pipeline.MockTTS{}, Codecs: pipeline.OpusFactory{},
+	}, "", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	httpServer := httptest.NewServer(service.Handler())
+	defer httpServer.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	headers := http.Header{}
+	headers.Set("Device-Id", "legacy-device")
+	connection, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(httpServer.URL, "http")+"/v2/device", &websocket.DialOptions{HTTPHeader: headers})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.CloseNow()
+
+	legacy := []byte(`{"type":"hello","version":1,"transport":"websocket","audio_params":{"format":"opus","sample_rate":16000,"channels":1,"frame_duration":60}}`)
+	if err := connection.Write(ctx, websocket.MessageText, legacy); err != nil {
+		t.Fatal(err)
+	}
+	kind, data, err := connection.Read(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kind != websocket.MessageText {
+		t.Fatalf("response kind = %v, want text", kind)
+	}
+	envelope, err := protocol.Decode(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if envelope.Type != protocol.ProtocolErrorType {
+		t.Fatalf("response type = %q", envelope.Type)
+	}
+	payload, err := protocol.DecodePayload[protocol.ProtocolErrorPayload](envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if payload.Code != protocol.UnsupportedProtocolVersionCode {
+		t.Fatalf("error code = %q", payload.Code)
+	}
+	if service.hub.get("legacy-device") != nil {
+		t.Fatal("legacy client mutated the session hub")
+	}
+}
+
+func TestDuplicateCommandIsIdempotentAndConflictingReuseFails(t *testing.T) {
+	var acknowledgements atomic.Int32
+	s := &session{
+		id:          "session-1",
+		seenInbound: make(map[string]inboundRecord),
+		ackReminder: func(context.Context, int64) error {
+			acknowledgements.Add(1)
+			return nil
+		},
+	}
+	wire, err := protocol.Encode(protocol.AlarmAckType, protocol.Metadata{
+		MessageID: "command-1", SessionID: s.id,
+	}, protocol.AlarmAckPayload{AlarmID: "reminder-42"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.handleControl(context.Background(), wire); err != nil {
+		t.Fatal(err)
+	}
+	reordered := []byte(`{"payload":{"alarm_id":"reminder-42"},"session_id":"session-1","message_id":"command-1","type":"alarm.ack","version":2}`)
+	if err := s.handleControl(context.Background(), reordered); err != nil {
+		t.Fatal(err)
+	}
+	if got := acknowledgements.Load(); got != 1 {
+		t.Fatalf("acknowledgements = %d, want 1", got)
+	}
+
+	conflict, err := protocol.Encode(protocol.AlarmAckType, protocol.Metadata{
+		MessageID: "command-1", SessionID: s.id,
+	}, protocol.AlarmAckPayload{AlarmID: "reminder-43"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.handleControl(context.Background(), conflict); err == nil || !strings.Contains(err.Error(), "reused with different content") {
+		t.Fatalf("conflicting message ID error = %v", err)
+	}
+	if got := acknowledgements.Load(); got != 1 {
+		t.Fatalf("conflicting command mutated state: acknowledgements = %d", got)
+	}
+}
+
+func TestKnownTypeInWrongDirectionIsInvalidEnvelope(t *testing.T) {
+	s := &session{id: "session-1", seenInbound: make(map[string]inboundRecord)}
+	wire, err := protocol.Encode(protocol.AgentStatusType, protocol.Metadata{
+		MessageID: "server-only-1", SessionID: s.id,
+	}, protocol.AgentStatusPayload{State: "thinking"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = s.handleControl(context.Background(), wire)
+	if got := protocol.ErrorCode(err); got != protocol.InvalidEnvelopeCode {
+		t.Fatalf("wrong-direction error code = %q, want %q: %v", got, protocol.InvalidEnvelopeCode, err)
+	}
 }
 
 type ackSignalRepo struct {
@@ -181,7 +440,7 @@ func TestReminderSchedulerPushesAlarmToTargetDevice(t *testing.T) {
 	defer httpServer.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	url := "ws" + strings.TrimPrefix(httpServer.URL, "http") + "/v1/device"
+	url := "ws" + strings.TrimPrefix(httpServer.URL, "http") + "/v2/device"
 	headers := http.Header{}
 	headers.Set("Device-Id", "device-test")
 	connection, _, err := websocket.Dial(ctx, url, &websocket.DialOptions{HTTPHeader: headers})
@@ -190,11 +449,11 @@ func TestReminderSchedulerPushesAlarmToTargetDevice(t *testing.T) {
 	}
 	defer connection.Close(websocket.StatusNormalClosure, "test done")
 	audio := protocol.DefaultAudioParams()
-	writeJSON(t, ctx, connection, protocol.Message{Type: "hello", Version: protocol.Version, Transport: protocol.Transport, AudioParams: &audio})
+	writeJSON(t, ctx, connection, testEnvelope{Type: protocol.SessionHelloType, Version: protocol.Version, Transport: protocol.Transport, AudioParams: &audio})
 	_ = readJSON(t, ctx, connection)
 
-	var alarm protocol.Message
-	for alarm.Type != "alarm" {
+	var alarm testEnvelope
+	for alarm.Type != protocol.AlarmFiredType {
 		kind, payload, err := connection.Read(ctx)
 		if err != nil {
 			t.Fatal(err)
@@ -209,7 +468,7 @@ func TestReminderSchedulerPushesAlarmToTargetDevice(t *testing.T) {
 	if alarm.Message != "Het gio 30 phut" || alarm.ID == "" {
 		t.Fatalf("alarm = %+v", alarm)
 	}
-	writeJSON(t, ctx, connection, protocol.Message{Type: "alarm_ack", ID: alarm.ID})
+	writeJSON(t, ctx, connection, testEnvelope{Type: protocol.AlarmAckType, SessionID: alarm.SessionID, ID: alarm.ID})
 	select {
 	case <-repo.acked:
 	case <-ctx.Done():
@@ -300,17 +559,17 @@ func TestExpenseBudgetFullE2EThroughQwenRegistryAndUI(t *testing.T) {
 	defer cancel()
 	headers := http.Header{}
 	headers.Set("Device-Id", "device-expense-e2e")
-	connection, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(httpServer.URL, "http")+"/v1/device", &websocket.DialOptions{HTTPHeader: headers})
+	connection, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(httpServer.URL, "http")+"/v2/device", &websocket.DialOptions{HTTPHeader: headers})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer connection.Close(websocket.StatusNormalClosure, "test done")
 
 	audio := protocol.DefaultAudioParams()
-	writeJSON(t, ctx, connection, protocol.Message{Type: "hello", Version: protocol.Version, Transport: protocol.Transport, AudioParams: &audio})
+	writeJSON(t, ctx, connection, testEnvelope{Type: protocol.SessionHelloType, Version: protocol.Version, Transport: protocol.Transport, AudioParams: &audio})
 	hello := readJSON(t, ctx, connection)
 	turnID := "turn-expense-e2e"
-	writeJSON(t, ctx, connection, protocol.Message{Type: "listen", State: "start", Mode: "manual", SessionID: hello.SessionID, TurnID: turnID})
+	writeJSON(t, ctx, connection, testEnvelope{Type: protocol.TurnListenType, State: "start", Mode: "manual", SessionID: hello.SessionID, TurnID: turnID})
 	encoder, err := opus.NewEncoder(protocol.UplinkSampleRate, 1, opus.AppVoIP)
 	if err != nil {
 		t.Fatal(err)
@@ -323,7 +582,7 @@ func TestExpenseBudgetFullE2EThroughQwenRegistryAndUI(t *testing.T) {
 	if err := connection.Write(ctx, websocket.MessageBinary, packet[:n]); err != nil {
 		t.Fatal(err)
 	}
-	writeJSON(t, ctx, connection, protocol.Message{Type: "listen", State: "stop", SessionID: hello.SessionID, TurnID: turnID})
+	writeJSON(t, ctx, connection, testEnvelope{Type: protocol.TurnListenType, State: "stop", SessionID: hello.SessionID, TurnID: turnID})
 
 	gotUI, gotAnswer, gotStop := false, false, false
 	binaryFrames := 0
@@ -336,18 +595,18 @@ func TestExpenseBudgetFullE2EThroughQwenRegistryAndUI(t *testing.T) {
 			binaryFrames++
 			continue
 		}
-		var message protocol.Message
+		var message testEnvelope
 		if err := json.Unmarshal(raw, &message); err != nil {
 			t.Fatal(err)
 		}
 		switch {
-		case message.Type == "ui":
+		case message.Type == protocol.UICardType:
 			ui, ok := message.UI.(map[string]any)
 			progress, progressOK := ui["progress"].(float64)
 			gotUI = ok && progressOK && ui["kind"] == "expense_summary" && int(progress) == 25
-		case message.Type == "tts" && message.State == "sentence_start":
+		case message.Type == protocol.TTSLifecycleType && message.State == "sentence_start":
 			gotAnswer = strings.Contains(message.Text, "250 nghìn") && strings.Contains(message.Text, "750 nghìn")
-		case message.Type == "tts" && message.State == "stop":
+		case message.Type == protocol.TTSLifecycleType && message.State == "stop":
 			gotStop = true
 		}
 	}
@@ -449,17 +708,17 @@ func TestStreamingAgentStartsTTSBeforeModelFinishes(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(ts.URL, "http")+"/v1/device", nil)
+	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(ts.URL, "http")+"/v2/device", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "done")
 
 	audio := protocol.DefaultAudioParams()
-	writeJSON(t, ctx, conn, protocol.Message{Type: "hello", Version: protocol.Version, Transport: protocol.Transport, AudioParams: &audio})
+	writeJSON(t, ctx, conn, testEnvelope{Type: protocol.SessionHelloType, Version: protocol.Version, Transport: protocol.Transport, AudioParams: &audio})
 	hello := readJSON(t, ctx, conn)
 	turnID := "stream-before-finish"
-	writeJSON(t, ctx, conn, protocol.Message{Type: "listen", State: "start", SessionID: hello.SessionID, TurnID: turnID})
+	writeJSON(t, ctx, conn, testEnvelope{Type: protocol.TurnListenType, State: "start", SessionID: hello.SessionID, TurnID: turnID})
 	encoder, err := opus.NewEncoder(protocol.UplinkSampleRate, 1, opus.AppVoIP)
 	if err != nil {
 		t.Fatal(err)
@@ -472,7 +731,7 @@ func TestStreamingAgentStartsTTSBeforeModelFinishes(t *testing.T) {
 	if err := conn.Write(ctx, websocket.MessageBinary, packet[:n]); err != nil {
 		t.Fatal(err)
 	}
-	writeJSON(t, ctx, conn, protocol.Message{Type: "listen", State: "stop", SessionID: hello.SessionID, TurnID: turnID})
+	writeJSON(t, ctx, conn, testEnvelope{Type: protocol.TurnListenType, State: "stop", SessionID: hello.SessionID, TurnID: turnID})
 
 	firstSentence := false
 	firstAudio := false
@@ -487,11 +746,11 @@ func TestStreamingAgentStartsTTSBeforeModelFinishes(t *testing.T) {
 			firstAudio = true
 			continue
 		}
-		var msg protocol.Message
+		var msg testEnvelope
 		if err := json.Unmarshal(raw, &msg); err != nil {
 			t.Fatal(err)
 		}
-		if msg.Type == "tts" && msg.State == "sentence_start" && msg.Text == "Xin chào bạn," {
+		if msg.Type == protocol.TTSLifecycleType && msg.State == "sentence_start" && msg.Text == "Xin chào bạn," {
 			firstSentence = true
 			// If the server had waited for the full model response, this message
 			// could never arrive because the model is blocked on continueCh.
@@ -500,7 +759,7 @@ func TestStreamingAgentStartsTTSBeforeModelFinishes(t *testing.T) {
 				continued = true
 			}
 		}
-		if msg.Type == "tts" && msg.State == "stop" {
+		if msg.Type == protocol.TTSLifecycleType && msg.State == "stop" {
 			gotStop = true
 		}
 	}
@@ -553,13 +812,13 @@ func TestTurnMediaLifecycleSharesFIFOWithAudio(t *testing.T) {
 	current := &turn{id: "turn-3", ctx: turnCtx, cancel: turnCancel, generation: 3}
 	s.active = current
 
-	if err := s.sendTurnMediaJSON(ctx, current, protocol.Message{Type: "tts", State: "start", TurnID: current.id}); err != nil {
+	if err := s.sendTurnMediaJSON(ctx, current, protocol.TTSLifecycleType, protocol.TTSLifecyclePayload{State: "start"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.sendTurn(ctx, current, outbound{kind: websocket.MessageBinary, data: []byte{1}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.sendTurnMediaJSON(ctx, current, protocol.Message{Type: "tts", State: "stop", TurnID: current.id}); err != nil {
+	if err := s.sendTurnMediaJSON(ctx, current, protocol.TTSLifecycleType, protocol.TTSLifecyclePayload{State: "stop"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -567,11 +826,11 @@ func TestTurnMediaLifecycleSharesFIFOWithAudio(t *testing.T) {
 	if startMessage.kind != websocket.MessageText {
 		t.Fatalf("first media item kind=%v, want text lifecycle event", startMessage.kind)
 	}
-	var startControl protocol.Message
+	var startControl testEnvelope
 	if err := json.Unmarshal(startMessage.data, &startControl); err != nil {
 		t.Fatal(err)
 	}
-	if startControl.Type != "tts" || startControl.State != "start" {
+	if startControl.Type != protocol.TTSLifecycleType || startControl.State != "start" {
 		t.Fatalf("first media control=%+v, want tts start", startControl)
 	}
 
@@ -584,11 +843,11 @@ func TestTurnMediaLifecycleSharesFIFOWithAudio(t *testing.T) {
 	if stopMessage.kind != websocket.MessageText {
 		t.Fatalf("third media item kind=%v, want text lifecycle event", stopMessage.kind)
 	}
-	var stopControl protocol.Message
+	var stopControl testEnvelope
 	if err := json.Unmarshal(stopMessage.data, &stopControl); err != nil {
 		t.Fatal(err)
 	}
-	if stopControl.Type != "tts" || stopControl.State != "stop" {
+	if stopControl.Type != protocol.TTSLifecycleType || stopControl.State != "stop" {
 		t.Fatalf("third media control=%+v, want tts stop", stopControl)
 	}
 }
@@ -607,7 +866,7 @@ func TestTurnMediaControlWaitsForTransientQueueCapacity(t *testing.T) {
 	s.mediaWrites <- outbound{kind: websocket.MessageBinary, data: []byte{1}, turnScoped: true, generation: 5}
 	done := make(chan error, 1)
 	go func() {
-		done <- s.sendTurnMediaJSON(ctx, current, protocol.Message{Type: "tts", State: "stop", TurnID: current.id})
+		done <- s.sendTurnMediaJSON(ctx, current, protocol.TTSLifecycleType, protocol.TTSLifecyclePayload{State: "stop"})
 	}()
 
 	select {

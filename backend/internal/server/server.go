@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"companion-server/internal/capability"
@@ -139,7 +141,7 @@ func (s *Server) Handler() http.Handler {
 		writer.WriteHeader(http.StatusOK)
 		writer.Write([]byte("ok"))
 	})
-	mux.HandleFunc("GET /v1/device", s.handleDevice)
+	mux.HandleFunc("GET /v2/device", s.handleDevice)
 	if s.firmware != nil {
 		mux.HandleFunc("GET /v1/ota", s.handleOTAGet)
 	}
@@ -202,7 +204,7 @@ func (s *Server) handleDevice(writer http.ResponseWriter, request *http.Request)
 		s.logger.Warn("websocket accept failed", "error", err)
 		return
 	}
-	connection.SetReadLimit(protocol.MaximumOpusPacketBytes)
+	connection.SetReadLimit(protocol.MaximumEnvelopeBytes)
 	identity := s.identityResolver.Resolve(request, authenticated.DeviceID)
 	if s.deviceAuth != nil {
 		// In database-auth mode ownership/tenant/plan are trusted enrollment claims,
@@ -264,6 +266,14 @@ type session struct {
 	generation    uint64
 	codec         pipeline.AudioCodec
 	controlPlane  *controlplane.Service
+	messageSeq    atomic.Uint64
+	seenInbound   map[string]inboundRecord
+	seenOrder     []string
+}
+
+type inboundRecord struct {
+	digest  [sha256.Size]byte
+	outcome error
 }
 
 func newSession(connection *websocket.Conn, components pipeline.Components, hub *sessionHub, deviceID, userID, threadID, tenantID, plan string, ack func(context.Context, int64) error, control *controlplane.Service, logger *slog.Logger) (*session, error) {
@@ -303,6 +313,7 @@ func newSession(connection *websocket.Conn, components pipeline.Components, hub 
 		mediaWrites:   make(chan outbound, maximumMediaQueue),
 		codec:         codec,
 		controlPlane:  control,
+		seenInbound:   make(map[string]inboundRecord),
 	}, nil
 }
 
@@ -324,16 +335,22 @@ func (s *session) run(parent context.Context) error {
 	if kind != websocket.MessageText {
 		return fmt.Errorf("hello must be a text message")
 	}
-	var hello protocol.Message
-	if err := json.Unmarshal(data, &hello); err != nil {
+	hello, err := protocol.Decode(data)
+	if err != nil {
+		_ = s.writeHandshakeError(ctx, protocol.ErrorCode(err), err.Error(), "")
 		return fmt.Errorf("decode hello: %w", err)
 	}
-	if err := protocol.ValidateHello(hello); err != nil {
-		s.sendError(ctx, "unsupported_hello", err.Error(), "")
+	helloPayload, err := protocol.DecodePayload[protocol.HelloPayload](hello)
+	if err != nil {
+		_ = s.writeHandshakeError(ctx, protocol.ErrorCode(err), err.Error(), hello.MessageID)
+		return fmt.Errorf("decode hello payload: %w", err)
+	}
+	if err := protocol.ValidateHello(hello, helloPayload); err != nil {
+		_ = s.writeHandshakeError(ctx, protocol.InvalidEnvelopeCode, err.Error(), hello.MessageID)
 		return err
 	}
 	audio := protocol.DownlinkAudioParams()
-	response := protocol.Message{Type: "hello", Version: protocol.Version, Transport: protocol.Transport, SessionID: s.id, AudioParams: &audio}
+	response := protocol.ReadyPayload{Transport: protocol.Transport, AudioParams: audio}
 	if s.controlPlane != nil {
 		if twin, e := s.controlPlane.ManifestFor(ctx, controlplane.ResolutionContext{UserID: s.userID, DeviceID: s.deviceID, TenantID: s.tenantID, Plan: s.plan}); e == nil {
 			c := protocolConfig(twin.Desired)
@@ -341,7 +358,7 @@ func (s *session) run(parent context.Context) error {
 			response.ConfigVersion = twin.DesiredVersion
 		}
 	}
-	if err := s.sendJSON(ctx, response); err != nil {
+	if err := s.sendJSONMeta(ctx, protocol.SessionReadyType, protocol.Metadata{CorrelationID: hello.MessageID}, response); err != nil {
 		return err
 	}
 	if s.hub != nil {
@@ -370,7 +387,7 @@ func (s *session) readLoop(ctx context.Context) error {
 		switch kind {
 		case websocket.MessageText:
 			if err := s.handleControl(ctx, data); err != nil {
-				s.sendError(ctx, "invalid_message", err.Error(), "")
+				s.sendError(ctx, protocol.ErrorCode(err), err.Error(), "")
 			}
 		case websocket.MessageBinary:
 			if err := s.handleAudio(data); err != nil {
@@ -421,48 +438,72 @@ func (s *session) writeLoop(ctx context.Context) error {
 }
 
 func (s *session) handleControl(ctx context.Context, data []byte) error {
-	var message protocol.Message
-	if err := json.Unmarshal(data, &message); err != nil {
+	message, err := protocol.Decode(data)
+	if err != nil {
 		return fmt.Errorf("decode control message: %w", err)
 	}
-	if message.SessionID != "" && message.SessionID != s.id {
+	if message.SessionID != s.id {
 		return fmt.Errorf("session_id does not match")
 	}
 	switch message.Type {
-	case "listen":
-		switch message.State {
-		case "start":
-			return s.startTurn(ctx, message.TurnID)
-		case "stop":
-			return s.stopTurn(message.TurnID)
-		default:
-			return fmt.Errorf("unsupported listen state %q", message.State)
-		}
-	case "abort":
-		s.interruptActive(ctx, "client_abort")
-		return nil
-	case "alarm_ack":
-		if s.ackReminder == nil {
-			return fmt.Errorf("alarm acknowledgement is unavailable")
-		}
-		id, err := parseAlarmID(message.ID)
+	case protocol.TurnListenType:
+		payload, err := protocol.DecodePayload[protocol.ListenPayload](message)
 		if err != nil {
 			return err
 		}
-		return s.ackReminder(ctx, id)
-	case "config_report":
-		if s.controlPlane == nil || message.Config == nil {
+		return s.processInbound(message.MessageID, data, func() error {
+			switch payload.State {
+			case "start":
+				return s.startTurn(ctx, message.TurnID)
+			case "stop":
+				return s.stopTurn(message.TurnID)
+			default:
+				return fmt.Errorf("unsupported listen state %q", payload.State)
+			}
+		})
+	case protocol.TurnAbortType:
+		if _, err := protocol.DecodePayload[protocol.AbortPayload](message); err != nil {
+			return err
+		}
+		return s.processInbound(message.MessageID, data, func() error {
+			s.interruptActive(ctx, "client_abort")
+			return nil
+		})
+	case protocol.AlarmAckType:
+		if s.ackReminder == nil {
+			return fmt.Errorf("alarm acknowledgement is unavailable")
+		}
+		payload, err := protocol.DecodePayload[protocol.AlarmAckPayload](message)
+		if err != nil {
+			return err
+		}
+		id, err := parseAlarmID(payload.AlarmID)
+		if err != nil {
+			return err
+		}
+		return s.processInbound(message.MessageID, data, func() error { return s.ackReminder(ctx, id) })
+	case protocol.ConfigReportType:
+		if s.controlPlane == nil {
 			return fmt.Errorf("config reporting unavailable")
 		}
-		if !message.Applied {
-			s.logger.Warn("device rejected runtime config", "device_id", s.deviceID, "version", message.ConfigVersion)
-			return nil
+		payload, err := protocol.DecodePayload[protocol.ConfigReportPayload](message)
+		if err != nil {
+			return err
 		}
-		return s.controlPlane.Report(ctx, s.userID, s.deviceID, message.ConfigVersion, controlConfig(*message.Config))
-	case "ping":
-		return s.sendJSON(ctx, protocol.Message{Type: "pong", SessionID: s.id})
+		return s.processInbound(message.MessageID, data, func() error {
+			if !payload.Applied {
+				s.logger.Warn("device rejected runtime config", "device_id", s.deviceID, "version", payload.ConfigVersion)
+				return nil
+			}
+			return s.controlPlane.Report(ctx, s.userID, s.deviceID, payload.ConfigVersion, controlConfig(payload.Config))
+		})
+	case protocol.SessionPingType:
+		if _, err := protocol.DecodePayload[protocol.EmptyPayload](message); err != nil {
+			return err
+		}
+		return s.sendJSONMeta(ctx, protocol.SessionPongType, protocol.Metadata{CorrelationID: message.MessageID}, protocol.EmptyPayload{})
 	default:
-		return fmt.Errorf("unsupported message type %q", message.Type)
+		return &protocol.ProtocolError{Code: protocol.InvalidEnvelopeCode, Detail: fmt.Sprintf("message type %q is invalid in this direction", message.Type)}
 	}
 }
 
@@ -491,10 +532,9 @@ func (s *session) startTurn(parent context.Context, turnID string) error {
 		// This terminal notification is intentionally not generation-scoped: it
 		// must survive invalidation of the old turn and tell the device to drop
 		// any already-buffered playback immediately.
-		_ = s.sendJSON(parent, protocol.Message{
-			Type: "turn", State: "interrupted", SessionID: s.id,
-			TurnID: interrupted.id, GenerationID: interrupted.generation, Reason: "barge_in",
-		})
+		_ = s.sendJSONMeta(parent, protocol.TurnStateType, protocol.Metadata{
+			TurnID: interrupted.id, GenerationID: interrupted.generation,
+		}, protocol.TurnStatePayload{State: "interrupted", Reason: "barge_in"})
 	}
 	return nil
 }
@@ -559,9 +599,7 @@ func (s *session) processTurn(current *turn, pcm []byte) {
 	if !s.isCurrent(current) {
 		return
 	}
-	s.sendTurnJSON(current.ctx, current, protocol.Message{
-		Type: "stt", SessionID: s.id, TurnID: current.id, Text: transcript,
-	})
+	s.sendTurnJSON(current.ctx, current, protocol.TranscriptFinalType, protocol.TextPayload{Text: transcript})
 
 	runtimeTurn.Transcript = transcript
 	runtimeTurn.PCM16Mono = pcm
@@ -572,7 +610,7 @@ func (s *session) processTurn(current *turn, pcm []byte) {
 	agentStarted := time.Now()
 	earlyUI := false
 	agentCtx = capability.WithPresentationSink(agentCtx, func(p capability.Presentation) {
-		if sendErr := s.sendTurnJSON(current.ctx, current, protocol.Message{Type: "ui", SessionID: s.id, TurnID: current.id, UI: &pipeline.UICard{Kind: p.Kind, Title: p.Title, Primary: p.Primary, Secondary: p.Secondary, Progress: p.Progress}}); sendErr == nil {
+		if sendErr := s.sendTurnJSON(current.ctx, current, protocol.UICardType, protocol.UICardPayload{UI: &pipeline.UICard{Kind: p.Kind, Title: p.Title, Primary: p.Primary, Secondary: p.Secondary, Progress: p.Progress}}); sendErr == nil {
 			earlyUI = true
 		}
 	})
@@ -612,20 +650,16 @@ func (s *session) processTurn(current *turn, pcm []byte) {
 	}
 	s.setTurnState(current, "speaking")
 	if ui != nil && !earlyUI {
-		if err := s.sendTurnJSON(current.ctx, current, protocol.Message{Type: "ui", SessionID: s.id, TurnID: current.id, UI: ui}); err != nil {
+		if err := s.sendTurnJSON(current.ctx, current, protocol.UICardType, protocol.UICardPayload{UI: ui}); err != nil {
 			s.failTurn(current, "control_write_failed", err)
 			return
 		}
 	}
-	if err := s.sendTurnMediaJSON(current.ctx, current, protocol.Message{
-		Type: "tts", State: "start", SessionID: s.id, TurnID: current.id,
-	}); err != nil {
+	if err := s.sendTurnMediaJSON(current.ctx, current, protocol.TTSLifecycleType, protocol.TTSLifecyclePayload{State: "start"}); err != nil {
 		s.failTurn(current, "media_write_failed", err)
 		return
 	}
-	if err := s.sendTurnMediaJSON(current.ctx, current, protocol.Message{
-		Type: "tts", State: "sentence_start", SessionID: s.id, TurnID: current.id, Text: reply,
-	}); err != nil {
+	if err := s.sendTurnMediaJSON(current.ctx, current, protocol.TTSLifecycleType, protocol.TTSLifecyclePayload{State: "sentence_start", Text: reply}); err != nil {
 		s.failTurn(current, "media_write_failed", err)
 		return
 	}
@@ -646,9 +680,7 @@ func (s *session) processTurn(current *turn, pcm []byte) {
 	if !s.isCurrent(current) {
 		return
 	}
-	if err := s.sendTurnMediaJSON(current.ctx, current, protocol.Message{
-		Type: "tts", State: "stop", SessionID: s.id, TurnID: current.id,
-	}); err != nil {
+	if err := s.sendTurnMediaJSON(current.ctx, current, protocol.TTSLifecycleType, protocol.TTSLifecyclePayload{State: "stop"}); err != nil {
 		s.failTurn(current, "media_write_failed", err)
 		return
 	}
@@ -697,10 +729,9 @@ func (s *session) interruptActive(ctx context.Context, reason string) {
 	}
 	s.mu.Unlock()
 	if current != nil {
-		_ = s.sendJSON(ctx, protocol.Message{
-			Type: "turn", State: "interrupted", SessionID: s.id, TurnID: current.id,
-			GenerationID: current.generation, Reason: reason,
-		})
+		_ = s.sendJSONMeta(ctx, protocol.TurnStateType, protocol.Metadata{
+			TurnID: current.id, GenerationID: current.generation,
+		}, protocol.TurnStatePayload{State: "interrupted", Reason: reason})
 	}
 }
 
@@ -726,17 +757,37 @@ func (s *session) failTurn(current *turn, code string, err error) {
 	s.mu.Unlock()
 }
 
-func (s *session) sendJSON(ctx context.Context, message protocol.Message) error {
-	data, err := json.Marshal(message)
+func (s *session) nextMessageID() string {
+	sequence := s.messageSeq.Add(1)
+	return s.id + "-" + strconv.FormatUint(sequence, 10)
+}
+
+func (s *session) encodeJSON(messageType protocol.MessageType, metadata protocol.Metadata, payload any) ([]byte, error) {
+	if metadata.MessageID == "" {
+		metadata.MessageID = s.nextMessageID()
+	}
+	if metadata.SessionID == "" {
+		metadata.SessionID = s.id
+	}
+	return protocol.Encode(messageType, metadata, payload)
+}
+
+func (s *session) sendJSON(ctx context.Context, messageType protocol.MessageType, payload any) error {
+	return s.sendJSONMeta(ctx, messageType, protocol.Metadata{}, payload)
+}
+
+func (s *session) sendJSONMeta(ctx context.Context, messageType protocol.MessageType, metadata protocol.Metadata, payload any) error {
+	data, err := s.encodeJSON(messageType, metadata, payload)
 	if err != nil {
 		return err
 	}
 	return s.send(ctx, outbound{kind: websocket.MessageText, data: data})
 }
 
-func (s *session) sendTurnJSON(ctx context.Context, current *turn, message protocol.Message) error {
-	message.GenerationID = current.generation
-	data, err := json.Marshal(message)
+func (s *session) sendTurnJSON(ctx context.Context, current *turn, messageType protocol.MessageType, payload any) error {
+	data, err := s.encodeJSON(messageType, protocol.Metadata{
+		TurnID: current.id, GenerationID: current.generation,
+	}, payload)
 	if err != nil {
 		return err
 	}
@@ -753,12 +804,13 @@ func (s *session) sendTurn(ctx context.Context, current *turn, message outbound)
 // FIFO lane as its audio frames. Urgent control messages keep their separate
 // priority lane, while media causality is explicit rather than dependent on
 // scheduler timing across two queues.
-func (s *session) sendTurnMediaJSON(ctx context.Context, current *turn, message protocol.Message) error {
+func (s *session) sendTurnMediaJSON(ctx context.Context, current *turn, messageType protocol.MessageType, payload any) error {
 	if current == nil {
 		return fmt.Errorf("turn is required")
 	}
-	message.GenerationID = current.generation
-	data, err := json.Marshal(message)
+	data, err := s.encodeJSON(messageType, protocol.Metadata{
+		TurnID: current.id, GenerationID: current.generation,
+	}, payload)
 	if err != nil {
 		return err
 	}
@@ -777,15 +829,57 @@ func (s *session) sendTurnMediaJSON(ctx context.Context, current *turn, message 
 }
 
 func (s *session) sendTurnError(ctx context.Context, current *turn, code, message string) {
-	_ = s.sendTurnJSON(ctx, current, protocol.Message{
-		Type: "error", Code: code, Text: message, SessionID: s.id, TurnID: current.id,
-	})
+	_ = s.sendTurnJSON(ctx, current, protocol.ProtocolErrorType, protocol.ProtocolErrorPayload{Code: code, Message: message})
 }
 
 func (s *session) sendError(ctx context.Context, code, message, turnID string) {
-	s.sendJSON(ctx, protocol.Message{
-		Type: "error", Code: code, Text: message, SessionID: s.id, TurnID: turnID,
-	})
+	_ = s.sendJSONMeta(ctx, protocol.ProtocolErrorType, protocol.Metadata{TurnID: turnID}, protocol.ProtocolErrorPayload{Code: code, Message: message})
+}
+
+func (s *session) writeHandshakeError(ctx context.Context, code, message, correlationID string) error {
+	data, err := s.encodeJSON(protocol.ProtocolErrorType, protocol.Metadata{CorrelationID: correlationID}, protocol.ProtocolErrorPayload{Code: code, Message: message})
+	if err != nil {
+		return err
+	}
+	writeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	return s.connection.Write(writeCtx, websocket.MessageText, data)
+}
+
+func (s *session) processInbound(messageID string, data []byte, action func() error) error {
+	var value any
+	if err := json.Unmarshal(data, &value); err != nil {
+		return fmt.Errorf("canonicalize message: %w", err)
+	}
+	canonical, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Errorf("canonicalize message: %w", err)
+	}
+	digest := sha256.Sum256(canonical)
+	if s.seenInbound == nil {
+		s.seenInbound = make(map[string]inboundRecord)
+	}
+	if previous, exists := s.seenInbound[messageID]; exists {
+		if previous.digest != digest {
+			return &protocol.ProtocolError{Code: protocol.InvalidEnvelopeCode, Detail: fmt.Sprintf("message_id %q was reused with different content", messageID)}
+		}
+		return previous.outcome
+	}
+	outcome := action()
+	if outcome != nil {
+		// Failed actions are not replay records: transient pre-commit failures
+		// must be retryable with the same message_id in the live session.
+		return outcome
+	}
+	const maximumRememberedMessages = 256
+	if len(s.seenOrder) == maximumRememberedMessages {
+		delete(s.seenInbound, s.seenOrder[0])
+		copy(s.seenOrder, s.seenOrder[1:])
+		s.seenOrder = s.seenOrder[:maximumRememberedMessages-1]
+	}
+	s.seenInbound[messageID] = inboundRecord{digest: digest}
+	s.seenOrder = append(s.seenOrder, messageID)
+	return nil
 }
 
 func (s *session) send(ctx context.Context, message outbound) error {
@@ -852,7 +946,7 @@ func (s *Server) handleTwinPatch(w http.ResponseWriter, r *http.Request) {
 	}
 	if sess := s.hub.get(r.PathValue("deviceID")); sess != nil {
 		pc := protocolConfig(t.Desired)
-		_ = sess.sendJSON(r.Context(), protocol.Message{Type: "config", SessionID: sess.id, Config: &pc, ConfigVersion: t.DesiredVersion})
+		_ = sess.sendJSON(r.Context(), protocol.ConfigUpdateType, protocol.ConfigUpdatePayload{Config: pc, ConfigVersion: t.DesiredVersion})
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(t)
@@ -918,7 +1012,7 @@ func (s *Server) pushResolvedConfig(ctx context.Context, scopeType, scopeID stri
 		if t, e := s.controlPlane.ManifestFor(ctx, controlplane.ResolutionContext{UserID: id.UserID, DeviceID: id.DeviceID, TenantID: id.TenantID, Plan: id.Plan}); e == nil {
 			pc := protocolConfig(t.Desired)
 			for _, sess := range s.hub.targets(id.UserID, id.DeviceID) {
-				_ = sess.sendJSON(ctx, protocol.Message{Type: "config", SessionID: sess.id, Config: &pc, ConfigVersion: t.DesiredVersion})
+				_ = sess.sendJSON(ctx, protocol.ConfigUpdateType, protocol.ConfigUpdatePayload{Config: pc, ConfigVersion: t.DesiredVersion})
 			}
 		}
 	}

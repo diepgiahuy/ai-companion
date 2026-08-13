@@ -34,13 +34,13 @@ flowchart TD
 
 | State | Entry | Exit |
 |---|---|---|
-| connecting | boot/retry | protocol `hello` or failure |
+| connecting | boot/retry | protocol `session.ready` or failure |
 | ready | connected/reply/alarm drained | button press or idle timeout |
 | idle | ready inactivity | button press, alarm, backend disconnect |
 | listening | button starts mic + turn | button, Smart VAD silence, or 8 s timeout |
 | processing | capture stopped, ordered stop queued | `tts.start`, error, alarm queued, or barge-in |
 | speaking | playback started | PCM + DMA drained, or barge-in |
-| alarm | proactive `alarm` event | visible timeout or button press |
+| alarm | proactive `alarm.fired` event | visible timeout or button press |
 | error | port/protocol/empty-capture failure | button retry |
 
 Button barge-in in `processing` or `speaking` cancels the backend turn, clears

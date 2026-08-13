@@ -1,10 +1,14 @@
 #include "companion/app.hpp"
+#include "companion/wire_protocol.hpp"
 #include "companion/mock_backend.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cassert>
 #include <cstdint>
+#include <fstream>
 #include <iostream>
+#include <iterator>
 #include <span>
 #include <string>
 #include <utility>
@@ -98,6 +102,99 @@ struct SilentMicrophone final : Microphone {
   size_t read_capture(std::span<int16_t>) override { return 0; }
   void stop_capture() override {}
 };
+
+std::string read_fixture(const char* relative_path) {
+  std::ifstream fixture(std::string(COMPANION_SOURCE_DIR) + "/" + relative_path,
+                        std::ios::binary);
+  assert(fixture.good());
+  return {std::istreambuf_iterator<char>(fixture), std::istreambuf_iterator<char>()};
+}
+
+void canonical_v2_envelope_matches_golden_fixture() {
+  std::array<char, 256> output{};
+  size_t written = 0;
+  const protocol::Envelope envelope{
+      .type = protocol::ControlType::session_hello,
+      .message_id = "firmware-1",
+      .payload_json =
+          "{\"transport\":\"websocket\",\"audio_params\":{"
+          "\"format\":\"opus\",\"sample_rate\":16000,"
+          "\"channels\":1,\"frame_duration\":60}}",
+      .correlation_id = {},
+      .session_id = {},
+      .turn_id = {},
+      .generation_id = 0,
+      .has_generation_id = false,
+      .idempotency_key = {},
+      .occurred_at = {},
+  };
+  assert(protocol::encode(envelope, output, written));
+  std::string expected = read_fixture("testdata/protocol/v2/session_hello.json");
+  while (!expected.empty() && (expected.back() == '\n' || expected.back() == '\r')) {
+    expected.pop_back();
+  }
+  assert(std::string_view(output.data(), written) == expected);
+
+  const protocol::Envelope escaped{
+      .type = protocol::ControlType::session_pong,
+      .message_id = "firmware-2\nquoted\"",
+      .payload_json = "{}",
+      .correlation_id = {},
+      .session_id = "session\\one",
+      .turn_id = {},
+      .generation_id = 0,
+      .has_generation_id = false,
+      .idempotency_key = {},
+      .occurred_at = {},
+  };
+  assert(protocol::encode(escaped, output, written));
+  assert(std::string_view(output.data(), written) ==
+         "{\"version\":2,\"type\":\"session.pong\",\"message_id\":"
+         "\"firmware-2\\nquoted\\\"\",\"session_id\":\"session\\\\one\","
+         "\"payload\":{}}");
+
+  const protocol::Envelope ordered{
+      .type = protocol::ControlType::turn_listen,
+      .message_id = "firmware-3",
+      .payload_json = "{\"state\":\"start\"}",
+      .correlation_id = "server-1",
+      .session_id = "session-1",
+      .turn_id = "turn-1",
+      .generation_id = 7,
+      .has_generation_id = true,
+      .idempotency_key = "idem-1",
+      .occurred_at = "2026-08-13T10:00:00Z",
+  };
+  assert(protocol::encode(ordered, output, written));
+  assert(std::string_view(output.data(), written) ==
+         "{\"version\":2,\"type\":\"turn.listen\",\"message_id\":\"firmware-3\","
+         "\"correlation_id\":\"server-1\",\"session_id\":\"session-1\","
+         "\"turn_id\":\"turn-1\",\"generation_id\":7,"
+         "\"idempotency_key\":\"idem-1\","
+         "\"occurred_at\":\"2026-08-13T10:00:00Z\","
+         "\"payload\":{\"state\":\"start\"}}");
+
+  std::array<char, 16> too_small{};
+  assert(!protocol::encode(envelope, too_small, written));
+  protocol::Envelope invalid_payload = envelope;
+  invalid_payload.payload_json = "{bad}";
+  assert(!protocol::encode(invalid_payload, output, written));
+  invalid_payload.payload_json = "{\"state\":}";
+  assert(!protocol::encode(invalid_payload, output, written));
+  invalid_payload.payload_json = "[]";
+  assert(!protocol::encode(invalid_payload, output, written));
+  invalid_payload.payload_json =
+      " { \"nested\": [true, false, null, -12.5e+2, {\"escaped\":\"\\u263a\"}] } ";
+  assert(protocol::encode(invalid_payload, output, written));
+  protocol::ControlType parsed{};
+  assert(protocol::parse_type("config.update", parsed));
+  assert(parsed == protocol::ControlType::config_update);
+  assert(protocol::parse_type("voice_mail.available", parsed));
+  assert(parsed == protocol::ControlType::voice_mail_available);
+  assert(protocol::parse_type("pairing.confirmation", parsed));
+  assert(parsed == protocol::ControlType::pairing_confirmation);
+  assert(!protocol::parse_type("config", parsed));
+}
 
 void connect(CompanionApp& app) {
   assert(app.start(0));
@@ -274,6 +371,7 @@ void runtime_config_is_versioned_and_last_known_good() {
 } // namespace
 
 int main() {
+  canonical_v2_envelope_matches_golden_fixture();
   conversation_happy_path();
   timeout_finishes_recording();
   silence_is_rejected();
@@ -281,5 +379,5 @@ int main() {
   smart_vad_finishes_after_speech_silence();
   idle_and_alarm_states_are_non_destructive();
   runtime_config_is_versioned_and_last_known_good();
-  std::cout << "PASS: streaming + timeout + silence + barge-in + smart VAD + idle/alarm + runtime-config\n";
+  std::cout << "PASS: protocol-v2 + streaming + timeout + silence + barge-in + smart VAD + idle/alarm + runtime-config\n";
 }

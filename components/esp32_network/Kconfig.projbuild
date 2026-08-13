@@ -21,7 +21,7 @@ config COMPANION_TZ_RULE
 
 config COMPANION_SERVER_URL
     string "Backend WebSocket URL"
-    default "ws://192.168.1.10:8000/v1/device"
+    default "ws://192.168.1.10:8000/v2/device"
     depends on COMPANION_USE_WEBSOCKET
 
 config COMPANION_DEVICE_TOKEN
