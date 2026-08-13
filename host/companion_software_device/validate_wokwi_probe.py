@@ -9,11 +9,12 @@ if data.get("schema_version") != 1 or data.get("evidence_class") != "tier2_capab
     raise SystemExit("Wokwi probe: invalid evidence identity")
 status = data.get("status")
 if status == "unavailable":
-    if data.get("blocker_code") != "missing_wokwi_cli_token":
-        raise SystemExit("Wokwi probe: unavailable result lacks exact token blocker")
+    blocker = data.get("blocker_code")
+    if blocker not in {"missing_wokwi_cli_token", "trusted_dispatch_required"}:
+        raise SystemExit("Wokwi probe: unavailable result lacks an approved exact blocker")
     if data.get("simulation_ran") is not False:
         raise SystemExit("Wokwi probe: unavailable result must not claim simulation")
-    print("WOKWI TIER-2 UNAVAILABLE: repository WOKWI_CLI_TOKEN is not available to this trusted workflow")
+    print(f"WOKWI TIER-2 UNAVAILABLE: {blocker}")
     raise SystemExit(0)
 if status == "token_available":
     if data.get("simulation_ran") is not False:
