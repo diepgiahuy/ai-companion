@@ -28,8 +28,7 @@ The table below distinguishes **implemented** from **production-proven**. A gree
 | Idempotency payload-conflict safety | ⚪ unproven | Same-key/different-payload conflict semantics not yet proven end-to-end |
 | PostgreSQL + Atlas/Ent + River | ⚪ unproven | Migration/job/backup/restart gates pending |
 | External MCP interoperability | ⚪ unproven | SDK bridge compiles; real external MCP contract test pending |
-| WebRTC real-network latency | ⚪ unproven | Must measure p50/p95 first-audio, loss recovery and barge-in |
-| Tier-1 headless software device | 🟡 partial | Real Go `/v2/device` + production `CompanionApp`/protocol v2; six core scenarios plus one deterministic agent→tool→SQLite mutation pass; no provider/physical promotion |
+| Tier-1 headless software device | 🟡 partial | Real Go `/v2/device` + production `CompanionApp`/protocol v2 + ADK Responses adapter; core scenarios, enrolled-auth lifecycle and representative expense/budget/note/journal/reminder/timer/memory mutations are deterministic orchestration gates; no provider/physical promotion |
 | Canonical protocol v2 | 🟡 partial | Backend, firmware and host share v2; Tier-1 proves v2 session/turn flow plus deterministic v1 rejection; physical-device evidence remains pending |
 | Wokwi targeted firmware simulation | ⛔ blocked | Trusted Actions probe records `UNAVAILABLE`: `WOKWI_CLI_TOKEN` is not configured; no simulation ran and no PASS is claimed |
 | Security default-deny | ⚪ unproven | Security hardening is active work; requires adversarial integration evidence |
@@ -43,16 +42,14 @@ The canonical structured status is [`evidence/status.json`](evidence/status.json
 The current `main` branch includes foundations for the next production stages without claiming the corresponding real-world gates:
 
 - **Versioned prompt bundle v4** — composable base/safety/persona/domain blocks, external override, fingerprinting for trace/eval/rollback.
-- **Typed runtime config** — LLM generation parameters and runtime profile are validated; production profile rejects mock-provider fallback.
-- **Semantic model routing** — embedding/prototype router replaces compiled `strings.Contains` keyword routing.
+- **Typed runtime config** — the runtime profile and live ADK settings are validated; production profile rejects mock providers and missing ADK model/base-URL fails startup.
 - **Typed UI state** — `thinking`, `speaking`, `tool_executing`, etc., with tool metadata for firmware rendering.
 - **Smart-turn primitives** — partial-transcript-aware turn detector and streaming-ASR contract; real ASR/VAD benchmark still pending.
 - **Destructive authorization hardening** — owner + exact tool + canonical args hash + expiry scope; keyword intent no longer grants destructive authority.
 - **Native MCP bridge** — official MCP Go SDK behind the Companion `ToolRegistry`/policy boundary, with endpoint validation and SSRF-safe defaults.
-- **WebRTC Opus bridge** — Pion WebRTC adapter in parallel with the existing WebSocket transport; latency target remains unproven until measured on real networks.
 - **Expanded GitHub CI/CD** — module lock, race/vet, govulncheck, CodeQL, evidence truth gate, dependency review capability detection, release provenance foundation.
 - **Physical HIL workflow** — fail-closed ESP-IDF build/flash/serial test using `pytest-embedded`; it never falls back to a mock result and runs only when a maintainer manually selects a trusted ref and explicit device port.
-- **Tier-1 headless software device** — production C++ `CompanionApp` + protocol v2 connect to real `companiond` through a host-only WebSocket/libopus adapter; the harness covers reconnect/barge-in/replay/config plus a deterministic production agent→tool→SQLite mutation, while all mock/fake-provider evidence remains `orchestration_only`.
+- **Tier-1 headless software device** — production C++ `CompanionApp` + protocol v2 connect to real `companiond` through a host-only WebSocket/libopus adapter; the harness covers reconnect/barge-in/replay/config, wrong/revoked device credentials, ADK tool loops, and representative authoritative mutations for expense/budget/note/journal/reminder/timer/memory. Deterministic providers remain `orchestration_only`.
 
 See merged PR #1 for the original implementation diff and deliberately unclaimed gates.
 
@@ -67,8 +64,7 @@ ESP32-S3
         │
         ▼
 Realtime transport
-  ├─ WebSocket (current v2 control + binary Opus transport)
-  └─ WebRTC / Opus (parallel foundation; real-network proof pending)
+  └─ WebSocket v2 (typed control + binary Opus; sole current product transport)
         │
         ▼
 Session / turn runtime
@@ -79,9 +75,9 @@ Session / turn runtime
         │
         ▼
 Agent runtime
-  ├─ legacy provider adapter
-  ├─ Google ADK anti-corruption layer
-  └─ future local/native realtime adapters
+  └─ Google ADK v2 anti-corruption layer
+       ├─ OpenAI Responses-compatible model adapter
+       └─ full public ToolRegistry adapters
         │
         ▼
 Capability + policy boundary
@@ -114,7 +110,6 @@ These are architecture contracts, not provider-specific shortcuts:
 - native tools/resources
 - MCP tools/resources
 - prompt bundle/version
-- model router
 
 Provider SDK types should not leak into domain/data packages.
 
@@ -143,8 +138,8 @@ make e2e-container
 # Exact backend quality gates used by CI
 cd backend
 go mod verify
-go vet -tags "adk,mcp,webrtc,nolibopusfile" ./...
-go test -tags "adk,mcp,webrtc,nolibopusfile" -race -count=1 ./...
+go vet -tags "adk,mcp,nolibopusfile" ./...
+go test -tags "adk,mcp,nolibopusfile" -race -count=1 ./...
 ```
 
 Additional CI workflows run evidence validation, module reproducibility, `govulncheck`, CodeQL and release/security checks. Passing these gates proves only their stated scope.
