@@ -1,0 +1,59 @@
+name: dependency-label-reconciler
+
+on:
+  issues:
+    types: [closed, reopened]
+  schedule:
+    - cron: '23 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: dependency-label-reconciler
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    name: Reconcile ready and blocked labels
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Recompute labels from GitHub-native blocked_by
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+
+          gh api --paginate "repos/${repo}/issues?state=open&per_page=100" \
+            --jq '.[] | select(.pull_request | not) | [.number, ([.labels[].name] | join(","))] | @tsv' |
+          while IFS=$'\t' read -r number labels; do
+            if [[ ",${labels}," == *",status:in-progress,"* ]]; then
+              continue
+            fi
+
+            open_blockers="$(
+              gh api "repos/${repo}/issues/${number}/dependencies/blocked_by" \
+                --jq '[.[] | select(.state != "closed")] | length'
+            )"
+
+            if [[ "$open_blockers" == "0" ]]; then
+              if [[ ",${labels}," == *",status:blocked,"* ]]; then
+                gh issue edit "$number" --repo "$repo" --remove-label 'status:blocked'
+              fi
+              if [[ ",${labels}," != *",status:ready,"* ]]; then
+                gh issue edit "$number" --repo "$repo" --add-label 'status:ready'
+              fi
+            else
+              if [[ ",${labels}," == *",status:ready,"* ]]; then
+                gh issue edit "$number" --repo "$repo" --remove-label 'status:ready'
+              fi
+              if [[ ",${labels}," != *",status:blocked,"* ]]; then
+                gh issue edit "$number" --repo "$repo" --add-label 'status:blocked'
+              fi
+            fi
+          done
