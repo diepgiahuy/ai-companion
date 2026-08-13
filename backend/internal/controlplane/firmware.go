@@ -14,26 +14,26 @@ type FirmwareRepository interface {
 	LatestFirmware(context.Context, string, string, int, int, time.Time) (FirmwareManifest, bool, error)
 }
 type FirmwareService struct {
-	repo             FirmwareRepository
-	publicKey        ed25519.PublicKey
-	requireSignature bool
-	now              func() time.Time
+	repo      FirmwareRepository
+	publicKey ed25519.PublicKey
+	now       func() time.Time
 }
 
-func NewFirmware(repo FirmwareRepository, publicKey ed25519.PublicKey, requireSignature bool) *FirmwareService {
-	return &FirmwareService{repo: repo, publicKey: publicKey, requireSignature: requireSignature, now: time.Now}
+// NewFirmware keeps the legacy boolean parameter only to avoid widening this
+// security cut into unrelated composition call sites. Production OTA is now
+// fail-closed unconditionally: unsigned manifests are never accepted or served.
+func NewFirmware(repo FirmwareRepository, publicKey ed25519.PublicKey, _ bool) *FirmwareService {
+	return &FirmwareService{repo: repo, publicKey: publicKey, now: time.Now}
 }
 func (s *FirmwareService) Publish(ctx context.Context, m FirmwareManifest) error {
 	if e := m.Validate(s.now()); e != nil {
 		return e
 	}
-	if s.requireSignature {
-		if len(s.publicKey) != ed25519.PublicKeySize {
-			return fmt.Errorf("OTA public key missing")
-		}
-		if !m.Verify(s.publicKey) {
-			return fmt.Errorf("firmware manifest signature invalid")
-		}
+	if len(s.publicKey) != ed25519.PublicKeySize {
+		return fmt.Errorf("OTA public key missing")
+	}
+	if !m.Verify(s.publicKey) {
+		return fmt.Errorf("firmware manifest signature invalid")
 	}
 	return s.repo.PutFirmware(ctx, m)
 }
@@ -48,7 +48,10 @@ func (s *FirmwareService) Latest(ctx context.Context, channel, board string, pro
 	if e := m.Validate(s.now()); e != nil {
 		return FirmwareManifest{}, false, e
 	}
-	if s.requireSignature && !m.Verify(s.publicKey) {
+	if len(s.publicKey) != ed25519.PublicKeySize {
+		return FirmwareManifest{}, false, fmt.Errorf("OTA public key missing")
+	}
+	if !m.Verify(s.publicKey) {
 		return FirmwareManifest{}, false, fmt.Errorf("stored firmware signature invalid")
 	}
 	return m, true, nil
