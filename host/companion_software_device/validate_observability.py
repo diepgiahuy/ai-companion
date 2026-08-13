@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 import json
+import re
 import sys
 from pathlib import Path
 
 path = Path(sys.argv[1])
 mode = sys.argv[2] if len(sys.argv) > 2 else "core"
 expected_tool = sys.argv[3] if len(sys.argv) > 3 else None
+pseudonym = re.compile(r"^c_[0-9a-f]{32}$")
 
 data = json.loads(path.read_text(encoding="utf-8"))
 if data.get("schema_version") != 1:
@@ -42,6 +44,10 @@ for event in events:
     correlation = event.get("correlation") or {}
     if not isinstance(correlation, dict):
         raise SystemExit("observability: correlation must be an object")
+    for key in ("session_id", "turn_id"):
+        value = correlation.get(key)
+        if value is not None and not pseudonym.fullmatch(value):
+            raise SystemExit(f"observability: {key} is not an ephemeral pseudonym: {value!r}")
 
 names = [event.get("name") for event in events]
 if mode == "core":
