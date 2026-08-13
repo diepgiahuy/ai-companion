@@ -125,16 +125,20 @@ func nativeTools(d NativeDependencies) []capability.Tool {
 				return capability.Failure(err)
 			}
 			items := make([]domain.ExpenseInput, 0, len(a.Items))
+			hashItems := make([]map[string]any, 0, len(a.Items))
 			var total int64
 			for i, x := range a.Items {
 				at, err := parseTime(x.OccurredAt, fmt.Sprintf("items[%d].occurred_at", i))
 				if err != nil {
 					return capability.Failure(err)
 				}
-				items = append(items, domain.ExpenseInput{AmountVND: x.AmountVND, Category: normalizeCategory(x.Category), Description: strings.TrimSpace(x.Description), OccurredAt: at})
+				category := normalizeCategory(x.Category)
+				description := strings.TrimSpace(x.Description)
+				items = append(items, domain.ExpenseInput{AmountVND: x.AmountVND, Category: category, Description: description, OccurredAt: at})
+				hashItems = append(hashItems, map[string]any{"amount_vnd": x.AmountVND, "category": category, "description": description, "occurred_at": at.UTC().Format(time.RFC3339Nano)})
 				total += x.AmountVND
 			}
-			request, err := durableMutationRequest(ctx, "expense.log", r.Key, items)
+			request, err := durableMutationRequest(ctx, "expense.log", r.Key, hashItems)
 			if err != nil {
 				return capability.Failure(err)
 			}

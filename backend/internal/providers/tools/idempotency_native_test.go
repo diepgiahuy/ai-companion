@@ -58,6 +58,42 @@ func TestTimerCreateDurableIdempotencyReplaysOriginalOutcomeAndConflicts(t *test
 	}
 }
 
+func TestExpenseLogCanonicalizesEquivalentTimeOffsets(t *testing.T) {
+	data, err := store.Open(filepath.Join(t.TempDir(), "expense-offset.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer data.Close()
+	registry := capability.NewToolRegistry()
+	if err := RegisterNative(registry, NativeDependencies{Store: data}); err != nil {
+		t.Fatal(err)
+	}
+	ctx := pipeline.WithTurnContext(context.Background(), pipeline.TurnContext{UserID: "user-a", TenantID: "tenant-a", DeviceID: "device-a"})
+
+	first := registry.Execute(ctx, "expense.log", capability.ToolRequest{Key: "expense-offset-key", Arguments: `{"items":[{"amount_vnd":50000,"category":"food","description":"lunch","occurred_at":"2030-01-01T15:00:00+07:00"}]}`})
+	if !strings.Contains(first.Content, `"ok":true`) {
+		t.Fatalf("first expense.log = %s", first.Content)
+	}
+	replayed := registry.Execute(ctx, "expense.log", capability.ToolRequest{Key: "expense-offset-key", Arguments: `{"items":[{"amount_vnd":50000,"category":"food","description":"lunch","occurred_at":"2030-01-01T08:00:00Z"}]}`})
+	if !strings.Contains(replayed.Content, `"ok":true`) {
+		t.Fatalf("equivalent-offset retry = %s", replayed.Content)
+	}
+	conflict := registry.Execute(ctx, "expense.log", capability.ToolRequest{Key: "expense-offset-key", Arguments: `{"items":[{"amount_vnd":60000,"category":"food","description":"lunch","occurred_at":"2030-01-01T08:00:00Z"}]}`})
+	if !strings.Contains(conflict.Content, "IDEMPOTENCY_CONFLICT") {
+		t.Fatalf("different-amount retry = %s", conflict.Content)
+	}
+
+	from := time.Date(2030, 1, 1, 7, 0, 0, 0, time.UTC)
+	to := time.Date(2030, 1, 1, 9, 0, 0, 0, time.UTC)
+	items, err := data.ListExpenses(ctx, "user-a", from, to, "", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].AmountVND != 50000 {
+		t.Fatalf("expenses = %+v; want one original 50000 VND row", items)
+	}
+}
+
 func TestDurableMutationRequiresAuthenticatedUserActor(t *testing.T) {
 	data, err := store.Open(filepath.Join(t.TempDir(), "actor.db"))
 	if err != nil {
