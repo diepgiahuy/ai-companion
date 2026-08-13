@@ -25,7 +25,14 @@ REAL_EVIDENCE_KINDS = {
     "fault_injection",
     "release_artifact",
 }
-MOCK_EVIDENCE_KINDS = {"mock", "fake_model", "stub", "simulated_provider"}
+NON_PRODUCTION_EVIDENCE_KINDS = {
+    "mock",
+    "fake_model",
+    "stub",
+    "simulated_provider",
+    "tier1_orchestration",
+    "wokwi_simulation",
+}
 
 
 def fail(message: str) -> None:
@@ -64,8 +71,8 @@ def main() -> None:
         if status == "passed":
             if not evidence:
                 problems.append(f"{name}: passed gate has no evidence")
-            if kinds & MOCK_EVIDENCE_KINDS:
-                problems.append(f"{name}: passed gate contains mock/fake evidence")
+            if kinds & NON_PRODUCTION_EVIDENCE_KINDS:
+                problems.append(f"{name}: passed gate contains non-production/mock/simulator evidence")
             if not (kinds & REAL_EVIDENCE_KINDS):
                 problems.append(f"{name}: passed gate has no recognized real evidence")
 
@@ -78,7 +85,7 @@ def main() -> None:
         raise SystemExit(1)
 
     passed = sum(1 for gate in gates.values() if gate.get("status") == "passed")
-    print(f"EVIDENCE PASS: {passed}/{len(gates)} gates currently passed; unproven gates are not promoted")
+    print(f"EVIDENCE PASS: {passed}/{len(gates)} gates currently passed; unproven/partial gates are not promoted")
 
 
 if __name__ == "__main__":
