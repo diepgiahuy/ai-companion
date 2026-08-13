@@ -7,9 +7,7 @@ import (
 	"companion-server/internal/domain"
 )
 
-// IdentityResolver keeps transport authentication/identity mapping replaceable.
-// The POC resolver accepts optional headers for tests and falls back to a configurable single-user owner plus a per-device thread.
-// Production should replace this with a resolver backed by enrolled device credentials.
+// IdentityResolver supplies conversation-scoped transport metadata. Authenticated owner, tenant, plan and device claims are always overwritten from the enrolled per-device credential before a session starts.
 type IdentityResolver interface {
 	Resolve(request *http.Request, deviceID string) domain.Identity
 }

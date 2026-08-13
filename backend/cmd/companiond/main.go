@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -14,9 +13,7 @@ import (
 	"time"
 
 	"companion-server/internal/adkbridge"
-	"companion-server/internal/agent"
 	"companion-server/internal/capability"
-	"companion-server/internal/contextengine"
 	"companion-server/internal/controlplane"
 	conversationctx "companion-server/internal/conversation"
 	"companion-server/internal/domain"
@@ -117,10 +114,8 @@ func main() {
 	featureCatalog := controlplane.NewFeatureCatalog(data)
 	seedFeatureCatalog(context.Background(), featureCatalog, logger)
 	var embedding memory.EmbeddingProvider = memory.HashEmbedding{Dimensions: 96}
-	realEmbedding := false
 	if base := os.Getenv("EMBEDDING_BASE_URL"); base != "" {
 		embedding = memory.OpenAIEmbedding{BaseURL: base, APIKey: os.Getenv("EMBEDDING_API_KEY"), Model: value("EMBEDDING_MODEL", "text-embedding"), Client: &http.Client{Timeout: 20 * time.Second}}
-		realEmbedding = true
 	}
 	memoryService := memory.New(data, embedding)
 	httpClient := &http.Client{Timeout: 8 * time.Second}
@@ -158,100 +153,46 @@ func main() {
 
 	monthlyLLMLimit, _ := strconv.ParseInt(value("COMPANION_MONTHLY_LLM_TOKEN_LIMIT", "0"), 10, 64)
 	usageGuard := usage.Guard{Reader: data, MonthlyLimit: monthlyLLMLimit}
-	agentRuntime := strings.ToLower(strings.TrimSpace(value("COMPANION_AGENT_RUNTIME", "legacy")))
-	switch agentRuntime {
-	case "mock":
-		if !runtimeCfg.AllowMock {
-			logger.Error("mock agent is disabled by runtime profile")
-			os.Exit(1)
-		}
-		components.Agent = pipeline.MockAgent{}
-		logger.Warn("using deterministic mock agent by configuration")
-	case "adk":
-		adkPrompt, err := promptBundle.Render(promptpkg.RenderInput{
-			Locale:      "vi-VN",
-			CurrentTime: time.Now().In(location),
-			Timezone:    timezone,
-			Persona:     runtimeCfg.LLM.Persona,
-			Packs:       []string{"expense", "budget", "schedule", "memory"},
-		})
-		if err != nil {
-			logger.Error("render ADK prompt", "error", err)
-			os.Exit(1)
-		}
-		adkAgent, err := adkbridge.New(adkbridge.Config{
-			AppName:       "companion",
-			ModelName:     value("ADK_MODEL", value("QWEN_MODEL", "Qwen/Qwen3-4B-Instruct-2507")),
-			BaseURL:       os.Getenv("ADK_OPENAI_BASE_URL"),
-			APIKey:        os.Getenv("ADK_OPENAI_API_KEY"),
-			Instruction:   adkPrompt.Text,
-			PromptVersion: adkPrompt.ID + "@" + adkPrompt.Version + "#" + adkPrompt.Fingerprint,
-			HTTPClient:    &http.Client{Timeout: runtimeCfg.LLM.HTTPTimeout},
-			Tools:         toolRegistry,
-			UsageGuard:    usageGuard,
-			UsageMeter:    data,
-		})
-		if err != nil {
-			logger.Error("initialize ADK runtime", "error", err, "hint", "build with -tags=adk; ADK_OPENAI_BASE_URL must expose the OpenAI Responses API for local-compatible providers")
-			os.Exit(1)
-		}
-		components.Agent = adkAgent
-		logger.Warn("ADK runtime is experimental until durable session/full-tool parity gates pass")
-	case "legacy":
-		qwenBaseURL := os.Getenv("QWEN_BASE_URL")
-		if qwenBaseURL == "" {
-			if !runtimeCfg.AllowMock {
-				logger.Error("QWEN_BASE_URL is required when mock providers are disabled")
-				os.Exit(1)
-			}
-			components.Agent = pipeline.MockAgent{}
-			logger.Warn("QWEN_BASE_URL is empty; using deterministic mock agent")
-			break
-		}
-		selector, err := buildModelSelector(runtimeCfg, embedding, realEmbedding)
-		if err != nil {
-			logger.Error("initialize model router", "error", err)
-			os.Exit(1)
-		}
-		qwen, err := agent.NewQwen(
-			qwenBaseURL,
-			os.Getenv("QWEN_API_KEY"),
-			value("QWEN_MODEL", "Qwen/Qwen3-4B-Instruct-2507"),
-			timezone,
-			data,
-			agent.WithConversation(conversationService),
-			agent.WithToolRegistry(toolRegistry),
-			agent.WithContextPlanner(contextengine.New(resourceRegistry)),
-			agent.WithUsageMeter(data),
-			agent.WithUsageGuard(usageGuard),
-			agent.WithPromptBundle(promptBundle),
-			agent.WithPersona(runtimeCfg.LLM.Persona),
-			agent.WithGenerationConfig(agent.GenerationConfig{
-				HTTPTimeout: runtimeCfg.LLM.HTTPTimeout, Temperature: runtimeCfg.LLM.Temperature,
-				MaxTokens: runtimeCfg.LLM.MaxTokens, MaxToolRounds: runtimeCfg.LLM.MaxToolRounds,
-			}),
-			agent.WithModelSelector(selector),
-		)
-		if err != nil {
-			logger.Error("initialize Qwen", "error", err)
-			os.Exit(1)
-		}
-		components.Agent = qwen
-	default:
-		logger.Error("unsupported COMPANION_AGENT_RUNTIME", "value", agentRuntime, "allowed", "legacy|adk|mock")
+	adkPrompt, err := promptBundle.Render(promptpkg.RenderInput{
+		Locale:      "vi-VN",
+		CurrentTime: time.Now().In(location),
+		Timezone:    timezone,
+		Persona:     runtimeCfg.LLM.Persona,
+		Packs:       []string{"expense", "budget", "schedule", "note", "journal", "memory", "market", "voice", "context"},
+	})
+	if err != nil {
+		logger.Error("render ADK prompt", "error", err)
 		os.Exit(1)
 	}
+	adkAgent, err := adkbridge.New(adkbridge.Config{
+		AppName:         "companion",
+		ModelName:       value("ADK_MODEL", "Qwen/Qwen3-4B-Instruct-2507"),
+		BaseURL:         os.Getenv("ADK_OPENAI_BASE_URL"),
+		APIKey:          os.Getenv("ADK_OPENAI_API_KEY"),
+		Instruction:     adkPrompt.Text,
+		PromptVersion:   adkPrompt.ID + "@" + adkPrompt.Version + "#" + adkPrompt.Fingerprint,
+		HTTPClient:      &http.Client{Timeout: runtimeCfg.LLM.HTTPTimeout},
+		Tools:           toolRegistry,
+		Conversation:    conversationService,
+		UsageGuard:      usageGuard,
+		UsageMeter:      data,
+		Temperature:     runtimeCfg.LLM.Temperature,
+		MaxOutputTokens: runtimeCfg.LLM.MaxTokens,
+		MaxToolRounds:   runtimeCfg.LLM.MaxToolRounds,
+	})
+	if err != nil {
+		logger.Error("initialize ADK runtime", "error", err, "hint", "build with -tags=adk and configure an OpenAI Responses API-compatible provider")
+		os.Exit(1)
+	}
+	components.Agent = adkAgent
 
 	serverOptions := []server.Option{
 		server.WithStore(data), server.WithLocation(location),
 		server.WithIdentityResolver(server.HeaderIdentityResolver{DefaultUserID: value("COMPANION_DEFAULT_USER_ID", "default")}),
 		server.WithControlPlane(control), server.WithFirmwareService(firmwareService), server.WithPrivacyService(privacyService), server.WithFeatureCatalog(featureCatalog), server.WithAdminToken(os.Getenv("COMPANION_ADMIN_TOKEN")),
-		server.WithDeviceCredentialManager(data), server.WithEntitlementManager(data),
+		server.WithDeviceAuthenticator(data), server.WithDeviceCredentialManager(data), server.WithEntitlementManager(data),
 	}
-	if value("COMPANION_DEVICE_AUTH", "legacy") == "database" {
-		serverOptions = append(serverOptions, server.WithDeviceAuthenticator(data))
-	}
-	service := server.New(components, os.Getenv("COMPANION_DEVICE_TOKEN"), logger, serverOptions...)
+	service := server.New(components, logger, serverOptions...)
 	rootCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	go service.RunBackground(rootCtx)
@@ -288,31 +229,6 @@ func loadPromptBundle(cfg runtimeconfig.Config) (*promptpkg.Bundle, error) {
 		return promptpkg.LoadDirectory(cfg.LLM.PromptDir)
 	}
 	return promptpkg.LoadDefault()
-}
-
-func buildModelSelector(cfg runtimeconfig.Config, embedding agent.EmbeddingProvider, realEmbedding bool) (agent.ModelSelector, error) {
-	fast := value("QWEN_FAST_MODEL", value("QWEN_MODEL", "Qwen/Qwen3-4B-Instruct-2507"))
-	if cfg.LLM.Router != "semantic" {
-		return agent.StaticModelSelector{Model: fast}, nil
-	}
-	if !realEmbedding {
-		return nil, fmt.Errorf("semantic routing requires a configured real EMBEDDING_BASE_URL; hash embeddings are test/POC only")
-	}
-	reasoning := strings.TrimSpace(os.Getenv("QWEN_REASONING_MODEL"))
-	if reasoning == "" {
-		return nil, fmt.Errorf("semantic routing requires QWEN_REASONING_MODEL")
-	}
-	raw, err := os.ReadFile(cfg.LLM.RouterExamplesFile)
-	if err != nil {
-		return nil, fmt.Errorf("read semantic router examples: %w", err)
-	}
-	var examples agent.SemanticRouteExamples
-	if err := json.Unmarshal(raw, &examples); err != nil {
-		return nil, fmt.Errorf("decode semantic router examples: %w", err)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), cfg.LLM.HTTPTimeout)
-	defer cancel()
-	return agent.NewSemanticModelSelector(ctx, embedding, fast, reasoning, examples)
 }
 
 func value(name, fallback string) string {

@@ -34,7 +34,6 @@ const (
 
 type Server struct {
 	components        pipeline.Components
-	token             string
 	logger            *slog.Logger
 	hub               *sessionHub
 	data              SchedulerRepository
@@ -112,12 +111,12 @@ func WithLocation(location *time.Location) Option {
 	}
 }
 
-func New(components pipeline.Components, token string, logger *slog.Logger, options ...Option) *Server {
+func New(components pipeline.Components, logger *slog.Logger, options ...Option) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	service := &Server{
-		components: components, token: token, logger: logger,
+		components: components, logger: logger,
 		hub: newSessionHub(), schedulerInterval: 2 * time.Second, location: time.Local, identityResolver: HeaderIdentityResolver{DefaultUserID: "default"},
 	}
 	for _, option := range options {
@@ -177,18 +176,15 @@ func (s *Server) Handler() http.Handler {
 
 func (s *Server) authenticateDeviceRequest(ctx context.Context, request *http.Request) (domain.Identity, bool) {
 	deviceID := strings.TrimSpace(request.Header.Get("Device-Id"))
-	if s.deviceAuth != nil {
-		raw := strings.TrimSpace(strings.TrimPrefix(request.Header.Get("Authorization"), "Bearer "))
-		if deviceID == "" || raw == "" {
-			return domain.Identity{DeviceID: deviceID}, false
-		}
-		identity, ok, err := s.deviceAuth.AuthenticateDevice(ctx, deviceID, raw)
-		return identity, err == nil && ok
-	}
-	if s.token != "" && request.Header.Get("Authorization") != "Bearer "+s.token {
+	if s.deviceAuth == nil {
 		return domain.Identity{DeviceID: deviceID}, false
 	}
-	return domain.Identity{DeviceID: deviceID}, true
+	raw := strings.TrimSpace(strings.TrimPrefix(request.Header.Get("Authorization"), "Bearer "))
+	if deviceID == "" || raw == "" {
+		return domain.Identity{DeviceID: deviceID}, false
+	}
+	identity, ok, err := s.deviceAuth.AuthenticateDevice(ctx, deviceID, raw)
+	return identity, err == nil && ok
 }
 
 func (s *Server) handleDevice(writer http.ResponseWriter, request *http.Request) {
@@ -206,14 +202,12 @@ func (s *Server) handleDevice(writer http.ResponseWriter, request *http.Request)
 	}
 	connection.SetReadLimit(protocol.MaximumEnvelopeBytes)
 	identity := s.identityResolver.Resolve(request, authenticated.DeviceID)
-	if s.deviceAuth != nil {
-		// In database-auth mode ownership/tenant/plan are trusted enrollment claims,
-		// never client-controlled transport headers. Thread remains a conversation concern.
-		identity.UserID = authenticated.UserID
-		identity.TenantID = authenticated.TenantID
-		identity.Plan = authenticated.Plan
-		identity.DeviceID = authenticated.DeviceID
-	}
+	// Ownership/tenant/plan are trusted enrollment claims, never client-controlled
+	// transport headers. Thread remains a conversation concern.
+	identity.UserID = authenticated.UserID
+	identity.TenantID = authenticated.TenantID
+	identity.Plan = authenticated.Plan
+	identity.DeviceID = authenticated.DeviceID
 	ack := func(ctx context.Context, id int64) error {
 		if s.data == nil {
 			return fmt.Errorf("scheduler repository unavailable")

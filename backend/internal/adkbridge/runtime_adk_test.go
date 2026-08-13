@@ -118,6 +118,7 @@ type limiterContext struct {
 	adkagent.StrictContextMock
 	invocationID string
 }
+
 func (c limiterContext) InvocationID() string { return c.invocationID }
 
 func TestModelRoundLimiterMatchesConfiguredBound(t *testing.T) {
@@ -189,6 +190,7 @@ func (m *usageLLM) GenerateContent(context.Context, *model.LLMRequest, bool) ite
 }
 
 type denyUsageGuard struct{}
+
 func (denyUsageGuard) Check(context.Context, string) error { return errors.New("quota exceeded") }
 
 func TestMeteredLLMRecordsOneUsageSnapshot(t *testing.T) {
@@ -197,9 +199,13 @@ func TestMeteredLLMRecordsOneUsageSnapshot(t *testing.T) {
 	llm := &meteredLLM{inner: inner, modelName: "configured", promptVersion: "companion@4#abc", meter: meter}
 	ctx := pipeline.WithTurnContext(context.Background(), pipeline.TurnContext{UserID: "u1", DeviceID: "d1"})
 	for _, err := range llm.GenerateContent(ctx, &model.LLMRequest{Model: "selected"}, true) {
-		if err != nil { t.Fatal(err) }
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
-	if !inner.called { t.Fatal("inner model was not called") }
+	if !inner.called {
+		t.Fatal("inner model was not called")
+	}
 	got := meter.Snapshot()
 	if got["prompt_tokens"] != 12 || got["completion_tokens"] != 5 || got["total_tokens"] != 17 {
 		t.Fatalf("unexpected usage: %#v", got)
@@ -211,7 +217,9 @@ func TestMeteredLLMChecksQuotaBeforeProviderCall(t *testing.T) {
 	llm := &meteredLLM{inner: inner, guard: denyUsageGuard{}}
 	ctx := pipeline.WithTurnContext(context.Background(), pipeline.TurnContext{UserID: "u1"})
 	var gotErr error
-	for _, err := range llm.GenerateContent(ctx, &model.LLMRequest{}, true) { gotErr = err }
+	for _, err := range llm.GenerateContent(ctx, &model.LLMRequest{}, true) {
+		gotErr = err
+	}
 	if gotErr == nil || inner.called {
 		t.Fatalf("guard error=%v inner.called=%v", gotErr, inner.called)
 	}

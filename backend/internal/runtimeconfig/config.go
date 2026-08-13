@@ -17,14 +17,12 @@ const (
 )
 
 type LLM struct {
-	HTTPTimeout       time.Duration
-	Temperature       float64
-	MaxTokens         int
-	MaxToolRounds     int
-	Router            string
-	RouterExamplesFile string
-	PromptDir         string
-	Persona           string
+	HTTPTimeout   time.Duration
+	Temperature   float64
+	MaxTokens     int
+	MaxToolRounds int
+	PromptDir     string
+	Persona       string
 }
 
 type Config struct {
@@ -56,15 +54,6 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("COMPANION_LLM_MAX_TOOL_ROUNDS must be between 1 and 12")
 	}
 
-	router := strings.ToLower(strings.TrimSpace(env("COMPANION_MODEL_ROUTER", "static")))
-	if router != "static" && router != "semantic" {
-		return Config{}, fmt.Errorf("COMPANION_MODEL_ROUTER must be static or semantic")
-	}
-	routerExamples := strings.TrimSpace(os.Getenv("COMPANION_MODEL_ROUTER_EXAMPLES"))
-	if router == "semantic" && routerExamples == "" {
-		return Config{}, fmt.Errorf("semantic model router requires COMPANION_MODEL_ROUTER_EXAMPLES")
-	}
-
 	defaultMock := "true"
 	if profile == ProfileProduction {
 		defaultMock = "false"
@@ -81,14 +70,12 @@ func Load() (Config, error) {
 		Profile:   profile,
 		AllowMock: allowMock,
 		LLM: LLM{
-			HTTPTimeout:       timeout,
-			Temperature:       temperature,
-			MaxTokens:         maxTokens,
-			MaxToolRounds:     maxRounds,
-			Router:            router,
-			RouterExamplesFile: routerExamples,
-			PromptDir:         strings.TrimSpace(os.Getenv("COMPANION_PROMPT_DIR")),
-			Persona:           strings.TrimSpace(os.Getenv("COMPANION_PERSONA")),
+			HTTPTimeout:   timeout,
+			Temperature:   temperature,
+			MaxTokens:     maxTokens,
+			MaxToolRounds: maxRounds,
+			PromptDir:     strings.TrimSpace(os.Getenv("COMPANION_PROMPT_DIR")),
+			Persona:       strings.TrimSpace(os.Getenv("COMPANION_PERSONA")),
 		},
 	}, nil
 }
