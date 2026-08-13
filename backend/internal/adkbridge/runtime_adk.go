@@ -19,15 +19,21 @@ import (
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/model/openaimodel"
 	"google.golang.org/adk/v2/runner"
+	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/tool"
 	"google.golang.org/adk/v2/tool/functiontool"
 
 	"companion-server/internal/capability"
+	conversationctx "companion-server/internal/conversation"
 	"companion-server/internal/pipeline"
 )
 
 type Runtime struct {
-	runner *runner.Runner
+	runner       *runner.Runner
+	sessions     session.Service
+	appName      string
+	conversation *conversationctx.Service
+	historyLimit int
 }
 
 func Enabled() bool { return true }
@@ -65,9 +71,15 @@ func newWithModel(cfg Config, llm model.LLM) (*Runtime, error) {
 	if cfg.Tools == nil {
 		return nil, fmt.Errorf("tool registry is required")
 	}
-	tools, err := buildRepresentativeTools(cfg.Tools)
+	if cfg.Conversation == nil {
+		return nil, fmt.Errorf("Companion conversation service is required")
+	}
+	tools, err := buildRegistryTools(cfg.Tools)
 	if err != nil {
 		return nil, err
+	}
+	if len(tools) == 0 {
+		return nil, fmt.Errorf("tool registry is empty")
 	}
 	agent, err := llmagent.New(llmagent.Config{
 		Name: "companion", Description: "Single-user voice companion coordinator", Model: llm,
@@ -80,12 +92,16 @@ func newWithModel(cfg Config, llm model.LLM) (*Runtime, error) {
 	if appName == "" {
 		appName = "companion"
 	}
-	// Temporary until the durable ADK session adapter is proven.
-	r, err := runner.NewInMemory(appName, agent)
+	historyLimit := cfg.HistoryLimit
+	if historyLimit <= 0 {
+		historyLimit = 12
+	}
+	sessions := session.InMemoryService()
+	r, err := runner.New(runner.Config{AppName: appName, Agent: agent, SessionService: sessions})
 	if err != nil {
 		return nil, fmt.Errorf("create ADK runner: %w", err)
 	}
-	return &Runtime{runner: r}, nil
+	return &Runtime{runner: r, sessions: sessions, appName: appName, conversation: cfg.Conversation, historyLimit: historyLimit}, nil
 }
 
 func (r *Runtime) Respond(ctx context.Context, turnID, transcript string) (string, error) {
@@ -105,25 +121,43 @@ func (r *Runtime) Respond(ctx context.Context, turnID, transcript string) (strin
 }
 
 func (r *Runtime) Stream(ctx context.Context, turnID, transcript string, emit func(pipeline.AgentStreamEvent) error) error {
-	if r == nil || r.runner == nil {
+	if r == nil || r.runner == nil || r.sessions == nil || r.conversation == nil {
 		return fmt.Errorf("ADK runtime is not initialized")
 	}
 	if emit == nil {
 		return fmt.Errorf("stream callback is required")
 	}
-	if strings.TrimSpace(transcript) == "" {
+	transcript = strings.TrimSpace(transcript)
+	if transcript == "" {
 		return fmt.Errorf("transcript is required")
 	}
 
-	// Destructive authorization is intentionally NOT inferred from model/user
-	// text here. ToolRegistry policy now requires a server-issued confirmation
-	// scoped to owner + exact tool + canonical arguments + expiry.
 	turn, _ := pipeline.CurrentTurn(ctx)
 	if strings.TrimSpace(turn.TurnID) == "" {
 		turn.TurnID = turnID
 		ctx = pipeline.WithTurnContext(ctx, turn)
 	}
 	userID, sessionID := SessionIdentity(turn)
+	conversationUserID := strings.TrimSpace(turn.UserID)
+	if conversationUserID == "" {
+		conversationUserID = strings.TrimSpace(turn.DeviceID)
+	}
+	threadID := strings.TrimSpace(turn.ThreadID)
+	if threadID == "" {
+		threadID = "default"
+	}
+	scope := conversationctx.Scope{UserID: conversationUserID, ThreadID: threadID}
+	history, err := r.conversation.Recent(ctx, scope, r.historyLimit)
+	if err != nil {
+		return fmt.Errorf("load durable conversation: %w", err)
+	}
+	if err := r.ensureSession(ctx, userID, sessionID, history); err != nil {
+		return err
+	}
+	turnKey := durableTurnKey(turn, turnID)
+	if err := r.conversation.Append(ctx, turnKey, scope, "user", transcript); err != nil {
+		return fmt.Errorf("persist user conversation: %w", err)
+	}
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -132,12 +166,13 @@ func (r *Runtime) Stream(ctx context.Context, turnID, transcript string, emit fu
 	outcomes := &invocationOutcomeTracker{}
 	ctx = withToolOutcomeSink(ctx, outcomes.RecordTool)
 
-	msg := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: transcript}}}
+	msg := &genai.Content{Role: genai.RoleUser, Parts: []*genai.Part{{Text: transcript}}}
 	tracker := &textDeltaTracker{}
+	var finalText strings.Builder
 	sentText := false
-	for event, err := range r.runner.Run(ctx, userID, sessionID, msg, adkagent.RunConfig{StreamingMode: adkagent.StreamingModeSSE}) {
-		if err != nil {
-			return fmt.Errorf("ADK run: %w", err)
+	for event, runErr := range r.runner.Run(ctx, userID, sessionID, msg, adkagent.RunConfig{StreamingMode: adkagent.StreamingModeSSE}) {
+		if runErr != nil {
+			return fmt.Errorf("ADK run: %w", runErr)
 		}
 		if err := emitPresentations(presentations.Drain(), emit); err != nil {
 			return err
@@ -160,6 +195,7 @@ func (r *Runtime) Stream(ctx context.Context, turnID, transcript string, emit fu
 		if delta := tracker.Delta(candidate, event.Partial); delta != "" {
 			sentText = true
 			outcomes.RecordSpeakableText()
+			finalText.WriteString(delta)
 			if err := emit(pipeline.AgentStreamEvent{TextDelta: delta}); err != nil {
 				return err
 			}
@@ -176,11 +212,76 @@ func (r *Runtime) Stream(ctx context.Context, turnID, transcript string, emit fu
 		return err
 	}
 	if fallback != "" {
+		finalText.WriteString(fallback)
 		if err := emit(pipeline.AgentStreamEvent{TextDelta: fallback}); err != nil {
 			return err
 		}
 	}
+	assistantText := strings.TrimSpace(finalText.String())
+	if assistantText != "" {
+		if err := r.conversation.Append(ctx, turnKey, scope, "assistant", assistantText); err != nil {
+			return fmt.Errorf("persist assistant conversation: %w", err)
+		}
+	}
 	return nil
+}
+
+func (r *Runtime) ensureSession(ctx context.Context, userID, sessionID string, history []conversationctx.Message) error {
+	listed, err := r.sessions.List(ctx, &session.ListRequest{AppName: r.appName, UserID: userID})
+	if err != nil {
+		return fmt.Errorf("list ADK sessions: %w", err)
+	}
+	for _, existing := range listed.Sessions {
+		if existing != nil && existing.ID() == sessionID {
+			return nil
+		}
+	}
+	created, err := r.sessions.Create(ctx, &session.CreateRequest{AppName: r.appName, UserID: userID, SessionID: sessionID})
+	if err != nil {
+		return fmt.Errorf("create ADK session: %w", err)
+	}
+	if created == nil || created.Session == nil {
+		return fmt.Errorf("create ADK session returned no session")
+	}
+	for i, message := range history {
+		text := strings.TrimSpace(message.Content)
+		if text == "" {
+			continue
+		}
+		role := genai.RoleUser
+		author := "user"
+		if strings.EqualFold(strings.TrimSpace(message.Role), "assistant") {
+			role = genai.RoleModel
+			author = "companion"
+		}
+		event := session.NewEvent(ctx, fmt.Sprintf("hydrate-%d", i))
+		event.Author = author
+		event.Content = &genai.Content{Role: role, Parts: []*genai.Part{{Text: text}}}
+		if err := r.sessions.AppendEvent(ctx, created.Session, event); err != nil {
+			return fmt.Errorf("hydrate ADK session event %d: %w", i, err)
+		}
+	}
+	return nil
+}
+
+func durableTurnKey(turn pipeline.TurnContext, fallbackTurnID string) string {
+	userID := strings.TrimSpace(turn.UserID)
+	if userID == "" {
+		userID = strings.TrimSpace(turn.DeviceID)
+	}
+	threadID := strings.TrimSpace(turn.ThreadID)
+	if threadID == "" {
+		threadID = "default"
+	}
+	sessionID := strings.TrimSpace(turn.SessionID)
+	if sessionID == "" {
+		sessionID = "local"
+	}
+	turnID := strings.TrimSpace(turn.TurnID)
+	if turnID == "" {
+		turnID = strings.TrimSpace(fallbackTurnID)
+	}
+	return userID + ":" + threadID + ":" + strings.TrimSpace(turn.DeviceID) + ":" + sessionID + ":" + turnID
 }
 
 func contentText(content *genai.Content) string {
@@ -223,25 +324,34 @@ func emitPresentations(ps []capability.Presentation, emit func(pipeline.AgentStr
 	return nil
 }
 
-func buildRepresentativeTools(registry *capability.ToolRegistry) ([]tool.Tool, error) {
+// buildRegistryTools adapts the complete current Companion ToolRegistry into
+// ADK FunctionTools. ToolRegistry remains the source of truth for schema,
+// authorization, idempotency and execution; this layer only translates calls.
+func buildRegistryTools(registry *capability.ToolRegistry) ([]tool.Tool, error) {
+	definitions := registry.Definitions()
 	executor := HostToolExecutor{Registry: registry}
-	var out []tool.Tool
-	add := func(t tool.Tool, err error) error { if err != nil { return err }; out = append(out, t); return nil }
-	if err := add(newHostTool[ExpenseLogArgs](registry, executor, ToolExpenseLog)); err != nil { return nil, err }
-	if err := add(newHostTool[BudgetGetArgs](registry, executor, ToolBudgetGet)); err != nil { return nil, err }
-	if err := add(newHostTool[TimerCreateArgs](registry, executor, ToolTimerCreate)); err != nil { return nil, err }
-	if err := add(newHostTool[MemoryRecallArgs](registry, executor, ToolMemoryRecall)); err != nil { return nil, err }
+	out := make([]tool.Tool, 0, len(definitions))
+	for _, def := range definitions {
+		name := strings.TrimSpace(def.Name)
+		if name == "" {
+			return nil, fmt.Errorf("registered tool has empty name")
+		}
+		schema, err := schemaFromMap(def.Parameters)
+		if err != nil {
+			return nil, fmt.Errorf("tool %s schema: %w", name, err)
+		}
+		adapted, err := functiontool.New[map[string]any, map[string]any](
+			functiontool.Config{Name: name, Description: def.Description, InputSchema: schema},
+			func(ctx adkagent.Context, args map[string]any) (map[string]any, error) {
+				return executor.Execute(ctx, name, ctx.FunctionCallID(), args)
+			},
+		)
+		if err != nil {
+			return nil, fmt.Errorf("adapt tool %s: %w", name, err)
+		}
+		out = append(out, adapted)
+	}
 	return out, nil
-}
-
-func newHostTool[TArgs any](registry *capability.ToolRegistry, executor HostToolExecutor, name string) (tool.Tool, error) {
-	def, ok := registry.Definition(name)
-	if !ok { return nil, fmt.Errorf("required host tool %q is not registered", name) }
-	schema, err := schemaFromMap(def.Parameters)
-	if err != nil { return nil, fmt.Errorf("tool %s schema: %w", name, err) }
-	return functiontool.New[TArgs, map[string]any](functiontool.Config{Name: name, Description: def.Description, InputSchema: schema}, func(ctx adkagent.Context, args TArgs) (map[string]any, error) {
-		return executor.Execute(ctx, name, ctx.FunctionCallID(), args)
-	})
 }
 
 func schemaFromMap(input map[string]any) (*jsonschema.Schema, error) {

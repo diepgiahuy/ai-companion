@@ -50,22 +50,38 @@ jobs:
             -e COMPANION_EVIDENCE_OUT=/artifacts/software-device/evidence.json \
             -v "$PWD/artifacts:/artifacts" \
             companion-software-device
-      - name: Validate core and authoritative-tool evidence artifacts
+      - name: Validate core and representative-tool evidence artifacts
         run: |
           python3 host/companion_software_device/validate_evidence.py artifacts/software-device/evidence.json
-          python3 host/companion_software_device/validate_evidence.py artifacts/software-device/evidence-tool.json
+          for evidence in artifacts/software-device/evidence-tool*.json; do
+            case "$evidence" in
+              *-db.json) continue ;;
+            esac
+            python3 host/companion_software_device/validate_evidence.py "$evidence"
+          done
           python3 - <<'PY'
           import json
           from pathlib import Path
           data = json.loads(Path('artifacts/software-device/evidence-tool-db.json').read_text())
-          mutation = data.get('mutation', {})
+          assert data.get('schema_version') == 2
           assert data.get('result') == 'passed'
           assert data.get('promotion') == 'orchestration_only'
+          mutation = data.get('mutation', {})
           assert mutation.get('table') == 'expenses'
           assert mutation.get('count') == 1
           assert mutation.get('amount_vnd') == 50000
           assert mutation.get('idempotency_key_present') is True
-          print('AUTHORITATIVE TOOL ARTIFACT PASS: exactly one 50000 VND expense mutation')
+          parity = data.get('representative_parity', {})
+          assert set(parity) == {'expense', 'budget', 'note', 'journal', 'reminder', 'timer', 'memory'}
+          assert parity['budget']['limit_vnd'] == 1000000
+          assert parity['note']['content'] == 'tier1 note'
+          assert parity['journal']['content'] == 'tier1 journal'
+          assert parity['reminder']['device_id'] == 'software-device-tool'
+          assert parity['timer']['device_id'] == 'software-device-tool'
+          assert parity['memory'] == {
+              'count': 1, 'key': 'preferred_language', 'kind': 'semantic', 'value': 'Vietnamese'
+          }
+          print('AUTHORITATIVE TOOL PARITY PASS: expense/budget/note/journal/reminder/timer/memory')
           PY
       - name: Upload orchestration evidence
         if: always()

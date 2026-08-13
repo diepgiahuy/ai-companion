@@ -11,6 +11,15 @@ import (
 	"companion-server/internal/pipeline"
 )
 
+type budgetArgsFixture struct {
+	Period string `json:"period"`
+}
+
+type timerArgsFixture struct {
+	Title        string `json:"title,omitempty"`
+	DelaySeconds int64  `json:"delay_seconds"`
+}
+
 type captureTool struct {
 	name string
 	def  *capability.ToolDefinition
@@ -44,7 +53,7 @@ func TestHostToolExecutorDelegatesToAuthoritativeRegistry(t *testing.T) {
 
 	turn := pipeline.TurnContext{UserID: "u1", ThreadID: "money", DeviceID: "d1", SessionID: "boot-7", TurnID: "42"}
 	ctx := pipeline.WithTurnContext(context.Background(), turn)
-	out, err := (HostToolExecutor{Registry: reg}).Execute(ctx, ToolBudgetGet, "call-abc", BudgetGetArgs{Period: "monthly"})
+	out, err := (HostToolExecutor{Registry: reg}).Execute(ctx, ToolBudgetGet, "call-abc", budgetArgsFixture{Period: "monthly"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +64,7 @@ func TestHostToolExecutorDelegatesToAuthoritativeRegistry(t *testing.T) {
 	if tool.req.Key != wantKey {
 		t.Fatalf("idempotency key=%q, want %q", tool.req.Key, wantKey)
 	}
-	var args BudgetGetArgs
+	var args budgetArgsFixture
 	if err := json.Unmarshal([]byte(tool.req.Arguments), &args); err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +90,7 @@ func TestHostToolExecutorKeepsRegistryValidation(t *testing.T) {
 	if err := reg.Register(tool); err != nil {
 		t.Fatal(err)
 	}
-	out, err := (HostToolExecutor{Registry: reg}).Execute(context.Background(), ToolBudgetGet, "call-1", BudgetGetArgs{Period: "yearly"})
+	out, err := (HostToolExecutor{Registry: reg}).Execute(context.Background(), ToolBudgetGet, "call-1", budgetArgsFixture{Period: "yearly"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,15 +116,6 @@ func TestSessionIdentityAndToolKeyAreReconnectSafe(t *testing.T) {
 	}
 }
 
-func TestRepresentativeToolNamesReturnsCopy(t *testing.T) {
-	a := RepresentativeToolNames()
-	a[0] = "mutated"
-	b := RepresentativeToolNames()
-	if b[0] == "mutated" {
-		t.Fatal("returned slice aliases internal rollout set")
-	}
-}
-
 type denyAuthorizer struct{}
 
 func (denyAuthorizer) Authorize(context.Context, capability.ToolDefinition, capability.ToolRequest) error {
@@ -135,7 +135,7 @@ func TestHostToolExecutorKeepsRegistryAuthorization(t *testing.T) {
 		t.Fatal(err)
 	}
 	reg.SetAuthorizer(denyAuthorizer{})
-	out, err := (HostToolExecutor{Registry: reg}).Execute(context.Background(), ToolBudgetGet, "call-auth", BudgetGetArgs{Period: "monthly"})
+	out, err := (HostToolExecutor{Registry: reg}).Execute(context.Background(), ToolBudgetGet, "call-auth", budgetArgsFixture{Period: "monthly"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +193,7 @@ func TestHostToolExecutorConvertsMalformedHostResultToSafeStructuredFailure(t *t
 	presentations := 0
 	ctx := capability.WithPresentationSink(context.Background(), func(capability.Presentation) { presentations++ })
 	ctx = withToolOutcomeSink(ctx, func(outcome ToolOutcome) { gotOutcome = outcome })
-	out, err := (HostToolExecutor{Registry: reg}).Execute(ctx, ToolTimerCreate, "call-malformed", TimerCreateArgs{DelaySeconds: 60})
+	out, err := (HostToolExecutor{Registry: reg}).Execute(ctx, ToolTimerCreate, "call-malformed", timerArgsFixture{DelaySeconds: 60})
 	if err != nil {
 		t.Fatalf("malformed host output must become a tool response, got error: %v", err)
 	}
@@ -229,7 +229,7 @@ func TestHostToolExecutorRejectsJSONWithoutBooleanOKEnvelope(t *testing.T) {
 	if err := reg.Register(tool); err != nil {
 		t.Fatal(err)
 	}
-	out, err := (HostToolExecutor{Registry: reg}).Execute(context.Background(), ToolBudgetGet, "call-no-envelope", BudgetGetArgs{Period: "monthly"})
+	out, err := (HostToolExecutor{Registry: reg}).Execute(context.Background(), ToolBudgetGet, "call-no-envelope", budgetArgsFixture{Period: "monthly"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +255,7 @@ func TestHostToolExecutorDoesNotPublishPresentationForValidFailure(t *testing.T)
 	}
 	presentations := 0
 	ctx := capability.WithPresentationSink(context.Background(), func(capability.Presentation) { presentations++ })
-	out, err := (HostToolExecutor{Registry: reg}).Execute(ctx, ToolTimerCreate, "call-failed", TimerCreateArgs{DelaySeconds: 60})
+	out, err := (HostToolExecutor{Registry: reg}).Execute(ctx, ToolTimerCreate, "call-failed", timerArgsFixture{DelaySeconds: 60})
 	if err != nil {
 		t.Fatal(err)
 	}

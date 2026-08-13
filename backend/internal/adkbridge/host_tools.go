@@ -19,45 +19,6 @@ const (
 	ToolMemoryRecall = "memory.recall"
 )
 
-var representativeToolNames = []string{
-	ToolExpenseLog,
-	ToolBudgetGet,
-	ToolTimerCreate,
-	ToolMemoryRecall,
-}
-
-// RepresentativeToolNames returns a copy so callers cannot mutate the bridge's
-// rollout set. CP-SW4 expands this only after the representative parity gate is
-// green.
-func RepresentativeToolNames() []string {
-	return append([]string(nil), representativeToolNames...)
-}
-
-type ExpenseLogArgs struct {
-	Items []ExpenseItem `json:"items"`
-}
-
-type ExpenseItem struct {
-	AmountVND   int64  `json:"amount_vnd"`
-	Category    string `json:"category"`
-	Description string `json:"description"`
-	OccurredAt  string `json:"occurred_at"`
-}
-
-type BudgetGetArgs struct {
-	Period string `json:"period"`
-}
-
-type TimerCreateArgs struct {
-	Title        string `json:"title,omitempty"`
-	DelaySeconds int64  `json:"delay_seconds"`
-}
-
-type MemoryRecallArgs struct {
-	Query string `json:"query"`
-	Limit int    `json:"limit,omitempty"`
-}
-
 // HostToolExecutor is the anti-corruption layer between ADK FunctionTools and
 // Companion's authoritative capability registry. The registry remains the one
 // place that validates JSON Schema, authorizes access, and executes product

@@ -211,7 +211,7 @@ void patch_device_config(const std::string& host, const std::string& port,
 }
 
 bool probe_v1_rejection(const std::string& host, const std::string& port,
-                        const std::string& token) {
+                        const std::string& token, const std::string& device_id) {
   net::io_context io;
   tcp::resolver resolver(io);
   boost::beast::websocket::stream<beast::tcp_stream> ws(io);
@@ -219,8 +219,8 @@ bool probe_v1_rejection(const std::string& host, const std::string& port,
   ws.set_option(boost::beast::websocket::stream_base::decorator(
       [&](boost::beast::websocket::request_type& request) {
         request.set(http::field::authorization, "Bearer " + token);
-        request.set("Device-Id", "software-device-negative");
-        request.set("Client-Id", "software-device-negative");
+        request.set("Device-Id", device_id);
+        request.set("Client-Id", device_id);
       }));
   ws.handshake(host + ":" + port, "/v2/device");
   ws.write(net::buffer(std::string(
@@ -253,7 +253,9 @@ json stats_json(const WebSocketVoiceBackend::Stats& stats) {
 int run(int argc, char** argv) {
   std::string url = "ws://127.0.0.1:18000/v2/device";
   std::string token = "tier1-device-token";
+  std::string device_id = "software-device-tier1";
   std::string admin_token = "tier1-admin-token";
+  std::string expected_text = "Tier-1 tool parity ok";
   std::string evidence_path = "software-device-evidence.json";
   std::string scenario_set = "core";
   for (int i = 1; i < argc; ++i) {
@@ -263,8 +265,10 @@ int run(int argc, char** argv) {
       return argv[++i];
     };
     if (arg == "--url") url = value("--url");
+    else if (arg == "--device-id") device_id = value("--device-id");
     else if (arg == "--token") token = value("--token");
     else if (arg == "--admin-token") admin_token = value("--admin-token");
+    else if (arg == "--expected-text") expected_text = value("--expected-text");
     else if (arg == "--evidence") evidence_path = value("--evidence");
     else if (arg == "--scenario-set") scenario_set = value("--scenario-set");
     else throw std::runtime_error("unknown argument: " + arg);
@@ -274,7 +278,7 @@ int run(int argc, char** argv) {
 
   if (scenario_set == "core") {
   results.push_back(run_scenario("hello_turn_tts", [&](ScenarioResult& result) {
-    DeviceFixture fixture(url, token, "software-device-happy");
+    DeviceFixture fixture(url, token, device_id);
     fixture.require_ready();
     fixture.begin_audio_turn();
     fixture.finish_audio_turn();
@@ -289,7 +293,7 @@ int run(int argc, char** argv) {
   }));
 
   results.push_back(run_scenario("duplicate_message_id", [&](ScenarioResult& result) {
-    DeviceFixture fixture(url, token, "software-device-duplicate");
+    DeviceFixture fixture(url, token, device_id);
     fixture.require_ready();
     fixture.begin_audio_turn();
     require(fixture.backend.resend_last_begin_for_test(), "could not resend begin envelope");
@@ -303,7 +307,7 @@ int run(int argc, char** argv) {
   }));
 
   results.push_back(run_scenario("barge_in_generation", [&](ScenarioResult& result) {
-    DeviceFixture fixture(url, token, "software-device-barge");
+    DeviceFixture fixture(url, token, device_id);
     fixture.require_ready();
     fixture.begin_audio_turn();
     fixture.finish_audio_turn();
@@ -327,7 +331,7 @@ int run(int argc, char** argv) {
   }));
 
   results.push_back(run_scenario("reconnect_new_session", [&](ScenarioResult& result) {
-    DeviceFixture fixture(url, token, "software-device-reconnect");
+    DeviceFixture fixture(url, token, device_id);
     fixture.require_ready();
     const std::string first = fixture.backend.session_id();
     require(!first.empty(), "first session id missing");
@@ -348,7 +352,7 @@ int run(int argc, char** argv) {
   }));
 
   results.push_back(run_scenario("config_update_report", [&](ScenarioResult& result) {
-    const std::string device = "software-device-config";
+    const std::string device = device_id;
     DeviceFixture fixture(url, token, device);
     fixture.require_ready();
     const uint64_t before = fixture.app.runtime_config_version();
@@ -362,18 +366,18 @@ int run(int argc, char** argv) {
   }));
 
   results.push_back(run_scenario("protocol_v1_rejected", [&](ScenarioResult&) {
-    require(probe_v1_rejection(host, port, token),
+    require(probe_v1_rejection(host, port, token, device_id),
             "v1 probe did not receive unsupported_protocol_version");
   }));
   } else if (scenario_set == "tool") {
     results.push_back(run_scenario("agent_tool_authoritative_mutation", [&](ScenarioResult& result) {
-      DeviceFixture fixture(url, token, "software-device-tool");
+      DeviceFixture fixture(url, token, device_id);
       fixture.require_ready();
       fixture.begin_audio_turn();
       fixture.finish_audio_turn();
       require(fixture.until([&] { return fixture.app.state() == UiState::ready; }),
               "tool turn did not return ready");
-      require(fixture.display.contains("Đã lưu đúng một khoản 50 nghìn"),
+      require(fixture.display.contains(expected_text),
               "deterministic model/tool response was not rendered");
       require(fixture.speaker.samples > 0, "tool turn produced no decoded TTS PCM");
       result.counters = stats_json(fixture.backend.stats());
@@ -397,9 +401,8 @@ int run(int argc, char** argv) {
 
   const char* commit = std::getenv("COMPANION_EVIDENCE_COMMIT");
   const char* fingerprint = std::getenv("COMPANION_EVIDENCE_CONFIG_SHA256");
-  const json providers = scenario_set == "tool"
-                             ? json{{"asr", "mock"}, {"agent", "fake_model"}, {"tts", "mock"}}
-                             : json{{"asr", "mock"}, {"agent", "mock"}, {"tts", "mock"}};
+  const json providers = json{{"asr", "mock"}, {"agent", "adk_fake_responses"},
+                              {"tts", "mock"}};
   json evidence{{"schema_version", 1},
                 {"evidence_class", "tier1_orchestration"},
                 {"result", all_passed ? "passed" : "failed"},

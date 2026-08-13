@@ -9,9 +9,11 @@ import (
 	"testing"
 
 	"google.golang.org/adk/v2/model"
+	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
 
 	"companion-server/internal/capability"
+	conversationctx "companion-server/internal/conversation"
 	"companion-server/internal/pipeline"
 	usagepkg "companion-server/internal/usage"
 )
@@ -23,13 +25,37 @@ func (fakeLLM) GenerateContent(context.Context, *model.LLMRequest, bool) iter.Se
 	return func(func(*model.LLMResponse, error) bool) {}
 }
 
-func TestADKRepresentativeToolsReuseRegistrySchemas(t *testing.T) {
-	reg := capability.NewToolRegistry()
-	for _, name := range RepresentativeToolNames() {
+type testConversationStore struct {
+	messages []conversationctx.Message
+}
+
+func (s *testConversationStore) Append(_ context.Context, _ string, _ conversationctx.Scope, role, content string) error {
+	s.messages = append(s.messages, conversationctx.Message{Role: role, Content: content})
+	return nil
+}
+func (s *testConversationStore) Recent(_ context.Context, _ conversationctx.Scope, limit int) ([]conversationctx.Message, error) {
+	messages := s.messages
+	if limit > 0 && len(messages) > limit {
+		messages = messages[len(messages)-limit:]
+	}
+	return append([]conversationctx.Message(nil), messages...), nil
+}
+func (s *testConversationStore) Clear(context.Context, conversationctx.Scope) error {
+	s.messages = nil
+	return nil
+}
+
+func registerTestTools(t *testing.T, reg *capability.ToolRegistry, names ...string) {
+	t.Helper()
+	for _, name := range names {
 		name := name
 		def := capability.ToolDefinition{
 			Name: name, Description: name, Pack: "test",
-			Parameters: map[string]any{"type": "object", "additionalProperties": true},
+			Parameters: map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"properties": map[string]any{"value": map[string]any{"type": "string"}},
+			},
 		}
 		if err := reg.Register(capability.FunctionTool{
 			ToolName: name, ToolDefinition: &def,
@@ -40,13 +66,67 @@ func TestADKRepresentativeToolsReuseRegistrySchemas(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+}
+
+func TestADKExposesCompleteRegistryCatalogUsingRegistrySchemas(t *testing.T) {
+	reg := capability.NewToolRegistry()
+	names := []string{"expense.log", "budget.get", "timer.create", "memory.recall", "note.create"}
+	registerTestTools(t, reg, names...)
+	tools, err := buildRegistryTools(reg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tools) != len(names) {
+		t.Fatalf("ADK tool count=%d want=%d", len(tools), len(names))
+	}
+	conversation := conversationctx.New(&testConversationStore{}, nil)
 	if _, err := newWithModel(Config{
 		AppName:       "test",
 		Tools:         reg,
+		Conversation:  conversation,
 		Instruction:   "test instruction",
 		PromptVersion: "test@1#fixture",
 	}, fakeLLM{}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestADKSessionRehydratesFromDurableConversation(t *testing.T) {
+	reg := capability.NewToolRegistry()
+	registerTestTools(t, reg, "note.create")
+	store := &testConversationStore{messages: []conversationctx.Message{
+		{Role: "user", Content: "hello"},
+		{Role: "assistant", Content: "xin chao"},
+	}}
+	runtime, err := newWithModel(Config{
+		AppName:       "test",
+		Tools:         reg,
+		Conversation:  conversationctx.New(store, nil),
+		Instruction:   "test instruction",
+		PromptVersion: "test@1#fixture",
+	}, fakeLLM{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := runtime.ensureSession(ctx, "user-hash", "session-hash", store.messages); err != nil {
+		t.Fatal(err)
+	}
+	got, err := runtime.sessions.Get(ctx, &session.GetRequest{AppName: "test", UserID: "user-hash", SessionID: "session-hash"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil || got.Session == nil {
+		t.Fatal("rehydrated ADK session missing")
+	}
+	if got.Session.Events().Len() != 2 {
+		t.Fatalf("rehydrated events=%d want=2", got.Session.Events().Len())
+	}
+	if text := contentText(got.Session.Events().At(0).Content); text != "hello" {
+		t.Fatalf("first hydrated event=%q", text)
+	}
+	if text := contentText(got.Session.Events().At(1).Content); text != "xin chao" {
+		t.Fatalf("second hydrated event=%q", text)
 	}
 }
 

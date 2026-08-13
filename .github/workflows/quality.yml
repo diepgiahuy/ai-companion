@@ -23,6 +23,8 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Validate production evidence claims
         run: python3 scripts/check_evidence.py
+      - name: Enforce single product runtime/auth/transport path
+        run: python3 scripts/check_single_path.py
 
   backend-quality:
     name: Go reproducibility, vet, race, vulnerabilities
