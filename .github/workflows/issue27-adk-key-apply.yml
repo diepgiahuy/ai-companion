@@ -1,0 +1,42 @@
+name: issue27-adk-key-apply
+
+on:
+  push:
+    branches: [agent/issue-27-idempotency]
+    paths: [.github/workflows/issue27-adk-key-apply.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: agent/issue-27-idempotency
+          fetch-depth: 0
+      - name: Apply guarded ADK key patch
+        run: python3 scripts/issue27_adk_key_patch.py
+      - name: Format and test ADK idempotency boundary
+        run: |
+          docker build -f Dockerfile.test -t issue27-adk-key-test .
+          docker run --rm issue27-adk-key-test bash -c '
+            gofmt -w backend/internal/adkbridge/host_tools.go backend/internal/adkbridge/host_tools_test.go &&
+            cd backend &&
+            go test -tags=adk ./internal/adkbridge ./internal/providers/tools ./internal/store &&
+            go test -race -tags=adk ./internal/adkbridge
+          '
+          docker run --rm -v "$PWD:/src" -w /src issue27-adk-key-test bash -c 'gofmt -w backend/internal/adkbridge/host_tools.go backend/internal/adkbridge/host_tools_test.go'
+          git diff --check
+      - name: Commit product changes and remove helpers
+        run: |
+          git config user.name "Diệp Gia Huy"
+          git config user.email "30974088+diepgiahuy@users.noreply.github.com"
+          git rm .github/workflows/issue27-adk-key-apply.yml scripts/issue27_adk_key_patch.py
+          git add backend/internal/adkbridge
+          git diff --cached --check
+          git commit -m "fix: keep ADK mutation keys stable across reconnect"
+          git push origin HEAD:agent/issue-27-idempotency
