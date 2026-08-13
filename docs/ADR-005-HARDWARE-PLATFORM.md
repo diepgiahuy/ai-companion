@@ -59,10 +59,12 @@ Primary sources: [ESP-VoCat v1.2 guide](https://docs.espressif.com/projects/esp-
    reversible prototype finalist. Do not remove the current SSD1306 adapter
    before the chosen board passes the benchmark and a basic boot/peripheral
    smoke test.
-2. Use **ESP-IDF `esp_lcd` + `esp_lvgl_port` 2.9.0 + LVGL 9** as the one baseline
-   UI stack for the prototype. `esp_lvgl_port` 2.9.0 is the current Espressif
-   component release and its implementation is LVGL-9-native; selecting LVGL 8
-   would now create a compatibility path with no repository requirement.
+2. Use **ESP-IDF `esp_lcd` + `esp_lvgl_port` 2.8.0~1 + LVGL 9** as the one baseline
+   UI stack for the first benchmark. On 2026-08-13 the official Espressif Component
+   Registry reports `2.8.0~1` as the latest stable release; its 2.x implementation
+   supports LVGL 9. Re-verify the registry immediately before the physical run and
+   record the exact resolved artifact/hash rather than silently substituting a newer
+   release.
 3. Keep **LovyanGFX** only as the same-board benchmark challenger required by
    issue #8, not as a second product runtime. If it does not win the physical
    promotion rule, remove the benchmark dependency and keep only the vendor stack.
@@ -84,7 +86,7 @@ not a device-level result.
 
 Sources: [ESP-IDF LCD API](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/api-reference/peripherals/lcd/index.html),
 [ESP-IDF 6.0 peripheral migration guide](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/migration-guides/release-6.x/6.0/peripherals.html),
-[esp_lvgl_port 2.9.0](https://components.espressif.com/components/espressif/esp_lvgl_port),
+[esp_lvgl_port 2.8.0~1](https://components.espressif.com/components/espressif/esp_lvgl_port/versions/2.8.0~1/readme),
 and [LovyanGFX](https://github.com/lovyan03/LovyanGFX).
 
 ## Version and dependency constraints
@@ -94,9 +96,9 @@ and [LovyanGFX](https://github.com/lovyan03/LovyanGFX).
   not a display-only downgrade.
 - `esp_lcd`: use only the API supplied by ESP-IDF 6.0.2. Do not add IDF 5 LCD
   compatibility shims; use the documented v6 configuration fields directly.
-- `esp_lvgl_port`: **2.9.0 for the first benchmark**. The component manifest/lock
-  must record the exact resolved revision/hash; do not leave a floating version as
-  benchmark evidence.
+- `esp_lvgl_port`: **2.8.0~1 for the first benchmark, subject to the mandatory
+  pre-run re-verification above**. The component manifest/lock must record the exact
+  resolved revision/hash; do not leave a floating version as benchmark evidence.
 - LVGL: **major version 9 only** for this prototype. Record the exact resolved
   version/hash from the component graph. Do not add an LVGL 8 compatibility build
   unless a new measured blocker and ADR justify replacing this decision.
@@ -125,7 +127,7 @@ a decision rule, not a pre-measured result.
 
 Issue #9 may create a board-specific display/input adapter, UI task, and
 haptic/LED port only after revalidating board revision, the **ESP-IDF 6.0.2 +
-esp_lvgl_port 2.9.0 + LVGL 9** component graph, pin plan, and this benchmark.
+esp_lvgl_port 2.8.0~1 + LVGL 9** component graph, pin plan, and this benchmark.
 It must not change the hardware-independent `companion_app` contract or remove
 SSD1306 until the gate is attached.
 
