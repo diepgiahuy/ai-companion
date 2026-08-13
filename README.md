@@ -29,9 +29,9 @@ The table below distinguishes **implemented** from **production-proven**. A gree
 | PostgreSQL + Atlas/Ent + River | ⚪ unproven | Migration/job/backup/restart gates pending |
 | External MCP interoperability | ⚪ unproven | SDK bridge compiles; real external MCP contract test pending |
 | WebRTC real-network latency | ⚪ unproven | Must measure p50/p95 first-audio, loss recovery and barge-in |
-| Tier-1 headless software device | 🟡 partial | Real Go `/v2/device` + production `CompanionApp`/protocol v2; six mock-provider orchestration scenarios pass; no provider/physical promotion |
+| Tier-1 headless software device | 🟡 partial | Real Go `/v2/device` + production `CompanionApp`/protocol v2; six core scenarios plus one deterministic agent→tool→SQLite mutation pass; no provider/physical promotion |
 | Canonical protocol v2 | 🟡 partial | Backend, firmware and host share v2; Tier-1 proves v2 session/turn flow plus deterministic v1 rejection; physical-device evidence remains pending |
-| Wokwi targeted firmware simulation | ⚪ unproven | Tier-2 is defined in the evidence ladder, but no repository simulation run is recorded yet |
+| Wokwi targeted firmware simulation | ⛔ blocked | Trusted Actions probe records `UNAVAILABLE`: `WOKWI_CLI_TOKEN` is not configured; no simulation ran and no PASS is claimed |
 | Security default-deny | ⚪ unproven | Security hardening is active work; requires adversarial integration evidence |
 | Privacy explicit consent | ⚪ unproven | Retention/memory consent workflow needs end-to-end proof |
 | 24h real-device soak | ⚪ unproven | Hardware-in-the-loop soak pending |
@@ -52,7 +52,7 @@ The current `main` branch includes foundations for the next production stages wi
 - **WebRTC Opus bridge** — Pion WebRTC adapter in parallel with the existing WebSocket transport; latency target remains unproven until measured on real networks.
 - **Expanded GitHub CI/CD** — module lock, race/vet, govulncheck, CodeQL, evidence truth gate, dependency review capability detection, release provenance foundation.
 - **Physical HIL workflow** — fail-closed ESP-IDF build/flash/serial test using `pytest-embedded`; it never falls back to a mock result and runs only when a maintainer manually selects a trusted ref and explicit device port.
-- **Tier-1 headless software device** — production C++ `CompanionApp` + protocol v2 connect to real `companiond` through a host-only WebSocket/libopus adapter; mock-provider evidence is classified `orchestration_only`, never real voice evidence.
+- **Tier-1 headless software device** — production C++ `CompanionApp` + protocol v2 connect to real `companiond` through a host-only WebSocket/libopus adapter; the harness covers reconnect/barge-in/replay/config plus a deterministic production agent→tool→SQLite mutation, while all mock/fake-provider evidence remains `orchestration_only`.
 
 See merged PR #1 for the original implementation diff and deliberately unclaimed gates.
 

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-08-13T15:05:00+07:00",
+  "updated_at": "2026-08-13T15:18:09+07:00",
   "rules": {
     "allowed_statuses": [
       "passed",
@@ -149,13 +149,16 @@
         {
           "kind": "tier1_orchestration",
           "workflow": "software-device-e2e",
-          "run_id": 31680332414,
-          "source_head": "c1dedaa6e6945d560fb7dc6c990da6ee34734d2a",
-          "tested_merge_commit": "f8a6258111c85d11441ba5cd0644bc6774a1a198",
+          "run_id": 31681331610,
+          "source_head": "158f274967601e135d06632b21875947319b343b",
+          "tested_merge_commit": "411c969efcf00d39fa6505f59f431e189103df39",
+          "artifact_id": 9173619212,
+          "artifact_digest": "sha256:914832be799e05ee60e78a580b3efb2369374d65bb47f33a4231c712584dbdba",
+          "promotion": "orchestration_only",
           "assertion": "v2 session/turn path succeeds and a v1 client is deterministically rejected with unsupported_protocol_version"
         }
       ],
-      "reason": "Canonical v2 behavior is now proven at Tier-1 with the production device FSM, but physical-device/network evidence remains pending."
+      "reason": "Canonical v2 behavior is proven at Tier-1 with the production device FSM; physical-device/network evidence remains pending."
     },
     "security_default_deny": {
       "status": "unproven",
@@ -179,27 +182,56 @@
         {
           "kind": "tier1_orchestration",
           "workflow": "software-device-e2e",
-          "run_id": 31680332414,
-          "source_head": "c1dedaa6e6945d560fb7dc6c990da6ee34734d2a",
-          "tested_merge_commit": "f8a6258111c85d11441ba5cd0644bc6774a1a198",
-          "artifact_id": 9173249381,
-          "artifact_digest": "sha256:82889dae3ca92288495af54a0fe8bb3a675e88f5a9e3ac047da4677aaf4c8bf1",
+          "run_id": 31681331610,
+          "source_head": "158f274967601e135d06632b21875947319b343b",
+          "tested_merge_commit": "411c969efcf00d39fa6505f59f431e189103df39",
+          "artifact_id": 9173619212,
+          "artifact_digest": "sha256:914832be799e05ee60e78a580b3efb2369374d65bb47f33a4231c712584dbdba",
+          "promotion": "orchestration_only",
           "providers": {
             "asr": "mock",
             "agent": "mock",
             "tts": "mock"
           },
-          "promotion": "orchestration_only",
           "assertion": "production CompanionApp + protocol v2 passed hello/turn/TTS, duplicate message_id, barge-in, reconnect/new-session, live config/report, and v1-rejection scenarios against real companiond boundary"
+        },
+        {
+          "kind": "tier1_orchestration",
+          "workflow": "software-device-e2e",
+          "run_id": 31681331610,
+          "source_head": "158f274967601e135d06632b21875947319b343b",
+          "tested_merge_commit": "411c969efcf00d39fa6505f59f431e189103df39",
+          "artifact_id": 9173619212,
+          "artifact_digest": "sha256:914832be799e05ee60e78a580b3efb2369374d65bb47f33a4231c712584dbdba",
+          "promotion": "orchestration_only",
+          "providers": {
+            "asr": "mock",
+            "agent": "fake_model",
+            "tts": "mock"
+          },
+          "assertion": "production legacy agent + ToolRegistry + SQLite path produced exactly one authoritative expense.create mutation (50000 VND) and returned the tool result through the same device FSM"
         }
       ],
-      "reason": "Tier-1 proves orchestration over the real backend boundary with mock providers; it is deliberately not real-provider or physical-device evidence."
+      "reason": "Tier-1 now proves core orchestration plus an authoritative tool/store mutation over the real backend boundary, but mock ASR/TTS and deterministic fake-model evidence cannot promote real-provider or physical-device gates."
     },
     "wokwi_tier2": {
-      "status": "unproven",
+      "status": "blocked",
       "production_ready": false,
-      "evidence": [],
-      "reason": "No repository Wokwi firmware scenario has produced token-backed simulation evidence yet. Do not infer simulator coverage from host/Tier-1 CI."
+      "evidence": [
+        {
+          "kind": "wokwi_unavailable",
+          "workflow": "wokwi-tier2",
+          "run_id": 31681331692,
+          "source_head": "158f274967601e135d06632b21875947319b343b",
+          "tested_merge_commit": "411c969efcf00d39fa6505f59f431e189103df39",
+          "artifact_id": 9173574248,
+          "artifact_digest": "sha256:c07a8cc4e3f48b3b0c0653b007490f6b43aa25e89675701914b7fe8e2b286cae",
+          "blocker_code": "missing_wokwi_cli_token",
+          "simulation_ran": false,
+          "promotion": "none"
+        }
+      ],
+      "reason": "Trusted same-repository GitHub Actions probe found WOKWI_CLI_TOKEN unavailable. No simulation ran and no Wokwi PASS is claimed; add the secret before attempting a quota-consuming Tier-2 scenario."
     }
   }
 }
