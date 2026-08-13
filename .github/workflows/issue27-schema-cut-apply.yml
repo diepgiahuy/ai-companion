@@ -1,0 +1,42 @@
+name: issue27-schema-cut-apply
+
+on:
+  push:
+    branches: [agent/issue-27-schema-slice]
+    paths: [.github/workflows/issue27-schema-cut-apply.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: agent/issue-27-schema-slice
+          fetch-depth: 0
+      - name: Apply guarded schema migration
+        run: python3 scripts/issue27_schema_cut.py
+      - name: Format and test migration
+        run: |
+          docker build -f Dockerfile.test -t issue27-schema-test .
+          docker run --rm issue27-schema-test bash -c '
+            gofmt -w backend/internal/store/idempotency.go backend/internal/store/idempotency_run.go backend/internal/store/idempotency_schema.go backend/internal/store/idempotency_schema_cut_test.go backend/internal/store/store.go backend/internal/store/platform.go &&
+            cd backend &&
+            go test ./internal/idempotency ./internal/store ./internal/providers/tools ./internal/memory ./internal/market &&
+            go test -race ./internal/idempotency ./internal/store ./internal/providers/tools
+          '
+          docker run --rm -v "$PWD:/src" -w /src issue27-schema-test bash -c 'gofmt -w backend/internal/store/idempotency.go backend/internal/store/idempotency_run.go backend/internal/store/idempotency_schema.go backend/internal/store/idempotency_schema_cut_test.go backend/internal/store/store.go backend/internal/store/platform.go'
+          git diff --check
+      - name: Commit product changes and remove helpers
+        run: |
+          git config user.name "Diệp Gia Huy"
+          git config user.email "30974088+diepgiahuy@users.noreply.github.com"
+          git rm .github/workflows/issue27-schema-cut-apply.yml scripts/issue27_schema_cut.py
+          git add backend/internal/store
+          git diff --cached --check
+          git commit -m "feat: hard-cut global mutation idempotency keys"
+          git push origin HEAD:agent/issue-27-schema-slice
