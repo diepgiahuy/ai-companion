@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   evidence:
-    name: Evidence and architecture truth gates
+    name: Evidence truth gate
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
