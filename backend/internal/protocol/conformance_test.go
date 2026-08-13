@@ -5,6 +5,7 @@ import (
 	"testing"
 )
 
+// These cases pin behavior that must stay identical across Go and the ESP32 cJSON path.
 func TestConfigVersionUsesCrossRuntimeExactIntegerRange(t *testing.T) {
 	valid := testDeviceConfig()
 	for _, version := range []int64{0, 9_007_199_254_740_991} {
