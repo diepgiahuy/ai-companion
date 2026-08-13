@@ -2,6 +2,10 @@ package observability
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"sync"
@@ -28,6 +32,35 @@ type Correlation struct {
 	SessionID    string `json:"session_id,omitempty"`
 	TurnID       string `json:"turn_id,omitempty"`
 	GenerationID uint64 `json:"generation_id,omitempty"`
+}
+
+// Correlator turns protocol/runtime identifiers into process-local pseudonyms
+// before they reach a Recorder. Client-controlled turn IDs therefore cannot
+// smuggle raw text or PII into telemetry while events in one session remain
+// joinable. The key is never exported or persisted.
+type Correlator struct {
+	key [32]byte
+}
+
+func NewCorrelator(fallbackSeed string) *Correlator {
+	correlator := &Correlator{}
+	if _, err := rand.Read(correlator.key[:]); err != nil {
+		// Observability must never make the application unavailable. The fallback
+		// seed is the already-random server session ID; hashing it still avoids
+		// storing the raw protocol identifier and is only used if OS entropy fails.
+		correlator.key = sha256.Sum256([]byte("companion-observability:" + fallbackSeed))
+	}
+	return correlator
+}
+
+func (c *Correlator) Opaque(value string) string {
+	if c == nil || value == "" {
+		return ""
+	}
+	mac := hmac.New(sha256.New, c.key[:])
+	_, _ = mac.Write([]byte(value))
+	sum := mac.Sum(nil)
+	return "c_" + hex.EncodeToString(sum[:16])
 }
 
 type Event struct {
