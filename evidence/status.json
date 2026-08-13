@@ -1,8 +1,14 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-08-13T00:56:00+07:00",
+  "updated_at": "2026-08-13T15:18:09+07:00",
   "rules": {
-    "allowed_statuses": ["passed", "partial", "unproven", "blocked", "failed"],
+    "allowed_statuses": [
+      "passed",
+      "partial",
+      "unproven",
+      "blocked",
+      "failed"
+    ],
     "production_pass_requires_non_mock_evidence": true,
     "mock_evidence_can_promote": false
   },
@@ -124,7 +130,12 @@
       "status": "unproven",
       "evidence": [],
       "reason": "Pion WebRTC Opus adapter compiles under production tags, but no real-network latency/loss benchmark has been recorded.",
-      "required_metrics": ["p50_first_audio_ms", "p95_first_audio_ms", "packet_loss_recovery", "barge_in_ms"]
+      "required_metrics": [
+        "p50_first_audio_ms",
+        "p95_first_audio_ms",
+        "packet_loss_recovery",
+        "barge_in_ms"
+      ]
     },
     "mcp_external_integration": {
       "status": "unproven",
@@ -132,9 +143,22 @@
       "reason": "Official MCP Go SDK bridge is implemented behind the Companion ToolRegistry/policy boundary, but real external MCP server interoperability/security tests are pending."
     },
     "protocol_v2_negotiation": {
-      "status": "unproven",
-      "evidence": [],
-      "reason": "Protocol/capability negotiation v2 has not been production-proven."
+      "status": "partial",
+      "production_ready": false,
+      "evidence": [
+        {
+          "kind": "tier1_orchestration",
+          "workflow": "software-device-e2e",
+          "run_id": 31681331610,
+          "source_head": "158f274967601e135d06632b21875947319b343b",
+          "tested_merge_commit": "411c969efcf00d39fa6505f59f431e189103df39",
+          "artifact_id": 9173619212,
+          "artifact_digest": "sha256:914832be799e05ee60e78a580b3efb2369374d65bb47f33a4231c712584dbdba",
+          "promotion": "orchestration_only",
+          "assertion": "v2 session/turn path succeeds and a v1 client is deterministically rejected with unsupported_protocol_version"
+        }
+      ],
+      "reason": "Canonical v2 behavior is proven at Tier-1 with the production device FSM; physical-device/network evidence remains pending."
     },
     "security_default_deny": {
       "status": "unproven",
@@ -150,6 +174,64 @@
       "status": "unproven",
       "evidence": [],
       "reason": "24h+ physical ESP32 soak/fault-injection evidence has not been recorded."
+    },
+    "software_device_tier1": {
+      "status": "partial",
+      "production_ready": false,
+      "evidence": [
+        {
+          "kind": "tier1_orchestration",
+          "workflow": "software-device-e2e",
+          "run_id": 31681331610,
+          "source_head": "158f274967601e135d06632b21875947319b343b",
+          "tested_merge_commit": "411c969efcf00d39fa6505f59f431e189103df39",
+          "artifact_id": 9173619212,
+          "artifact_digest": "sha256:914832be799e05ee60e78a580b3efb2369374d65bb47f33a4231c712584dbdba",
+          "promotion": "orchestration_only",
+          "providers": {
+            "asr": "mock",
+            "agent": "mock",
+            "tts": "mock"
+          },
+          "assertion": "production CompanionApp + protocol v2 passed hello/turn/TTS, duplicate message_id, barge-in, reconnect/new-session, live config/report, and v1-rejection scenarios against real companiond boundary"
+        },
+        {
+          "kind": "tier1_orchestration",
+          "workflow": "software-device-e2e",
+          "run_id": 31681331610,
+          "source_head": "158f274967601e135d06632b21875947319b343b",
+          "tested_merge_commit": "411c969efcf00d39fa6505f59f431e189103df39",
+          "artifact_id": 9173619212,
+          "artifact_digest": "sha256:914832be799e05ee60e78a580b3efb2369374d65bb47f33a4231c712584dbdba",
+          "promotion": "orchestration_only",
+          "providers": {
+            "asr": "mock",
+            "agent": "fake_model",
+            "tts": "mock"
+          },
+          "assertion": "production legacy agent + ToolRegistry + SQLite path produced exactly one authoritative expense.create mutation (50000 VND) and returned the tool result through the same device FSM"
+        }
+      ],
+      "reason": "Tier-1 now proves core orchestration plus an authoritative tool/store mutation over the real backend boundary, but mock ASR/TTS and deterministic fake-model evidence cannot promote real-provider or physical-device gates."
+    },
+    "wokwi_tier2": {
+      "status": "blocked",
+      "production_ready": false,
+      "evidence": [
+        {
+          "kind": "wokwi_unavailable",
+          "workflow": "wokwi-tier2",
+          "run_id": 31681331692,
+          "source_head": "158f274967601e135d06632b21875947319b343b",
+          "tested_merge_commit": "411c969efcf00d39fa6505f59f431e189103df39",
+          "artifact_id": 9173574248,
+          "artifact_digest": "sha256:c07a8cc4e3f48b3b0c0653b007490f6b43aa25e89675701914b7fe8e2b286cae",
+          "blocker_code": "missing_wokwi_cli_token",
+          "simulation_ran": false,
+          "promotion": "none"
+        }
+      ],
+      "reason": "Trusted same-repository GitHub Actions probe found WOKWI_CLI_TOKEN unavailable. No simulation ran and no Wokwi PASS is claimed; add the secret before attempting a quota-consuming Tier-2 scenario."
     }
   }
 }
