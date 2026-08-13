@@ -1,5 +1,7 @@
 #pragma once
 
+#include "companion/audio_frontend.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -132,6 +134,9 @@ class CompanionApp final {
 public:
   CompanionApp(Microphone& microphone, Speaker& speaker, Display& display,
                Button& button, VoiceBackend& backend, AppConfig config = {});
+  CompanionApp(Microphone& microphone, Speaker& speaker, Display& display,
+               Button& button, VoiceBackend& backend, AudioFrontend& audio_frontend,
+               AppConfig config = {});
 
   bool start(uint64_t now_ms);
   void tick(uint64_t now_ms);
@@ -145,6 +150,7 @@ private:
   Display& display_;
   Button& button_;
   VoiceBackend& backend_;
+  AudioFrontend* audio_frontend_{};
   AppConfig config_;
   UiState state_{UiState::booting};
   uint64_t recording_started_ms_{};
@@ -163,7 +169,10 @@ private:
   std::array<char, 96> upcoming_{};
   std::array<char, 96> pending_alarm_{};
   std::array<int16_t, kAudioFrameSamples> capture_frame_{};
+  std::array<int16_t, kAudioFrameSamples> cleaned_capture_frame_{};
   std::array<int16_t, kAudioFrameSamples> playback_frame_{};
+  std::array<int16_t, kAudioFrameSamples> playback_reference_frame_{};
+  PlaybackReference24To16 playback_reference_converter_{};
   size_t playback_count_{};
   size_t playback_offset_{};
 
@@ -180,6 +189,8 @@ private:
   void render_idle(uint64_t now_ms);
   void set_upcoming(std::string_view text);
   void set_pending_alarm(std::string_view text);
+  void push_playback_reference(std::span<const int16_t> pcm,
+                               uint32_t sample_rate_hz);
   bool frame_has_voice(std::span<const int16_t> pcm) const;
   void fail(std::string_view reason);
 };
