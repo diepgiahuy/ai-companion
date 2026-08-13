@@ -4,6 +4,62 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 MODEL = "tier1-fake-model"
 
+CASES = {
+    "Tier1 expense 50k": {
+        "id": "expense",
+        "tool": "expense.log",
+        "args": {
+            "items": [{
+                "amount_vnd": 50000,
+                "category": "food",
+                "description": "tier1 deterministic expense",
+                "occurred_at": "2026-08-13T15:00:00+07:00",
+            }]
+        },
+    },
+    "Tier1 budget weekly": {
+        "id": "budget",
+        "tool": "budget.set",
+        "args": {"period": "weekly", "limit_vnd": 1000000},
+    },
+    "Tier1 note": {
+        "id": "note",
+        "tool": "note.create",
+        "args": {"content": "tier1 note"},
+    },
+    "Tier1 journal": {
+        "id": "journal",
+        "tool": "journal.create",
+        "args": {
+            "content": "tier1 journal",
+            "occurred_at": "2026-08-13T15:10:00+07:00",
+        },
+    },
+    "Tier1 reminder": {
+        "id": "reminder",
+        "tool": "reminder.create",
+        "args": {
+            "title": "tier1 reminder",
+            "fire_at": "2026-08-14T09:00:00+07:00",
+        },
+    },
+    "Tier1 timer": {
+        "id": "timer",
+        "tool": "timer.create",
+        "args": {"title": "tier1 timer", "delay_seconds": 600},
+    },
+    "Tier1 memory": {
+        "id": "memory",
+        "tool": "memory.remember",
+        "args": {
+            "key": "preferred_language",
+            "kind": "semantic",
+            "value": "Vietnamese",
+            "valid_from": "2026-08-13T15:20:00+07:00",
+        },
+    },
+}
+
 
 def walk(value):
     yield value
@@ -17,6 +73,17 @@ def walk(value):
 
 def contains_text(value, needle):
     return any(isinstance(item, str) and needle in item for item in walk(value))
+
+
+def current_case(payload):
+    found = []
+    for item in walk(payload.get("input", [])):
+        if not isinstance(item, str):
+            continue
+        for transcript, case in CASES.items():
+            if transcript in item:
+                found.append(case)
+    return found[-1] if found else None
 
 
 def tool_names(payload):
@@ -75,23 +142,11 @@ def text_events(response_id, text):
     ]
 
 
-def expense_call_events(response_id):
-    arguments = json.dumps(
-        {
-            "items": [
-                {
-                    "amount_vnd": 50000,
-                    "category": "food",
-                    "description": "tier1 deterministic expense",
-                    "occurred_at": "2026-08-13T15:00:00+07:00",
-                }
-            ]
-        },
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
-    item_id = "fc_expense_1"
-    call_id = "call_expense_1"
+def function_call_events(response_id, case):
+    arguments = json.dumps(case["args"], ensure_ascii=False, separators=(",", ":"))
+    item_id = f"fc_{case['id']}_1"
+    call_id = f"call_{case['id']}_1"
+    tool = case["tool"]
     return [
         {"type": "response.created", "response": response_meta(response_id, 0)},
         {
@@ -101,7 +156,7 @@ def expense_call_events(response_id):
                 "type": "function_call",
                 "id": item_id,
                 "call_id": call_id,
-                "name": "expense.log",
+                "name": tool,
                 "arguments": "",
                 "status": "in_progress",
             },
@@ -116,7 +171,7 @@ def expense_call_events(response_id):
             "type": "response.function_call_arguments.done",
             "item_id": item_id,
             "output_index": 0,
-            "name": "expense.log",
+            "name": tool,
             "arguments": arguments,
         },
         {
@@ -126,7 +181,7 @@ def expense_call_events(response_id):
                 "type": "function_call",
                 "id": item_id,
                 "call_id": call_id,
-                "name": "expense.log",
+                "name": tool,
                 "arguments": arguments,
                 "status": "completed",
             },
@@ -166,20 +221,21 @@ class Handler(BaseHTTPRequestHandler):
 
         Handler.sequence += 1
         response_id = f"resp_tier1_{Handler.sequence}"
-        is_tool_turn = contains_text(payload.get("input", []), "Hôm nay đi chợ 50k")
-        has_tool_output = successful_function_output(payload, "call_expense_1")
+        case = current_case(payload)
 
-        if is_tool_turn and not has_tool_output:
+        if case is not None:
             names = tool_names(payload)
-            if "expense.log" not in names:
-                self.send_error(409, "expense.log was not exposed by ADK ToolRegistry")
+            if case["tool"] not in names:
+                self.send_error(409, f"{case['tool']} was not exposed by ADK ToolRegistry")
                 return
             if "expense.create" in names:
                 self.send_error(409, "hidden expense.create leaked into ADK ToolRegistry")
                 return
-            events = expense_call_events(response_id)
-        elif is_tool_turn and has_tool_output:
-            events = text_events(response_id, "Đã lưu đúng một khoản 50 nghìn cho Tier-1.")
+            call_id = f"call_{case['id']}_1"
+            if successful_function_output(payload, call_id):
+                events = text_events(response_id, f"Tier-1 tool parity ok: {case['id']}")
+            else:
+                events = function_call_events(response_id, case)
         elif contains_text(payload.get("input", []), "tier1 transcript"):
             events = text_events(response_id, "Tier-1 ADK response.")
         else:
