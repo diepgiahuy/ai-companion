@@ -184,6 +184,71 @@ void require(bool value, std::string_view message) {
   if (!value) throw std::runtime_error(std::string(message));
 }
 
+http::response<http::string_body> admin_request(const std::string& host, const std::string& port,
+                                                const std::string& admin_token, http::verb method,
+                                                const std::string& target, const json& body = json::object()) {
+  net::io_context io;
+  tcp::resolver resolver(io);
+  beast::tcp_stream stream(io);
+  stream.connect(resolver.resolve(host, port));
+  http::request<http::string_body> request{method, target, 11};
+  request.set(http::field::host, host);
+  request.set(http::field::authorization, "Bearer " + admin_token);
+  request.set(http::field::content_type, "application/json");
+  if (method != http::verb::delete_) {
+    request.body() = body.dump();
+    request.prepare_payload();
+  }
+  http::write(stream, request);
+  beast::flat_buffer buffer;
+  http::response<http::string_body> response;
+  http::read(stream, buffer, response);
+  beast::error_code ignored;
+  stream.socket().shutdown(tcp::socket::shutdown_both, ignored);
+  return response;
+}
+
+std::string enroll_device_credential(const std::string& host, const std::string& port,
+                                     const std::string& admin_token, const std::string& device_id) {
+  const auto response = admin_request(
+      host, port, admin_token, http::verb::post,
+      "/v1/admin/devices/" + device_id + "/credential",
+      json{{"user_id", "tier1-owner"}, {"tenant_id", "tier1"}, {"plan", "test"}});
+  require(response.result() == http::status::ok, "device credential enrollment did not return 200");
+  const auto payload = json::parse(response.body());
+  const std::string credential = payload.value("token", "");
+  require(credential.size() >= 16, "device credential enrollment returned no usable credential");
+  return credential;
+}
+
+void revoke_device_credential(const std::string& host, const std::string& port,
+                              const std::string& admin_token, const std::string& device_id) {
+  const auto response = admin_request(host, port, admin_token, http::verb::delete_,
+                                      "/v1/admin/devices/" + device_id + "/credential");
+  require(response.result() == http::status::no_content, "device credential revoke did not return 204");
+}
+
+bool probe_auth_rejected(const std::string& host, const std::string& port,
+                         const std::string& device_id, const std::string& credential) {
+  net::io_context io;
+  tcp::resolver resolver(io);
+  beast::tcp_stream stream(io);
+  stream.connect(resolver.resolve(host, port));
+  http::request<http::empty_body> request{http::verb::get, "/v2/device", 11};
+  request.set(http::field::host, host);
+  request.set(http::field::connection, "Upgrade");
+  request.set(http::field::upgrade, "websocket");
+  request.set("Sec-WebSocket-Version", "13");
+  request.set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
+  request.set("Device-Id", device_id);
+  request.set(http::field::authorization, "Bearer " + credential);
+  http::write(stream, request);
+  beast::flat_buffer buffer;
+  http::response<http::string_body> response;
+  http::read(stream, buffer, response);
+  return response.result() == http::status::unauthorized;
+}
+
 void patch_device_config(const std::string& host, const std::string& port,
                          const std::string& admin_token, const std::string& device_id) {
   net::io_context io;
@@ -211,16 +276,16 @@ void patch_device_config(const std::string& host, const std::string& port,
 }
 
 bool probe_v1_rejection(const std::string& host, const std::string& port,
-                        const std::string& token) {
+                        const std::string& credential, const std::string& device_id) {
   net::io_context io;
   tcp::resolver resolver(io);
   boost::beast::websocket::stream<beast::tcp_stream> ws(io);
   beast::get_lowest_layer(ws).connect(resolver.resolve(host, port));
   ws.set_option(boost::beast::websocket::stream_base::decorator(
       [&](boost::beast::websocket::request_type& request) {
-        request.set(http::field::authorization, "Bearer " + token);
-        request.set("Device-Id", "software-device-negative");
-        request.set("Client-Id", "software-device-negative");
+        request.set(http::field::authorization, "Bearer " + credential);
+        request.set("Device-Id", device_id);
+        request.set("Client-Id", device_id);
       }));
   ws.handshake(host + ":" + port, "/v2/device");
   ws.write(net::buffer(std::string(
@@ -252,7 +317,6 @@ json stats_json(const WebSocketVoiceBackend::Stats& stats) {
 
 int run(int argc, char** argv) {
   std::string url = "ws://127.0.0.1:18000/v2/device";
-  std::string token = "tier1-device-token";
   std::string admin_token = "tier1-admin-token";
   std::string evidence_path = "software-device-evidence.json";
   std::string scenario_set = "core";
@@ -263,7 +327,6 @@ int run(int argc, char** argv) {
       return argv[++i];
     };
     if (arg == "--url") url = value("--url");
-    else if (arg == "--token") token = value("--token");
     else if (arg == "--admin-token") admin_token = value("--admin-token");
     else if (arg == "--evidence") evidence_path = value("--evidence");
     else if (arg == "--scenario-set") scenario_set = value("--scenario-set");
@@ -274,7 +337,9 @@ int run(int argc, char** argv) {
 
   if (scenario_set == "core") {
   results.push_back(run_scenario("hello_turn_tts", [&](ScenarioResult& result) {
-    DeviceFixture fixture(url, token, "software-device-happy");
+    const std::string device = "software-device-happy";
+    const std::string credential = enroll_device_credential(host, port, admin_token, device);
+    DeviceFixture fixture(url, credential, device);
     fixture.require_ready();
     fixture.begin_audio_turn();
     fixture.finish_audio_turn();
@@ -289,7 +354,9 @@ int run(int argc, char** argv) {
   }));
 
   results.push_back(run_scenario("duplicate_message_id", [&](ScenarioResult& result) {
-    DeviceFixture fixture(url, token, "software-device-duplicate");
+    const std::string device = "software-device-duplicate";
+    const std::string credential = enroll_device_credential(host, port, admin_token, device);
+    DeviceFixture fixture(url, credential, device);
     fixture.require_ready();
     fixture.begin_audio_turn();
     require(fixture.backend.resend_last_begin_for_test(), "could not resend begin envelope");
@@ -303,7 +370,9 @@ int run(int argc, char** argv) {
   }));
 
   results.push_back(run_scenario("barge_in_generation", [&](ScenarioResult& result) {
-    DeviceFixture fixture(url, token, "software-device-barge");
+    const std::string device = "software-device-barge";
+    const std::string credential = enroll_device_credential(host, port, admin_token, device);
+    DeviceFixture fixture(url, credential, device);
     fixture.require_ready();
     fixture.begin_audio_turn();
     fixture.finish_audio_turn();
@@ -327,7 +396,9 @@ int run(int argc, char** argv) {
   }));
 
   results.push_back(run_scenario("reconnect_new_session", [&](ScenarioResult& result) {
-    DeviceFixture fixture(url, token, "software-device-reconnect");
+    const std::string device = "software-device-reconnect";
+    const std::string credential = enroll_device_credential(host, port, admin_token, device);
+    DeviceFixture fixture(url, credential, device);
     fixture.require_ready();
     const std::string first = fixture.backend.session_id();
     require(!first.empty(), "first session id missing");
@@ -349,7 +420,8 @@ int run(int argc, char** argv) {
 
   results.push_back(run_scenario("config_update_report", [&](ScenarioResult& result) {
     const std::string device = "software-device-config";
-    DeviceFixture fixture(url, token, device);
+    const std::string credential = enroll_device_credential(host, port, admin_token, device);
+    DeviceFixture fixture(url, credential, device);
     fixture.require_ready();
     const uint64_t before = fixture.app.runtime_config_version();
     patch_device_config(host, port, admin_token, device);
@@ -362,12 +434,26 @@ int run(int argc, char** argv) {
   }));
 
   results.push_back(run_scenario("protocol_v1_rejected", [&](ScenarioResult&) {
-    require(probe_v1_rejection(host, port, token),
+    const std::string device = "software-device-v1-negative";
+    const std::string credential = enroll_device_credential(host, port, admin_token, device);
+    require(probe_v1_rejection(host, port, credential, device),
             "v1 probe did not receive unsupported_protocol_version");
+  }));
+
+  results.push_back(run_scenario("enrolled_auth_rejects_wrong_and_revoked", [&](ScenarioResult&) {
+    const std::string device = "software-device-auth-negative";
+    const std::string credential = enroll_device_credential(host, port, admin_token, device);
+    require(probe_auth_rejected(host, port, device, "wrong-tier1-device-credential"),
+            "wrong per-device credential was not rejected before WebSocket upgrade");
+    revoke_device_credential(host, port, admin_token, device);
+    require(probe_auth_rejected(host, port, device, credential),
+            "revoked per-device credential was not rejected before WebSocket upgrade");
   }));
   } else if (scenario_set == "tool") {
     results.push_back(run_scenario("agent_tool_authoritative_mutation", [&](ScenarioResult& result) {
-      DeviceFixture fixture(url, token, "software-device-tool");
+      const std::string device = "software-device-tool";
+      const std::string credential = enroll_device_credential(host, port, admin_token, device);
+      DeviceFixture fixture(url, credential, device);
       fixture.require_ready();
       fixture.begin_audio_turn();
       fixture.finish_audio_turn();
@@ -397,9 +483,7 @@ int run(int argc, char** argv) {
 
   const char* commit = std::getenv("COMPANION_EVIDENCE_COMMIT");
   const char* fingerprint = std::getenv("COMPANION_EVIDENCE_CONFIG_SHA256");
-  const json providers = scenario_set == "tool"
-                             ? json{{"asr", "mock"}, {"agent", "fake_model"}, {"tts", "mock"}}
-                             : json{{"asr", "mock"}, {"agent", "mock"}, {"tts", "mock"}};
+  const json providers = json{{"asr", "mock"}, {"agent", "adk_fake_model"}, {"tts", "mock"}};
   json evidence{{"schema_version", 1},
                 {"evidence_class", "tier1_orchestration"},
                 {"result", all_passed ? "passed" : "failed"},
