@@ -10,6 +10,7 @@ on:
       - "evidence/**"
       - "README.md"
       - "docs/TEST_EVIDENCE_LADDER.md"
+      - "docs/OBSERVABILITY.md"
       - "scripts/check_evidence.py"
       - ".github/workflows/software-device-e2e.yml"
   push:
@@ -22,6 +23,7 @@ on:
       - "evidence/**"
       - "README.md"
       - "docs/TEST_EVIDENCE_LADDER.md"
+      - "docs/OBSERVABILITY.md"
       - "scripts/check_evidence.py"
       - ".github/workflows/software-device-e2e.yml"
   workflow_dispatch:
@@ -50,15 +52,34 @@ jobs:
             -e COMPANION_EVIDENCE_OUT=/artifacts/software-device/evidence.json \
             -v "$PWD/artifacts:/artifacts" \
             companion-software-device
-      - name: Validate core and representative-tool evidence artifacts
+      - name: Validate core, representative-tool, and observability evidence artifacts
         run: |
+          set -eu
           python3 host/companion_software_device/validate_evidence.py artifacts/software-device/evidence.json
           for evidence in artifacts/software-device/evidence-tool*.json; do
             case "$evidence" in
-              *-db.json) continue ;;
+              *-db.json|*-observability.json) continue ;;
             esac
             python3 host/companion_software_device/validate_evidence.py "$evidence"
           done
+
+          python3 host/companion_software_device/validate_observability.py \
+            artifacts/software-device/evidence-observability-core.json core
+          python3 host/companion_software_device/validate_observability.py \
+            artifacts/software-device/evidence-tool-observability.json tool expense.log
+          python3 host/companion_software_device/validate_observability.py \
+            artifacts/software-device/evidence-tool-budget-observability.json tool budget.set
+          python3 host/companion_software_device/validate_observability.py \
+            artifacts/software-device/evidence-tool-note-observability.json tool note.create
+          python3 host/companion_software_device/validate_observability.py \
+            artifacts/software-device/evidence-tool-journal-observability.json tool journal.create
+          python3 host/companion_software_device/validate_observability.py \
+            artifacts/software-device/evidence-tool-reminder-observability.json tool reminder.create
+          python3 host/companion_software_device/validate_observability.py \
+            artifacts/software-device/evidence-tool-timer-observability.json tool timer.create
+          python3 host/companion_software_device/validate_observability.py \
+            artifacts/software-device/evidence-tool-memory-observability.json tool memory.remember
+
           python3 - <<'PY'
           import json
           from pathlib import Path
