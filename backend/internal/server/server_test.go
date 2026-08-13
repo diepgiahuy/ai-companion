@@ -645,7 +645,7 @@ func TestOTAManifestPublishAndDeviceCompatibility(t *testing.T) {
 	}
 	defer data.Close()
 	firmware := controlplane.NewFirmware(data, nil, false)
-	service := newAuthenticatedTestServer(pipeline.Components{ASR: pipeline.MockASR{}, Agent: pipeline.MockAgent{}, TTS: pipeline.MockTTS{}, Codecs: pipeline.OpusFactory{}}, "device-token", slog.New(slog.NewTextHandler(io.Discard, nil)), WithFirmwareService(firmware), WithAdminToken("admin-token"))
+	service := newAuthenticatedTestServer(pipeline.Components{ASR: pipeline.MockASR{}, Agent: pipeline.MockAgent{}, TTS: pipeline.MockTTS{}, Codecs: pipeline.OpusFactory{}}, WithFirmwareService(firmware), WithAdminToken("admin-token"))
 	ts := httptest.NewServer(service.Handler())
 	defer ts.Close()
 	manifest := controlplane.FirmwareManifest{Version: "1.2.3", Channel: "stable", Board: "esp32-s3-devkitc-1", ProtocolMin: 1, SecurityVersion: 2, URL: "https://firmware.example/1.2.3.bin", SHA256: strings.Repeat("ab", 32), Size: 1024, ExpiresAt: time.Now().Add(time.Hour), MetadataVersion: 7}
