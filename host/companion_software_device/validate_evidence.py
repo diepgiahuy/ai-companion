@@ -18,6 +18,8 @@ if data.get("providers") != {"asr": "mock", "agent": "mock", "tts": "mock"}:
     raise SystemExit("software-device evidence: test-provider identity drifted")
 if data.get("result") != "passed":
     raise SystemExit("software-device evidence: scenario set failed")
+if not re.fullmatch(r"[0-9a-f]{40}", data.get("commit", "")):
+    raise SystemExit("software-device evidence: commit must be a full Git SHA")
 if not re.fullmatch(r"[0-9a-f]{64}", data.get("backend_config_sha256", "")):
     raise SystemExit("software-device evidence: config fingerprint is not SHA-256")
 required = {
