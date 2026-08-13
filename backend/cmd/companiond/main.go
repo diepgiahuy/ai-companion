@@ -31,6 +31,7 @@ import (
 	"companion-server/internal/runtimeconfig"
 	"companion-server/internal/server"
 	"companion-server/internal/store"
+	"companion-server/internal/supervision"
 	"companion-server/internal/usage"
 	promptpkg "companion-server/prompts"
 )
@@ -205,11 +206,25 @@ func main() {
 	service := server.New(components, logger, serverOptions...)
 	rootCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	go service.RunBackground(rootCtx)
-	_ = data.RecoverOutbox(rootCtx)
-	go runOutbox(rootCtx, data, logger)
-	go runMarketWatcher(rootCtx, data, marketService, logger)
-	go runRetention(rootCtx, privacyService, logger)
+	supervisor := supervision.New(rootCtx, logger)
+
+	supervisor.Go("server-background", false, func(ctx context.Context) error {
+		service.RunBackground(ctx)
+		return nil
+	})
+	_ = data.RecoverOutbox(supervisor.Context())
+	supervisor.Go("outbox", false, func(ctx context.Context) error {
+		runOutbox(ctx, data, logger)
+		return nil
+	})
+	supervisor.Go("market-watcher", false, func(ctx context.Context) error {
+		runMarketWatcher(ctx, data, marketService, logger)
+		return nil
+	})
+	supervisor.Go("retention", false, func(ctx context.Context) error {
+		runRetention(ctx, privacyService, logger)
+		return nil
+	})
 
 	httpServer := &http.Server{
 		Addr:              address,
@@ -217,20 +232,30 @@ func main() {
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       90 * time.Second,
 	}
-
-	go func() {
+	supervisor.Go("http-server", true, func(context.Context) error {
 		logger.Info("companion server listening", "address", address)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Error("server stopped", "error", err)
-			os.Exit(1)
+			return err
 		}
-	}()
+		return nil
+	})
 
-	<-rootCtx.Done()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	select {
+	case <-rootCtx.Done():
+	case <-supervisor.Done():
+		if cause := supervisor.Cause(); cause != nil {
+			logger.Error("runtime supervisor requested shutdown", "error", cause)
+		}
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := httpServer.Shutdown(ctx); err != nil {
-		logger.Error("graceful shutdown failed", "error", err)
+	if err := httpServer.Shutdown(shutdownCtx); err != nil {
+		logger.Error("graceful HTTP shutdown failed", "error", err)
+	}
+	supervisor.Stop(context.Canceled)
+	if err := supervisor.Wait(shutdownCtx); err != nil {
+		logger.Error("graceful runtime shutdown failed", "error", err)
 	}
 }
 
