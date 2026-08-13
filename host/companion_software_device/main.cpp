@@ -255,6 +255,7 @@ int run(int argc, char** argv) {
   std::string token = "tier1-device-token";
   std::string admin_token = "tier1-admin-token";
   std::string evidence_path = "software-device-evidence.json";
+  std::string scenario_set = "core";
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
     auto value = [&](const char* name) -> std::string {
@@ -265,11 +266,13 @@ int run(int argc, char** argv) {
     else if (arg == "--token") token = value("--token");
     else if (arg == "--admin-token") admin_token = value("--admin-token");
     else if (arg == "--evidence") evidence_path = value("--evidence");
+    else if (arg == "--scenario-set") scenario_set = value("--scenario-set");
     else throw std::runtime_error("unknown argument: " + arg);
   }
   const auto [host, port] = split_host_port(url);
   std::vector<ScenarioResult> results;
 
+  if (scenario_set == "core") {
   results.push_back(run_scenario("hello_turn_tts", [&](ScenarioResult& result) {
     DeviceFixture fixture(url, token, "software-device-happy");
     fixture.require_ready();
@@ -362,6 +365,23 @@ int run(int argc, char** argv) {
     require(probe_v1_rejection(host, port, token),
             "v1 probe did not receive unsupported_protocol_version");
   }));
+  } else if (scenario_set == "tool") {
+    results.push_back(run_scenario("agent_tool_authoritative_mutation", [&](ScenarioResult& result) {
+      DeviceFixture fixture(url, token, "software-device-tool");
+      fixture.require_ready();
+      fixture.begin_audio_turn();
+      fixture.finish_audio_turn();
+      require(fixture.until([&] { return fixture.app.state() == UiState::ready; }),
+              "tool turn did not return ready");
+      require(fixture.display.contains("Đã lưu đúng một khoản 50 nghìn"),
+              "deterministic model/tool response was not rendered");
+      require(fixture.speaker.samples > 0, "tool turn produced no decoded TTS PCM");
+      result.counters = stats_json(fixture.backend.stats());
+      result.counters["speaker_samples"] = fixture.speaker.samples;
+    }));
+  } else {
+    throw std::runtime_error("unsupported scenario set: " + scenario_set);
+  }
 
   bool all_passed = true;
   json scenarios = json::array();
@@ -377,6 +397,9 @@ int run(int argc, char** argv) {
 
   const char* commit = std::getenv("COMPANION_EVIDENCE_COMMIT");
   const char* fingerprint = std::getenv("COMPANION_EVIDENCE_CONFIG_SHA256");
+  const json providers = scenario_set == "tool"
+                             ? json{{"asr", "mock"}, {"agent", "fake_model"}, {"tts", "mock"}}
+                             : json{{"asr", "mock"}, {"agent", "mock"}, {"tts", "mock"}};
   json evidence{{"schema_version", 1},
                 {"evidence_class", "tier1_orchestration"},
                 {"result", all_passed ? "passed" : "failed"},
@@ -384,7 +407,8 @@ int run(int argc, char** argv) {
                 {"backend_config_sha256", fingerprint == nullptr ? "unknown" : fingerprint},
                 {"device_fsm", "production_companion_app"},
                 {"protocol", "v2"},
-                {"providers", {{"asr", "mock"}, {"agent", "mock"}, {"tts", "mock"}}},
+                {"scenario_set", scenario_set},
+                {"providers", providers},
                 {"promotion", "orchestration_only"},
                 {"scenarios", scenarios}};
   std::ofstream output(evidence_path);
