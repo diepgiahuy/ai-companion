@@ -78,10 +78,14 @@ def text_events(response_id, text):
 def expense_call_events(response_id):
     arguments = json.dumps(
         {
-            "amount_vnd": 50000,
-            "category": "food",
-            "description": "tier1 deterministic expense",
-            "occurred_at": "2026-08-13T15:00:00+07:00",
+            "items": [
+                {
+                    "amount_vnd": 50000,
+                    "category": "food",
+                    "description": "tier1 deterministic expense",
+                    "occurred_at": "2026-08-13T15:00:00+07:00",
+                }
+            ]
         },
         ensure_ascii=False,
         separators=(",", ":"),
@@ -97,7 +101,7 @@ def expense_call_events(response_id):
                 "type": "function_call",
                 "id": item_id,
                 "call_id": call_id,
-                "name": "expense.create",
+                "name": "expense.log",
                 "arguments": "",
                 "status": "in_progress",
             },
@@ -112,7 +116,7 @@ def expense_call_events(response_id):
             "type": "response.function_call_arguments.done",
             "item_id": item_id,
             "output_index": 0,
-            "name": "expense.create",
+            "name": "expense.log",
             "arguments": arguments,
         },
         {
@@ -122,7 +126,7 @@ def expense_call_events(response_id):
                 "type": "function_call",
                 "id": item_id,
                 "call_id": call_id,
-                "name": "expense.create",
+                "name": "expense.log",
                 "arguments": arguments,
                 "status": "completed",
             },
@@ -166,8 +170,12 @@ class Handler(BaseHTTPRequestHandler):
         has_tool_output = successful_function_output(payload, "call_expense_1")
 
         if is_tool_turn and not has_tool_output:
-            if "expense.create" not in tool_names(payload):
-                self.send_error(409, "expense.create was not exposed by ADK ToolRegistry")
+            names = tool_names(payload)
+            if "expense.log" not in names:
+                self.send_error(409, "expense.log was not exposed by ADK ToolRegistry")
+                return
+            if "expense.create" in names:
+                self.send_error(409, "hidden expense.create leaked into ADK ToolRegistry")
                 return
             events = expense_call_events(response_id)
         elif is_tool_turn and has_tool_output:
