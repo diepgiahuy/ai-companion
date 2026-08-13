@@ -1,0 +1,43 @@
+name: issue28-session-apply-v3
+
+on:
+  push:
+    branches: [agent/issue-28-session-slice]
+    paths: [.github/workflows/issue28-session-apply-v3.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: agent/issue-28-session-slice
+          fetch-depth: 0
+      - name: Apply guarded session lifecycle patch
+        run: python3 scripts/issue28_session_lifecycle_patch.py
+      - name: Test server lifecycle in pinned Go image
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src golang:1.26.5-bookworm bash -c '
+            apt-get update >/dev/null &&
+            apt-get install -y --no-install-recommends pkg-config libopus-dev libopusfile-dev >/dev/null &&
+            gofmt -w backend/internal/server/server.go backend/internal/server/session_lifecycle_test.go &&
+            cd backend &&
+            go test ./internal/server ./internal/supervision &&
+            go test -race ./internal/server ./internal/supervision
+          '
+          docker run --rm -v "$PWD:/src" -w /src golang:1.26.5-bookworm bash -c 'gofmt -w backend/internal/server/server.go backend/internal/server/session_lifecycle_test.go'
+          git diff --check
+      - name: Commit product changes and remove all session helpers
+        run: |
+          git config user.name "Diệp Gia Huy"
+          git config user.email "30974088+diepgiahuy@users.noreply.github.com"
+          git rm .github/workflows/issue28-session-apply-v3.yml .github/workflows/issue28-session-apply-v2.yml scripts/issue28_session_lifecycle_patch.py
+          git add backend/internal/server
+          git diff --cached --check
+          git commit -m "feat(runtime): bound session and turn joins"
+          git push origin HEAD:agent/issue-28-session-slice
