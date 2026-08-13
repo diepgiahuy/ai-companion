@@ -10,8 +10,8 @@ import (
 )
 
 // ErrNotBuilt is returned when the binary was compiled without the adk build
-// tag. Keeping the legacy path buildable is intentional: ADK is introduced as
-// a reversible migration until its parity gates pass.
+// tag. Production builds include ADK; a non-ADK build fails closed rather than
+// selecting another product agent implementation.
 var ErrNotBuilt = errors.New("ADK runtime is not included in this build; rebuild with -tags=adk")
 
 // UsageGuard is intentionally framework-neutral so quota policy stays owned by
@@ -32,6 +32,7 @@ type Config struct {
 	PromptVersion string
 	HTTPClient    *http.Client
 	Tools         *capability.ToolRegistry
+	Conversation  ConversationHistory
 	UsageGuard    UsageGuard
 	UsageMeter    usagepkg.Meter
 }
