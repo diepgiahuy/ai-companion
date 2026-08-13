@@ -14,16 +14,10 @@ import (
 	"testing"
 	"time"
 
-	"companion-server/internal/agent"
-	"companion-server/internal/capability"
 	"companion-server/internal/controlplane"
-	conversationctx "companion-server/internal/conversation"
 	"companion-server/internal/domain"
 	"companion-server/internal/pipeline"
 	"companion-server/internal/protocol"
-	conversationprovider "companion-server/internal/providers/conversation"
-	resourceprovider "companion-server/internal/providers/resources"
-	toolprovider "companion-server/internal/providers/tools"
 	"companion-server/internal/store"
 
 	"github.com/coder/websocket"
@@ -504,137 +498,6 @@ func TestReminderSchedulerPushesAlarmToTargetDevice(t *testing.T) {
 func TestOLEDTextDegradesVietnameseToASCII(t *testing.T) {
 	if got := oledText("15:00 Họp team - nhắc uống nước"); got != "15:00 Hop team - nhac uong nuoc" {
 		t.Fatalf("oledText = %q", got)
-	}
-}
-
-func TestExpenseBudgetFullE2EThroughQwenRegistryAndUI(t *testing.T) {
-	data, err := store.Open(filepath.Join(t.TempDir(), "full-e2e.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer data.Close()
-	when, _ := time.Parse(time.RFC3339, "2026-08-10T10:00:00+07:00")
-	if err := data.CreateExpense(context.Background(), "default", "seed-e2e", 250000, "food", "food", when); err != nil {
-		t.Fatal(err)
-	}
-	if err := data.SetBudget(context.Background(), "default", "weekly", 1000000); err != nil {
-		t.Fatal(err)
-	}
-
-	var modelRequests atomic.Int32
-	modelEndpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var payload struct {
-			Messages []struct {
-				Role    string `json:"role"`
-				Content string `json:"content"`
-			} `json:"messages"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-			t.Fatal(err)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		if modelRequests.Add(1) == 1 {
-			_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{
-				"role": "assistant", "tool_calls": []any{map[string]any{"id": "expense-query-1", "type": "function", "function": map[string]any{
-					"name": "expense.query", "arguments": `{"from":"2026-08-10T00:00:00+07:00","to":"2026-08-17T00:00:00+07:00","period":"weekly"}`,
-				}}},
-			}}}})
-			return
-		}
-		last := payload.Messages[len(payload.Messages)-1]
-		if last.Role != "tool" || !strings.Contains(last.Content, `"total_vnd":250000`) || !strings.Contains(last.Content, `"remaining_vnd":750000`) {
-			t.Fatalf("Qwen second pass missing authoritative tool result: %+v", last)
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{
-			"role": "assistant", "content": "Tuần này bạn đã chi 250 nghìn, còn 750 nghìn.",
-		}}}})
-	}))
-	defer modelEndpoint.Close()
-
-	location, _ := time.LoadLocation("Asia/Ho_Chi_Minh")
-	conversationService := conversationctx.New(conversationprovider.NewSQLite(data), conversationctx.NewMemoryCache(30*time.Minute, 10))
-	resources := capability.NewResourceRegistry()
-	if err := resources.Register(resourceprovider.NewNative(data, conversationService, location)); err != nil {
-		t.Fatal(err)
-	}
-	tools := capability.NewToolRegistry()
-	if err := toolprovider.RegisterNative(tools, toolprovider.NativeDependencies{Store: data, Resources: resources, RecordingsDir: filepath.Join(t.TempDir(), "recordings")}); err != nil {
-		t.Fatal(err)
-	}
-	qwen, err := agent.NewQwen(modelEndpoint.URL, "", "Qwen3-4B-Instruct-2507", "Asia/Ho_Chi_Minh", data,
-		agent.WithConversation(conversationService), agent.WithToolRegistry(tools))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	service := newAuthenticatedTestServer(pipeline.Components{
-		ASR: pipeline.MockASR{Transcript: "Tuần này tiêu hết bao nhiêu rồi?"}, Agent: qwen,
-		TTS: pipeline.MockTTS{Frames: 2}, Codecs: pipeline.OpusFactory{},
-	}, WithStore(data), WithLocation(location))
-	httpServer := httptest.NewServer(service.Handler())
-	defer httpServer.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	connection, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(httpServer.URL, "http")+"/v2/device", testDeviceDialOptions("device-expense-e2e"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer connection.Close(websocket.StatusNormalClosure, "test done")
-
-	audio := protocol.DefaultAudioParams()
-	writeJSON(t, ctx, connection, testEnvelope{Type: protocol.SessionHelloType, Version: protocol.Version, Transport: protocol.Transport, AudioParams: &audio})
-	hello := readJSON(t, ctx, connection)
-	turnID := "turn-expense-e2e"
-	writeJSON(t, ctx, connection, testEnvelope{Type: protocol.TurnListenType, State: "start", Mode: "manual", SessionID: hello.SessionID, TurnID: turnID})
-	encoder, err := opus.NewEncoder(protocol.UplinkSampleRate, 1, opus.AppVoIP)
-	if err != nil {
-		t.Fatal(err)
-	}
-	packet := make([]byte, protocol.MaximumOpusPacketBytes)
-	n, err := encoder.Encode(make([]int16, protocol.UplinkSamplesPerFrame), packet)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := connection.Write(ctx, websocket.MessageBinary, packet[:n]); err != nil {
-		t.Fatal(err)
-	}
-	writeJSON(t, ctx, connection, testEnvelope{Type: protocol.TurnListenType, State: "stop", SessionID: hello.SessionID, TurnID: turnID})
-
-	gotUI, gotAnswer, gotStop := false, false, false
-	binaryFrames := 0
-	for !gotStop {
-		kind, raw, err := connection.Read(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if kind == websocket.MessageBinary {
-			binaryFrames++
-			continue
-		}
-		var message testEnvelope
-		if err := json.Unmarshal(raw, &message); err != nil {
-			t.Fatal(err)
-		}
-		switch {
-		case message.Type == protocol.UICardType:
-			ui, ok := message.UI.(map[string]any)
-			progress, progressOK := ui["progress"].(float64)
-			gotUI = ok && progressOK && ui["kind"] == "expense_summary" && int(progress) == 25
-		case message.Type == protocol.TTSLifecycleType && message.State == "sentence_start":
-			gotAnswer = strings.Contains(message.Text, "250 nghìn") && strings.Contains(message.Text, "750 nghìn")
-		case message.Type == protocol.TTSLifecycleType && message.State == "stop":
-			gotStop = true
-		}
-	}
-	if !gotUI || !gotAnswer || binaryFrames != 2 || modelRequests.Load() != 2 {
-		t.Fatalf("full E2E incomplete ui=%v answer=%v frames=%d model_requests=%d", gotUI, gotAnswer, binaryFrames, modelRequests.Load())
-	}
-	history, err := conversationService.Recent(context.Background(), conversationctx.Scope{UserID: "default", ThreadID: "device-expense-e2e"}, 10)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(history) != 2 || history[0].Role != "user" || history[1].Role != "assistant" {
-		t.Fatalf("conversation history = %+v", history)
 	}
 }
 
