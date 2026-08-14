@@ -28,9 +28,11 @@ import (
 )
 
 const (
-	maximumControlQueue = 32
-	maximumMediaQueue   = 24
-	helloTimeout        = 10 * time.Second
+	maximumControlQueue     = 32
+	maximumMediaQueue       = 24
+	helloTimeout             = 10 * time.Second
+	sessionWorkerJoinMax     = 3 * time.Second
+	turnCancellationJoinMax  = 2 * time.Second
 )
 
 type Server struct {
@@ -257,6 +259,7 @@ type turn struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	generation uint64
+	done       chan struct{}
 }
 
 type session struct {
@@ -336,12 +339,18 @@ func newSession(connection *websocket.Conn, components pipeline.Components, hub 
 
 func (s *session) run(parent context.Context) error {
 	ctx, cancel := context.WithCancel(parent)
-	defer cancel()
-	defer s.cancelActive()
 	defer s.connection.Close(websocket.StatusNormalClosure, "session closed")
 
 	writerDone := make(chan error, 1)
 	go func() { writerDone <- s.writeLoop(ctx) }()
+	writerOwned := true
+	defer func() {
+		if writerOwned {
+			cancel()
+			_ = waitForWorker(writerDone, sessionWorkerJoinMax)
+			_ = s.cancelActiveAndJoin(turnCancellationJoinMax)
+		}
+	}()
 
 	helloCtx, helloCancel := context.WithTimeout(ctx, helloTimeout)
 	kind, data, err := s.connection.Read(helloCtx)
@@ -389,14 +398,29 @@ func (s *session) run(parent context.Context) error {
 
 	readDone := make(chan error, 1)
 	go func() { readDone <- s.readLoop(ctx) }()
+	writerOwned = false
+	var result error
+	writerFinished := false
+	readFinished := false
 	select {
-	case err := <-readDone:
-		return err
-	case err := <-writerDone:
-		return err
+	case result = <-readDone:
+		readFinished = true
+	case result = <-writerDone:
+		writerFinished = true
 	case <-ctx.Done():
-		return ctx.Err()
+		result = ctx.Err()
 	}
+	cancel()
+	if !writerFinished && !waitForWorker(writerDone, sessionWorkerJoinMax) {
+		s.logger.Warn("session writer exceeded shutdown bound", "session_id", s.id)
+	}
+	if !readFinished && !waitForWorker(readDone, sessionWorkerJoinMax) {
+		s.logger.Warn("session reader exceeded shutdown bound", "session_id", s.id)
+	}
+	if !s.cancelActiveAndJoin(turnCancellationJoinMax) {
+		s.logger.Warn("active turn exceeded session shutdown bound", "session_id", s.id)
+	}
+	return result
 }
 
 func (s *session) readLoop(ctx context.Context) error {
@@ -483,11 +507,16 @@ func (s *session) handleControl(ctx context.Context, data []byte) error {
 			}
 		})
 	case protocol.TurnAbortType:
-		if _, err := protocol.DecodePayload[protocol.AbortPayload](message); err != nil {
+		payload, err := protocol.DecodePayload[protocol.AbortPayload](message)
+		if err != nil {
 			return err
 		}
+		reason := strings.TrimSpace(payload.Reason)
+		if reason == "" {
+			reason = "client_abort"
+		}
 		return s.processInbound(message.MessageID, data, func() error {
-			s.interruptActive(ctx, "client_abort")
+			s.interruptActive(ctx, reason)
 			return nil
 		})
 	case protocol.AlarmAckType:
@@ -554,10 +583,16 @@ func (s *session) startTurn(parent context.Context, turnID string) error {
 		Correlation: observability.Correlation{SessionID: s.id, TurnID: turnID, GenerationID: generation},
 	})
 	if interrupted != nil {
+		joinStarted := time.Now()
+		joined := waitForTurn(interrupted, turnCancellationJoinMax)
+		joinDuration := time.Since(joinStarted)
 		observability.RecordTo(s.observer, observability.Event{
-			Name: observability.EventTurnInterrupted, Outcome: "cancelled", Reason: "barge_in",
+			Name: observability.EventTurnInterrupted, Outcome: "cancelled", Reason: "barge_in", DurationMS: joinDuration.Milliseconds(),
 			Correlation: observability.Correlation{SessionID: s.id, TurnID: interrupted.id, GenerationID: interrupted.generation},
 		})
+		if !joined {
+			s.logger.Warn("barge-in turn exceeded cancellation join bound", "session_id", s.id, "turn_id", interrupted.id, "join_ms", joinDuration.Milliseconds())
+		}
 		// This terminal notification is intentionally not generation-scoped: it
 		// must survive invalidation of the old turn and tell the device to drop
 		// any already-buffered playback immediately.
@@ -601,6 +636,7 @@ func (s *session) stopTurn(turnID string) error {
 	}
 	s.active.state = "processing"
 	current := s.active
+	current.done = make(chan struct{})
 	pcm := append([]byte(nil), current.pcm...)
 	s.mu.Unlock()
 	go s.processTurn(current, pcm)
@@ -625,6 +661,9 @@ func observabilityOutcome(err error) string {
 }
 
 func (s *session) processTurn(current *turn, pcm []byte) {
+	if current.done != nil {
+		defer close(current.done)
+	}
 	turnStarted := time.Now()
 	runtimeTurn := pipeline.TurnContext{UserID: s.userID, ThreadID: s.threadID, DeviceID: s.deviceID, TenantID: s.tenantID, Plan: s.plan, SessionID: s.id, TurnID: current.id}
 	if s.controlPlane != nil {
@@ -789,9 +828,15 @@ func (s *session) interruptActive(ctx context.Context, reason string) {
 	}
 	s.mu.Unlock()
 	if current != nil {
+		joinStarted := time.Now()
+		joined := waitForTurn(current, turnCancellationJoinMax)
+		joinDuration := time.Since(joinStarted)
 		observability.RecordTo(s.observer, observability.Event{
-			Name: observability.EventTurnInterrupted, Outcome: "cancelled", Reason: reason, Correlation: s.turnCorrelation(current),
+			Name: observability.EventTurnInterrupted, Outcome: "cancelled", Reason: reason, DurationMS: joinDuration.Milliseconds(), Correlation: s.turnCorrelation(current),
 		})
+		if !joined {
+			s.logger.Warn("interrupted turn exceeded cancellation join bound", "session_id", s.id, "turn_id", current.id, "reason", reason, "join_ms", joinDuration.Milliseconds())
+		}
 		_ = s.sendJSONMeta(ctx, protocol.TurnStateType, protocol.Metadata{
 			TurnID: current.id, GenerationID: current.generation,
 		}, protocol.TurnStatePayload{State: "interrupted", Reason: reason})
@@ -884,6 +929,9 @@ func (s *session) sendTurnMediaJSON(ctx context.Context, current *turn, messageT
 	// lane; ordinary audio frame production remains non-blocking via sendTurn.
 	waitCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
+	if err := waitCtx.Err(); err != nil {
+		return err
+	}
 	select {
 	case <-waitCtx.Done():
 		return waitCtx.Err()
@@ -947,6 +995,9 @@ func (s *session) processInbound(messageID string, data []byte, action func() er
 }
 
 func (s *session) send(ctx context.Context, message outbound) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	queue := s.controlWrites
 	label := "control"
 	if message.kind == websocket.MessageBinary {
