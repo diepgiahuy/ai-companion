@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -17,132 +16,107 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/coder/websocket"
-
+	"companion-server/internal/capability"
 	"companion-server/internal/controlplane"
 	"companion-server/internal/domain"
 	"companion-server/internal/observability"
 	"companion-server/internal/pipeline"
 	"companion-server/internal/privacy"
 	"companion-server/internal/protocol"
-	"companion-server/internal/supervision"
+
+	"github.com/coder/websocket"
 )
 
 const (
-	writeQueueDepth       = 64
-	maximumInboundMessage = 64 << 10
-	turnCancellationJoinMax = 2 * time.Second
+	maximumControlQueue = 32
+	maximumMediaQueue   = 24
+	helloTimeout        = 10 * time.Second
 )
 
-type sessionHub struct {
-	mu       sync.Mutex
-	sessions map[string]*session
-}
-
-func newSessionHub() *sessionHub { return &sessionHub{sessions: map[string]*session{}} }
-func (h *sessionHub) register(s *session) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.sessions[s.id] = s
-}
-func (h *sessionHub) unregister(id string) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	delete(h.sessions, id)
-}
-func (h *sessionHub) get(deviceID string) *session {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	for _, s := range h.sessions {
-		if s.deviceID == deviceID {
-			return s
-		}
-	}
-	return nil
-}
-func (h *sessionHub) targets(userID, deviceID string) []*session {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	out := make([]*session, 0)
-	for _, s := range h.sessions {
-		if deviceID != "" && s.deviceID != deviceID {
-			continue
-		}
-		if userID != "" && s.userID != userID {
-			continue
-		}
-		out = append(out, s)
-	}
-	return out
-}
-func (h *sessionHub) identities() []domain.Identity {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	out := make([]domain.Identity, 0, len(h.sessions))
-	for _, s := range h.sessions {
-		out = append(out, s.identity)
-	}
-	return out
-}
-
-// Server is the production-shaped voice transport and control plane.
 type Server struct {
-	components     pipeline.Components
-	logger         *slog.Logger
-	location       *time.Location
-	identity       IdentityResolver
-	deviceAuth     DeviceAuthenticator
-	controlPlane   ControlPlane
-	firmware       FirmwareService
-	privacy        PrivacyService
-	featureCatalog FeatureCatalog
-	credentials    DeviceCredentialManager
-	entitlements   EntitlementManager
-	adminToken     string
-	observer       observability.Recorder
-	hub            *sessionHub
-	mux            *http.ServeMux
-	store          ScheduleStore
-	now            func() time.Time
+	components        pipeline.Components
+	logger            *slog.Logger
+	hub               *sessionHub
+	data              SchedulerRepository
+	schedulerInterval time.Duration
+	location          *time.Location
+	identityResolver  IdentityResolver
+	controlPlane      *controlplane.Service
+	adminToken        string
+	deviceAuth        DeviceAuthenticator
+	credentials       DeviceCredentialManager
+	entitlements      EntitlementManager
+	firmware          *controlplane.FirmwareService
+	privacy           *privacy.Service
+	featureCatalog    *controlplane.FeatureCatalog
+	observer          observability.Recorder
 }
 
 type Option func(*Server)
 
-func WithStore(s ScheduleStore) Option { return func(server *Server) { server.store = s } }
-func WithLocation(location *time.Location) Option {
-	return func(server *Server) { server.location = location }
+func WithStore(data SchedulerRepository) Option {
+	return func(s *Server) { s.data = data }
 }
+
+func WithSchedulerInterval(interval time.Duration) Option {
+	return func(s *Server) { s.schedulerInterval = interval }
+}
+
 func WithIdentityResolver(resolver IdentityResolver) Option {
-	return func(server *Server) { server.identity = resolver }
+	return func(s *Server) {
+		if resolver != nil {
+			s.identityResolver = resolver
+		}
+	}
 }
-func WithDeviceAuthenticator(authenticator DeviceAuthenticator) Option {
-	return func(server *Server) { server.deviceAuth = authenticator }
+
+func WithControlPlane(c *controlplane.Service) Option { return func(s *Server) { s.controlPlane = c } }
+func WithFirmwareService(f *controlplane.FirmwareService) Option {
+	return func(s *Server) { s.firmware = f }
 }
-func WithControlPlane(control ControlPlane) Option {
-	return func(server *Server) { server.controlPlane = control }
-}
-func WithFirmwareService(firmware FirmwareService) Option {
-	return func(server *Server) { server.firmware = firmware }
-}
-func WithPrivacyService(service PrivacyService) Option {
-	return func(server *Server) { server.privacy = service }
-}
-func WithFeatureCatalog(catalog FeatureCatalog) Option {
-	return func(server *Server) { server.featureCatalog = catalog }
+func WithPrivacyService(p *privacy.Service) Option { return func(s *Server) { s.privacy = p } }
+func WithFeatureCatalog(c *controlplane.FeatureCatalog) Option {
+	return func(s *Server) { s.featureCatalog = c }
 }
 func WithAdminToken(token string) Option {
-	return func(server *Server) { server.adminToken = strings.TrimSpace(token) }
+	return func(s *Server) { s.adminToken = strings.TrimSpace(token) }
 }
-func WithDeviceCredentialManager(manager DeviceCredentialManager) Option {
-	return func(server *Server) { server.credentials = manager }
+
+type DeviceAuthenticator interface {
+	AuthenticateDevice(context.Context, string, string) (domain.Identity, bool, error)
 }
-func WithEntitlementManager(manager EntitlementManager) Option {
-	return func(server *Server) { server.entitlements = manager }
+type DeviceCredentialManager interface {
+	EnrollDevice(context.Context, domain.Identity, string) error
+	RevokeDevice(context.Context, string) error
 }
+type EntitlementManager interface {
+	SetEntitlement(context.Context, string, string, bool, *time.Time) error
+}
+
+func WithEntitlementManager(m EntitlementManager) Option {
+	return func(s *Server) { s.entitlements = m }
+}
+
+func WithDeviceCredentialManager(m DeviceCredentialManager) Option {
+	return func(s *Server) { s.credentials = m }
+}
+
+func WithDeviceAuthenticator(a DeviceAuthenticator) Option {
+	return func(s *Server) { s.deviceAuth = a }
+}
+
 func WithObservabilityRecorder(recorder observability.Recorder) Option {
-	return func(server *Server) {
+	return func(s *Server) {
 		if recorder != nil {
-			server.observer = recorder
+			s.observer = recorder
+		}
+	}
+}
+
+func WithLocation(location *time.Location) Option {
+	return func(s *Server) {
+		if location != nil {
+			s.location = location
 		}
 	}
 }
@@ -151,486 +125,522 @@ func New(components pipeline.Components, logger *slog.Logger, options ...Option)
 	if logger == nil {
 		logger = slog.Default()
 	}
-	s := &Server{
-		components:     components,
-		logger:         logger,
-		location:       time.Local,
-		identity:       HeaderIdentityResolver{DefaultUserID: "default"},
-		deviceAuth:     DenyDeviceAuthenticator{},
-		controlPlane:   noopControlPlane{},
-		firmware:       noopFirmware{},
-		privacy:        noopPrivacy{},
-		featureCatalog: noopFeatureCatalog{},
-		credentials:    noopCredentials{},
-		entitlements:   noopEntitlements{},
-		observer:       observability.Nop(),
-		hub:            newSessionHub(),
-		mux:            http.NewServeMux(),
-		now:            time.Now,
+	service := &Server{
+		components: components, logger: logger, observer: observability.Nop(),
+		hub: newSessionHub(), schedulerInterval: 2 * time.Second, location: time.Local, identityResolver: HeaderIdentityResolver{DefaultUserID: "default"},
 	}
 	for _, option := range options {
-		option(s)
+		option(service)
 	}
-	s.routes()
-	return s
+	return service
 }
 
-func (s *Server) Handler() http.Handler { return s.mux }
-
-func (s *Server) routes() {
-	s.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
-	s.mux.HandleFunc("GET /v2/device", s.handleDevice)
-	s.mux.HandleFunc("GET /v1/ota/latest", s.handleOTAGet)
-	s.mux.HandleFunc("GET /v1/admin/devices/{deviceID}/twin", s.handleTwinGet)
-	s.mux.HandleFunc("PATCH /v1/admin/devices/{deviceID}/twin", s.handleTwinPatch)
-	s.mux.HandleFunc("GET /v1/admin/config/schema", s.handleConfigSchema)
-	s.mux.HandleFunc("GET /v1/admin/config/{scopeType}/{scopeID}", s.handleScopedConfigGet)
-	s.mux.HandleFunc("PATCH /v1/admin/config/{scopeType}/{scopeID}", s.handleScopedConfigPatch)
-	s.mux.HandleFunc("GET /v1/admin/features", s.handleFeaturesGet)
-	s.mux.HandleFunc("PATCH /v1/admin/features/{key}", s.handleFeaturePatch)
-	s.mux.HandleFunc("PATCH /v1/admin/users/{userID}/entitlements/{key}", s.handleEntitlementPatch)
-	s.mux.HandleFunc("POST /v1/admin/devices/{deviceID}/credential", s.handleCredentialEnroll)
-	s.mux.HandleFunc("DELETE /v1/admin/devices/{deviceID}/credential", s.handleCredentialRevoke)
-	s.mux.HandleFunc("GET /v1/admin/modules", s.handleModulesGet)
-	s.mux.HandleFunc("PUT /v1/admin/modules/{id}", s.handleModulePut)
-	s.mux.HandleFunc("GET /v1/admin/users/{userID}/privacy", s.handlePrivacyGet)
-	s.mux.HandleFunc("PATCH /v1/admin/users/{userID}/privacy", s.handlePrivacyPatch)
-	s.mux.HandleFunc("POST /v1/admin/firmware", s.handleFirmwarePublish)
-}
-
+// RunBackground runs durable/proactive workers until ctx is cancelled.
+// It is intentionally separate from Handler so unit tests can control lifecycle.
 func (s *Server) RunBackground(ctx context.Context) {
-	if s.store == nil {
-		<-ctx.Done()
+	if s.data == nil {
 		return
 	}
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case now := <-ticker.C:
-			claimed, err := s.store.ClaimDue(context.Background(), now, 16)
-			if err != nil {
-				s.logger.Warn("claim schedules", "error", err)
-				continue
-			}
-			for _, item := range claimed {
-				if err := s.deliver(item, now); err != nil {
-					attempts := item.Attempts + 1
-					backoff := time.Duration(attempts*attempts) * time.Second
-					if attempts >= 5 {
-						backoff = time.Minute
-					}
-					_ = s.store.FailDelivery(context.Background(), item.ID, err.Error(), now.Add(backoff))
-					continue
-				}
-				_ = s.store.CompleteDelivery(context.Background(), item.ID)
-			}
-		}
-	}
+	newReminderScheduler(s.data, s.hub, s.schedulerInterval, s.location, s.logger).run(ctx)
 }
 
-func (s *Server) deliver(item domain.ScheduledItem, now time.Time) error {
-	payload := protocol.AlarmPayload{ID: fmt.Sprintf("schedule-%d", item.ID), Title: item.Title, FiredAt: now.In(s.location).Format(time.RFC3339)}
-	targets := s.hub.targets(item.UserID, item.DeviceID)
-	if len(targets) == 0 {
-		return fmt.Errorf("no connected target")
+func (s *Server) Handler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusOK)
+		writer.Write([]byte("ok"))
+	})
+	mux.HandleFunc("GET /v2/device", s.handleDevice)
+	if s.firmware != nil {
+		mux.HandleFunc("GET /v1/ota", s.handleOTAGet)
 	}
-	var first error
-	for _, target := range targets {
-		if err := target.sendJSON(context.Background(), protocol.AlarmType, payload); err != nil && first == nil {
-			first = err
-		}
+	if s.controlPlane != nil && s.adminToken != "" {
+		mux.HandleFunc("GET /v1/admin/devices/{deviceID}/twin", s.handleTwinGet)
+		mux.HandleFunc("PATCH /v1/admin/devices/{deviceID}/config", s.handleTwinPatch)
+		mux.HandleFunc("GET /v1/admin/config-schema", s.handleConfigSchema)
+		mux.HandleFunc("GET /v1/admin/config/{scopeType}/{scopeID}", s.handleScopedConfigGet)
+		mux.HandleFunc("PATCH /v1/admin/config/{scopeType}/{scopeID}", s.handleScopedConfigPatch)
+		mux.HandleFunc("GET /v1/admin/features", s.handleFeaturesGet)
+		mux.HandleFunc("PATCH /v1/admin/features/{key}", s.handleFeaturePatch)
 	}
-	return first
-}
-
-func (s *Server) handleDevice(w http.ResponseWriter, r *http.Request) {
-	identity, ok := s.authenticateDeviceRequest(r.Context(), r)
-	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
+	if s.credentials != nil && s.adminToken != "" {
+		mux.HandleFunc("POST /v1/admin/devices/{deviceID}/credential", s.handleCredentialEnroll)
+		mux.HandleFunc("DELETE /v1/admin/devices/{deviceID}/credential", s.handleCredentialRevoke)
 	}
-	connection, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
-	if err != nil {
-		s.logger.Warn("websocket accept failed", "error", err)
-		return
+	if s.entitlements != nil && s.adminToken != "" {
+		mux.HandleFunc("PATCH /v1/admin/users/{userID}/entitlements/{key}", s.handleEntitlementPatch)
 	}
-	defer connection.CloseNow()
-
-	ctx, cancel := context.WithCancel(r.Context())
-	defer cancel()
-
-	identity = s.identity.Resolve(r, identity.DeviceID)
-	identity.UserID = strings.TrimSpace(identity.UserID)
-	if identity.UserID == "" {
-		identity.UserID = "default"
+	if s.firmware != nil && s.adminToken != "" {
+		mux.HandleFunc("POST /v1/admin/firmware", s.handleFirmwarePublish)
 	}
-	identity.DeviceID = strings.TrimSpace(identity.DeviceID)
-	identity.TenantID = strings.TrimSpace(identity.TenantID)
-	identity.Plan = strings.TrimSpace(identity.Plan)
-	authenticated, ok := s.authenticateDeviceRequest(ctx, r)
-	if !ok {
-		_ = connection.Close(websocket.StatusPolicyViolation, "device credential changed during upgrade")
-		return
+	if s.privacy != nil && s.adminToken != "" {
+		mux.HandleFunc("GET /v1/admin/users/{userID}/privacy", s.handlePrivacyGet)
+		mux.HandleFunc("PATCH /v1/admin/users/{userID}/privacy", s.handlePrivacyPatch)
 	}
-	identity.UserID = authenticated.UserID
-	identity.DeviceID = authenticated.DeviceID
-	identity.TenantID = authenticated.TenantID
-	identity.Plan = authenticated.Plan
-
-	sessionID := randomID()
-	sess := &session{
-		id:            sessionID,
-		deviceID:      identity.DeviceID,
-		userID:        identity.UserID,
-		identity:      identity,
-		connection:    connection,
-		components:    s.components,
-		logger:        s.logger,
-		observer:      s.observer,
-		controlWrites: make(chan outbound, writeQueueDepth),
-		mediaWrites:   make(chan outbound, writeQueueDepth),
-		seenInbound:   make(map[string]inboundRecord),
-		seenOrder:     make([]string, 0, 256),
+	if s.featureCatalog != nil && s.adminToken != "" {
+		mux.HandleFunc("GET /v1/admin/modules", s.handleModulesGet)
+		mux.HandleFunc("PUT /v1/admin/modules/{id}", s.handleModulePut)
 	}
-	s.hub.register(sess)
-	defer s.hub.unregister(sessionID)
-	if err := sess.run(ctx, s.controlPlane); err != nil && !errors.Is(err, context.Canceled) && !websocket.CloseStatus(err).IsValid() {
-		s.logger.Warn("device session ended", "error", err, "session_id", sessionID, "device_id", identity.DeviceID)
-	}
+	return mux
 }
 
 func (s *Server) authenticateDeviceRequest(ctx context.Context, request *http.Request) (domain.Identity, bool) {
 	deviceID := strings.TrimSpace(request.Header.Get("Device-Id"))
-	authorization := strings.TrimSpace(request.Header.Get("Authorization"))
-	if deviceID == "" || !strings.HasPrefix(authorization, "Bearer ") {
-		return domain.Identity{}, false
+	if s.deviceAuth == nil {
+		return domain.Identity{DeviceID: deviceID}, false
 	}
-	token := strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer "))
-	if token == "" {
-		return domain.Identity{}, false
+	raw := strings.TrimSpace(strings.TrimPrefix(request.Header.Get("Authorization"), "Bearer "))
+	if deviceID == "" || raw == "" {
+		return domain.Identity{DeviceID: deviceID}, false
 	}
-	identity, err := s.deviceAuth.AuthenticateDevice(ctx, deviceID, token)
+	identity, ok, err := s.deviceAuth.AuthenticateDevice(ctx, deviceID, raw)
+	return identity, err == nil && ok
+}
+
+func (s *Server) handleDevice(writer http.ResponseWriter, request *http.Request) {
+	authenticated, ok := s.authenticateDeviceRequest(request.Context(), request)
+	if !ok {
+		http.Error(writer, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	connection, err := websocket.Accept(writer, request, &websocket.AcceptOptions{
+		InsecureSkipVerify: true,
+	})
 	if err != nil {
-		return domain.Identity{}, false
+		s.logger.Warn("websocket accept failed", "error", err)
+		return
 	}
-	return identity, true
+	connection.SetReadLimit(protocol.MaximumEnvelopeBytes)
+	identity := s.identityResolver.Resolve(request, authenticated.DeviceID)
+	if s.deviceAuth != nil {
+		// In database-auth mode ownership/tenant/plan are trusted enrollment claims,
+		// never client-controlled transport headers. Thread remains a conversation concern.
+		identity.UserID = authenticated.UserID
+		identity.TenantID = authenticated.TenantID
+		identity.Plan = authenticated.Plan
+		identity.DeviceID = authenticated.DeviceID
+	}
+	ack := func(ctx context.Context, id int64) error {
+		if s.data == nil {
+			return fmt.Errorf("scheduler repository unavailable")
+		}
+		return s.data.AcknowledgeReminder(ctx, identity.UserID, identity.DeviceID, id)
+	}
+	session, err := newSession(connection, s.components, s.hub, identity.DeviceID, identity.UserID, identity.ThreadID, identity.TenantID, identity.Plan, ack, s.controlPlane, s.observer, s.logger)
+	if err != nil {
+		connection.Close(websocket.StatusInternalError, "codec unavailable")
+		s.logger.Error("initialize Opus session", "error", err)
+		return
+	}
+	sessionStarted := time.Now()
+	sessionErr := session.run(request.Context())
+	observability.RecordTo(s.observer, observability.Event{
+		Name: observability.EventSessionEnd, DurationMS: time.Since(sessionStarted).Milliseconds(),
+		Outcome: observabilityOutcome(sessionErr), Correlation: observability.Correlation{SessionID: session.id},
+	})
+	if sessionErr != nil && !errors.Is(sessionErr, context.Canceled) {
+		s.logger.Info("device session ended", "session_id", session.id, "error", sessionErr)
+	}
 }
 
 type outbound struct {
 	kind       websocket.MessageType
 	data       []byte
-	turnScoped bool
 	generation uint64
-}
-
-type inboundRecord struct {
-	digest  [32]byte
-	outcome error
+	turnScoped bool
 }
 
 type turn struct {
 	id         string
-	generation uint64
+	state      string
+	pcm        []byte
 	ctx        context.Context
 	cancel     context.CancelFunc
-	done       chan struct{}
-	mode       string
-	state      string
-	decoder    pipeline.Decoder
-	pcm        []byte
+	generation uint64
 }
 
 type session struct {
-	id         string
-	deviceID   string
-	userID     string
-	identity   domain.Identity
-	connection *websocket.Conn
-	components pipeline.Components
-	logger     *slog.Logger
-	observer   observability.Recorder
-
+	id            string
+	deviceID      string
+	userID        string
+	threadID      string
+	tenantID      string
+	plan          string
+	ackReminder   func(context.Context, int64) error
+	connection    *websocket.Conn
+	components    pipeline.Components
+	hub           *sessionHub
+	logger        *slog.Logger
+	observer      observability.Recorder
 	controlWrites chan outbound
 	mediaWrites   chan outbound
+	mu            sync.Mutex
+	active        *turn
+	generation    uint64
+	codec         pipeline.AudioCodec
+	controlPlane  *controlplane.Service
 	messageSeq    atomic.Uint64
-
-	mu         sync.Mutex
-	generation uint64
-	active     *turn
-	seenInbound map[string]inboundRecord
-	seenOrder   []string
+	seenInbound   map[string]inboundRecord
+	seenOrder     []string
 }
 
-func (s *session) run(ctx context.Context, control ControlPlane) error {
-	ready, _, err := s.readEnvelope(ctx)
-	if err != nil {
-		return err
-	}
-	if ready.Type != protocol.HelloType {
-		_ = s.writeHandshakeError(ctx, protocol.InvalidStateCode, "first message must be hello", ready.CorrelationID)
-		return fmt.Errorf("first message must be hello")
-	}
-	var hello protocol.HelloPayload
-	if err := json.Unmarshal(ready.Payload, &hello); err != nil {
-		_ = s.writeHandshakeError(ctx, protocol.InvalidPayloadCode, "invalid hello payload", ready.CorrelationID)
-		return err
-	}
-	if hello.ProtocolVersion != protocol.Version {
-		_ = s.writeHandshakeError(ctx, protocol.UnsupportedProtocolCode, fmt.Sprintf("protocol v%d required", protocol.Version), ready.CorrelationID)
-		return fmt.Errorf("unsupported protocol version")
-	}
-	if strings.TrimSpace(hello.DeviceID) != "" && strings.TrimSpace(hello.DeviceID) != s.deviceID {
-		_ = s.writeHandshakeError(ctx, protocol.InvalidPayloadCode, "hello device_id does not match authenticated device", ready.CorrelationID)
-		return fmt.Errorf("hello device_id does not match authenticated device")
-	}
+type inboundRecord struct {
+	digest  [sha256.Size]byte
+	outcome error
+}
 
-	resolved, err := control.ManifestFor(ctx, controlplane.ResolutionContext{UserID: s.identity.UserID, DeviceID: s.identity.DeviceID, TenantID: s.identity.TenantID, Plan: s.identity.Plan})
+func newSession(connection *websocket.Conn, components pipeline.Components, hub *sessionHub, deviceID, userID, threadID, tenantID, plan string, ack func(context.Context, int64) error, control *controlplane.Service, observer observability.Recorder, logger *slog.Logger) (*session, error) {
+	if components.Codecs == nil {
+		return nil, fmt.Errorf("codec factory is required")
+	}
+	codec, err := components.Codecs.New()
 	if err != nil {
-		return err
+		return nil, err
 	}
-	config := protocolConfig(resolved.Desired)
-	if err := s.connection.Write(ctx, websocket.MessageText, mustEncode(protocol.SessionReadyType, protocol.Metadata{SessionID: s.id, CorrelationID: ready.CorrelationID}, protocol.SessionReadyPayload{SessionID: s.id, DeviceID: s.deviceID, ProtocolVersion: protocol.Version, Config: config, ConfigVersion: resolved.DesiredVersion})); err != nil {
-		return err
+	id := randomID()
+	if strings.TrimSpace(deviceID) == "" {
+		deviceID = id
 	}
+	if strings.TrimSpace(userID) == "" {
+		userID = "default"
+	}
+	if strings.TrimSpace(threadID) == "" {
+		threadID = deviceID
+		if strings.TrimSpace(threadID) == "" {
+			threadID = "default"
+		}
+	}
+	if observer == nil {
+		observer = observability.Nop()
+	}
+	return &session{
+		id:            id,
+		deviceID:      deviceID,
+		userID:        userID,
+		threadID:      threadID,
+		tenantID:      strings.TrimSpace(tenantID),
+		plan:          strings.TrimSpace(plan),
+		ackReminder:   ack,
+		connection:    connection,
+		components:    components,
+		hub:           hub,
+		logger:        logger,
+		observer:      observer,
+		controlWrites: make(chan outbound, maximumControlQueue),
+		mediaWrites:   make(chan outbound, maximumMediaQueue),
+		codec:         codec,
+		controlPlane:  control,
+		seenInbound:   make(map[string]inboundRecord),
+	}, nil
+}
 
-	runCtx, cancel := context.WithCancel(ctx)
+func (s *session) run(parent context.Context) error {
+	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
-	workerGroup := supervision.New(runCtx)
-	writeDone := workerGroup.Go("session-write", true, func(workerCtx context.Context) error {
-		return s.writeLoop(workerCtx)
-	})
-	readDone := workerGroup.Go("session-read", true, func(workerCtx context.Context) error {
-		return s.readLoop(workerCtx)
-	})
-	var runErr error
-	select {
-	case result := <-readDone:
-		runErr = result.Err
-		cancel()
-	case result := <-writeDone:
-		runErr = result.Err
-		cancel()
-	case <-ctx.Done():
-		runErr = ctx.Err()
-		cancel()
-	}
-	joined := workerGroup.Wait(3 * time.Second)
-	turnJoined := s.cancelActiveAndJoin(turnCancellationJoinMax)
-	if !joined || !turnJoined {
-		s.logger.Warn("device session workers exceeded shutdown bound", "session_id", s.id, "workers_joined", joined, "turn_joined", turnJoined)
-	}
-	if runErr == nil {
-		runErr = workerGroup.Err()
-	}
-	return runErr
-}
+	defer s.cancelActive()
+	defer s.connection.Close(websocket.StatusNormalClosure, "session closed")
 
-func mustEncode(messageType protocol.MessageType, metadata protocol.Metadata, payload any) []byte {
-	data, err := protocol.Encode(messageType, metadata, payload)
+	writerDone := make(chan error, 1)
+	go func() { writerDone <- s.writeLoop(ctx) }()
+
+	helloCtx, helloCancel := context.WithTimeout(ctx, helloTimeout)
+	kind, data, err := s.connection.Read(helloCtx)
+	helloCancel()
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("read hello: %w", err)
 	}
-	return data
+	if kind != websocket.MessageText {
+		return fmt.Errorf("hello must be a text message")
+	}
+	hello, err := protocol.Decode(data)
+	if err != nil {
+		_ = s.writeHandshakeError(ctx, protocol.ErrorCode(err), err.Error(), "")
+		return fmt.Errorf("decode hello: %w", err)
+	}
+	helloPayload, err := protocol.DecodePayload[protocol.HelloPayload](hello)
+	if err != nil {
+		_ = s.writeHandshakeError(ctx, protocol.ErrorCode(err), err.Error(), hello.MessageID)
+		return fmt.Errorf("decode hello payload: %w", err)
+	}
+	if err := protocol.ValidateHello(hello, helloPayload); err != nil {
+		_ = s.writeHandshakeError(ctx, protocol.InvalidEnvelopeCode, err.Error(), hello.MessageID)
+		return err
+	}
+	audio := protocol.DownlinkAudioParams()
+	response := protocol.ReadyPayload{Transport: protocol.Transport, AudioParams: audio}
+	if s.controlPlane != nil {
+		if twin, e := s.controlPlane.ManifestFor(ctx, controlplane.ResolutionContext{UserID: s.userID, DeviceID: s.deviceID, TenantID: s.tenantID, Plan: s.plan}); e == nil {
+			c := protocolConfig(twin.Desired)
+			response.Config = &c
+			response.ConfigVersion = twin.DesiredVersion
+		}
+	}
+	if err := s.sendJSONMeta(ctx, protocol.SessionReadyType, protocol.Metadata{CorrelationID: hello.MessageID}, response); err != nil {
+		return err
+	}
+	observability.RecordTo(s.observer, observability.Event{
+		Name: observability.EventSessionReady, Outcome: "ok",
+		Correlation: observability.Correlation{SessionID: s.id},
+	})
+	if s.hub != nil {
+		s.hub.register(s.deviceID, s)
+		defer s.hub.unregister(s.deviceID, s)
+	}
+
+	readDone := make(chan error, 1)
+	go func() { readDone <- s.readLoop(ctx) }()
+	select {
+	case err := <-readDone:
+		return err
+	case err := <-writerDone:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (s *session) readLoop(ctx context.Context) error {
 	for {
-		envelope, kind, err := s.readEnvelope(ctx)
+		kind, data, err := s.connection.Read(ctx)
 		if err != nil {
 			return err
 		}
-		if kind == websocket.MessageBinary {
-			if err := s.handleBinary(ctx, envelope.Payload); err != nil {
-				return err
+		switch kind {
+		case websocket.MessageText:
+			if err := s.handleControl(ctx, data); err != nil {
+				s.sendError(ctx, protocol.ErrorCode(err), err.Error(), "")
 			}
-			continue
-		}
-		if err := s.handleEnvelope(ctx, envelope); err != nil {
-			var protocolError *protocol.ProtocolError
-			if errors.As(err, &protocolError) {
-				s.sendError(ctx, protocolError.Code, protocolError.Detail, envelope.TurnID)
-				continue
+		case websocket.MessageBinary:
+			if err := s.handleAudio(data); err != nil {
+				s.sendError(ctx, "invalid_audio", err.Error(), "")
 			}
-			return err
 		}
 	}
-}
-
-func (s *session) readEnvelope(ctx context.Context) (protocol.Envelope, websocket.MessageType, error) {
-	kind, data, err := s.connection.Read(ctx)
-	if err != nil {
-		return protocol.Envelope{}, 0, err
-	}
-	if len(data) > maximumInboundMessage {
-		return protocol.Envelope{}, 0, fmt.Errorf("message exceeds maximum size")
-	}
-	if kind == websocket.MessageBinary {
-		return protocol.Envelope{Payload: data}, kind, nil
-	}
-	envelope, err := protocol.Decode(data)
-	return envelope, kind, err
 }
 
 func (s *session) writeLoop(ctx context.Context) error {
-	for {
-		var message outbound
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case message = <-s.controlWrites:
-		default:
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case message = <-s.controlWrites:
-			case message = <-s.mediaWrites:
-			}
-		}
+	write := func(message outbound) error {
+		// A cancelled/interrupting turn may already have media/control items queued.
+		// Never let those stale generation items reach the device after barge-in.
 		if !s.outboundCurrent(message) {
-			continue
+			return nil
 		}
 		writeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		err := s.connection.Write(writeCtx, message.kind, message.data)
 		cancel()
+		return err
+	}
+	for {
+		// Always drain control first when available so alarms/config/abort are not
+		// trapped behind the ordered TTS media stream.
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case message := <-s.controlWrites:
+			if err := write(message); err != nil {
+				return err
+			}
+			continue
+		default:
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case message := <-s.controlWrites:
+			if err := write(message); err != nil {
+				return err
+			}
+		case message := <-s.mediaWrites:
+			if err := write(message); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func (s *session) handleControl(ctx context.Context, data []byte) error {
+	message, err := protocol.Decode(data)
+	if err != nil {
+		return fmt.Errorf("decode control message: %w", err)
+	}
+	if message.SessionID != s.id {
+		return fmt.Errorf("session_id does not match")
+	}
+	switch message.Type {
+	case protocol.TurnListenType:
+		payload, err := protocol.DecodePayload[protocol.ListenPayload](message)
 		if err != nil {
 			return err
 		}
-	}
-}
-
-func (s *session) handleEnvelope(ctx context.Context, envelope protocol.Envelope) error {
-	switch envelope.Type {
-	case protocol.ListenStartType:
-		var payload protocol.ListenStartPayload
-		if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
-			return &protocol.ProtocolError{Code: protocol.InvalidPayloadCode, Detail: err.Error()}
-		}
-		return s.processInbound(envelope.MessageID, mustEncode(envelope.Type, envelope.Metadata, payload), func() error {
-			return s.startTurn(ctx, envelope.TurnID, payload.Mode)
-		})
-	case protocol.ListenStopType:
-		return s.processInbound(envelope.MessageID, mustEncode(envelope.Type, envelope.Metadata, map[string]any{}), func() error {
-			return s.finishTurn(ctx, envelope.TurnID)
-		})
-	case protocol.AbortType:
-		var payload protocol.AbortPayload
-		if len(envelope.Payload) != 0 && string(envelope.Payload) != "null" {
-			if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
-				return &protocol.ProtocolError{Code: protocol.InvalidPayloadCode, Detail: err.Error()}
+		return s.processInbound(message.MessageID, data, func() error {
+			switch payload.State {
+			case "start":
+				return s.startTurn(ctx, message.TurnID)
+			case "stop":
+				return s.stopTurn(message.TurnID)
+			default:
+				return fmt.Errorf("unsupported listen state %q", payload.State)
 			}
+		})
+	case protocol.TurnAbortType:
+		if _, err := protocol.DecodePayload[protocol.AbortPayload](message); err != nil {
+			return err
 		}
-		return s.processInbound(envelope.MessageID, mustEncode(envelope.Type, envelope.Metadata, payload), func() error {
-			s.interruptActive(ctx, payload.Reason)
+		return s.processInbound(message.MessageID, data, func() error {
+			s.interruptActive(ctx, "client_abort")
 			return nil
 		})
-	case protocol.ConfigAppliedType:
-		var payload protocol.ConfigAppliedPayload
-		if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
-			return &protocol.ProtocolError{Code: protocol.InvalidPayloadCode, Detail: err.Error()}
-		}
-		return s.processInbound(envelope.MessageID, mustEncode(envelope.Type, envelope.Metadata, payload), func() error {
-			return s.handleConfigApplied(ctx, payload)
-		})
 	case protocol.AlarmAckType:
-		var payload protocol.AlarmAckPayload
-		if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
-			return &protocol.ProtocolError{Code: protocol.InvalidPayloadCode, Detail: err.Error()}
+		if s.ackReminder == nil {
+			return fmt.Errorf("alarm acknowledgement is unavailable")
 		}
-		return s.processInbound(envelope.MessageID, mustEncode(envelope.Type, envelope.Metadata, payload), func() error {
-			return s.handleAlarmAck(ctx, payload)
+		payload, err := protocol.DecodePayload[protocol.AlarmAckPayload](message)
+		if err != nil {
+			return err
+		}
+		id, err := parseAlarmID(payload.AlarmID)
+		if err != nil {
+			return err
+		}
+		return s.processInbound(message.MessageID, data, func() error { return s.ackReminder(ctx, id) })
+	case protocol.ConfigReportType:
+		if s.controlPlane == nil {
+			return fmt.Errorf("config reporting unavailable")
+		}
+		payload, err := protocol.DecodePayload[protocol.ConfigReportPayload](message)
+		if err != nil {
+			return err
+		}
+		return s.processInbound(message.MessageID, data, func() error {
+			if !payload.Applied {
+				s.logger.Warn("device rejected runtime config", "device_id", s.deviceID, "version", payload.ConfigVersion)
+				return nil
+			}
+			return s.controlPlane.Report(ctx, s.userID, s.deviceID, payload.ConfigVersion, controlConfig(payload.Config))
 		})
+	case protocol.SessionPingType:
+		if _, err := protocol.DecodePayload[protocol.EmptyPayload](message); err != nil {
+			return err
+		}
+		return s.sendJSONMeta(ctx, protocol.SessionPongType, protocol.Metadata{CorrelationID: message.MessageID}, protocol.EmptyPayload{})
 	default:
-		return &protocol.ProtocolError{Code: protocol.UnknownMessageTypeCode, Detail: fmt.Sprintf("unsupported type %q", envelope.Type)}
+		return &protocol.ProtocolError{Code: protocol.InvalidEnvelopeCode, Detail: fmt.Sprintf("message type %q is invalid in this direction", message.Type)}
 	}
 }
 
-func (s *session) handleBinary(ctx context.Context, data []byte) error {
-	if len(data) == 0 {
-		return nil
+func (s *session) startTurn(parent context.Context, turnID string) error {
+	if strings.TrimSpace(turnID) == "" {
+		return fmt.Errorf("turn_id is required")
 	}
+
+	var interrupted *turn
 	s.mu.Lock()
-	current := s.active
-	if current == nil {
-		s.mu.Unlock()
-		return &protocol.ProtocolError{Code: protocol.InvalidStateCode, Detail: "audio received without active turn"}
+	if s.active != nil {
+		interrupted = s.active
+		interrupted.cancel()
+		s.active = nil
 	}
-	decoder := current.decoder
+	s.generation++
+	generation := s.generation
+	ctx, cancel := context.WithCancel(parent)
+	s.active = &turn{
+		id: turnID, state: "listening", ctx: ctx, cancel: cancel,
+		pcm: make([]byte, 0, protocol.UplinkSampleRate*2), generation: generation,
+	}
 	s.mu.Unlock()
 
-	pcm, err := decoder.Decode(data)
-	if err != nil {
-		return err
+	observability.RecordTo(s.observer, observability.Event{
+		Name: observability.EventTurnStart, Outcome: "ok",
+		Correlation: observability.Correlation{SessionID: s.id, TurnID: turnID, GenerationID: generation},
+	})
+	if interrupted != nil {
+		observability.RecordTo(s.observer, observability.Event{
+			Name: observability.EventTurnInterrupted, Outcome: "cancelled", Reason: "barge_in",
+			Correlation: observability.Correlation{SessionID: s.id, TurnID: interrupted.id, GenerationID: interrupted.generation},
+		})
+		// This terminal notification is intentionally not generation-scoped: it
+		// must survive invalidation of the old turn and tell the device to drop
+		// any already-buffered playback immediately.
+		_ = s.sendJSONMeta(parent, protocol.TurnStateType, protocol.Metadata{
+			TurnID: interrupted.id, GenerationID: interrupted.generation,
+		}, protocol.TurnStatePayload{State: "interrupted", Reason: "barge_in"})
 	}
-	s.mu.Lock()
-	if s.active != current || current.ctx.Err() != nil {
-		s.mu.Unlock()
-		return nil
-	}
-	current.pcm = append(current.pcm, pcm...)
-	s.mu.Unlock()
 	return nil
 }
 
-func (s *session) startTurn(parent context.Context, turnID, mode string) error {
-	turnID = strings.TrimSpace(turnID)
-	if turnID == "" {
-		return &protocol.ProtocolError{Code: protocol.InvalidPayloadCode, Detail: "turn_id is required"}
+func (s *session) handleAudio(data []byte) error {
+	if len(data) == 0 || len(data) > protocol.MaximumOpusPacketBytes {
+		return fmt.Errorf("Opus packet has invalid size %d", len(data))
 	}
-	mode = strings.TrimSpace(mode)
-	if mode != "manual" && mode != "auto_vad" {
-		return &protocol.ProtocolError{Code: protocol.InvalidPayloadCode, Detail: "listen mode must be manual or auto_vad"}
-	}
-	decoder, err := s.components.Codecs.NewDecoder()
+	pcm, err := s.codec.DecodeUplink(data)
 	if err != nil {
 		return err
 	}
-
-	s.interruptActive(parent, "new_turn")
 	s.mu.Lock()
-	s.generation++
-	turnCtx, cancel := context.WithCancel(parent)
-	current := &turn{id: turnID, generation: s.generation, ctx: turnCtx, cancel: cancel, done: make(chan struct{}), mode: mode, state: "listening", decoder: decoder}
-	s.active = current
-	s.mu.Unlock()
-	return s.sendTurnJSON(parent, current, protocol.TurnStateType, protocol.TurnStatePayload{State: "listening"})
+	defer s.mu.Unlock()
+	if s.active == nil || s.active.state != "listening" {
+		return fmt.Errorf("audio received outside a listening turn")
+	}
+	maximum := protocol.UplinkSampleRate * 2 * protocol.MaximumAudioSecs
+	if len(s.active.pcm)+len(pcm) > maximum {
+		return fmt.Errorf("turn exceeds %d seconds", protocol.MaximumAudioSecs)
+	}
+	s.active.pcm = append(s.active.pcm, pcm...)
+	return nil
 }
 
-func (s *session) finishTurn(parent context.Context, turnID string) error {
+func (s *session) stopTurn(turnID string) error {
 	s.mu.Lock()
+	if s.active == nil || s.active.id != turnID || s.active.state != "listening" {
+		s.mu.Unlock()
+		return fmt.Errorf("no matching listening turn")
+	}
+	if len(s.active.pcm) == 0 {
+		s.mu.Unlock()
+		return fmt.Errorf("turn contains no audio")
+	}
+	s.active.state = "processing"
 	current := s.active
-	if current == nil || current.id != turnID {
-		s.mu.Unlock()
-		return &protocol.ProtocolError{Code: protocol.InvalidStateCode, Detail: "listen.stop does not match active turn"}
-	}
-	if current.state != "listening" {
-		s.mu.Unlock()
-		return &protocol.ProtocolError{Code: protocol.InvalidStateCode, Detail: "turn is not listening"}
-	}
-	if len(current.pcm) == 0 {
-		s.mu.Unlock()
-		return &protocol.ProtocolError{Code: protocol.InvalidStateCode, Detail: "no audio for turn"}
-	}
-	current.state = "processing"
+	pcm := append([]byte(nil), current.pcm...)
 	s.mu.Unlock()
-	go s.processTurn(current)
-	return s.sendTurnJSON(parent, current, protocol.TurnStateType, protocol.TurnStatePayload{State: "processing"})
+	go s.processTurn(current, pcm)
+	return nil
 }
 
-func (s *session) processTurn(current *turn) {
-	defer close(current.done)
+func (s *session) turnCorrelation(current *turn) observability.Correlation {
+	if current == nil {
+		return observability.Correlation{SessionID: s.id}
+	}
+	return observability.Correlation{SessionID: s.id, TurnID: current.id, GenerationID: current.generation}
+}
+
+func observabilityOutcome(err error) string {
+	if err == nil {
+		return "ok"
+	}
+	if errors.Is(err, context.Canceled) {
+		return "cancelled"
+	}
+	return "error"
+}
+
+func (s *session) processTurn(current *turn, pcm []byte) {
 	turnStarted := time.Now()
-	turnCtx := pipeline.WithTurnContext(current.ctx, pipeline.TurnContext{
-		UserID: s.userID, TenantID: s.identity.TenantID, Plan: s.identity.Plan, DeviceID: s.deviceID,
-		SessionID: s.id, TurnID: current.id, Generation: current.generation, PCM16Mono: append([]byte(nil), current.pcm...),
-	})
-	correlation := s.turnCorrelation(current)
-	observability.RecordTo(s.observer, observability.Event{Name: observability.EventTurnStart, Outcome: "ok", Correlation: correlation})
-	asrStarted := time.Now()
-	transcript, err := s.components.ASR.Transcribe(turnCtx, current.pcm)
+	runtimeTurn := pipeline.TurnContext{UserID: s.userID, ThreadID: s.threadID, DeviceID: s.deviceID, TenantID: s.tenantID, Plan: s.plan, SessionID: s.id, TurnID: current.id}
+	if s.controlPlane != nil {
+		if twin, err := s.controlPlane.ManifestFor(current.ctx, controlplane.ResolutionContext{UserID: s.userID, DeviceID: s.deviceID, TenantID: s.tenantID, Plan: s.plan}); err == nil {
+			runtimeTurn.Locale = twin.Desired.Locale
+			runtimeTurn.Timezone = twin.Desired.Timezone
+			runtimeTurn.VoiceKey = twin.Desired.VoiceKey
+		}
+	}
+	runtimeCtx := observability.WithRecorder(current.ctx, s.observer)
+	runtimeCtx = observability.WithCorrelation(runtimeCtx, s.turnCorrelation(current))
+	runtimeCtx = pipeline.WithTurnContext(runtimeCtx, runtimeTurn)
+	asrStarted := turnStarted
+	transcript, err := s.components.ASR.Transcribe(runtimeCtx, pcm)
 	asrDuration := time.Since(asrStarted)
+	observability.Record(runtimeCtx, observability.Event{Name: observability.EventTurnStage, Stage: "asr", DurationMS: asrDuration.Milliseconds(), Outcome: observabilityOutcome(err)})
 	if err != nil {
 		s.failTurn(current, "asr_failed", err)
 		return
@@ -638,29 +648,57 @@ func (s *session) processTurn(current *turn) {
 	if !s.isCurrent(current) {
 		return
 	}
-	turnCtx = pipeline.WithTurnContext(turnCtx, pipeline.TurnContext{
-		UserID: s.userID, TenantID: s.identity.TenantID, Plan: s.identity.Plan, DeviceID: s.deviceID,
-		SessionID: s.id, TurnID: current.id, Generation: current.generation, PCM16Mono: append([]byte(nil), current.pcm...), Transcript: transcript,
-	})
-	_ = s.sendTurnJSON(current.ctx, current, protocol.STTPartialType, protocol.STTPartialPayload{Text: transcript, Final: true})
-	s.setTurnState(current, "agent")
-	_ = s.sendTurnJSON(current.ctx, current, protocol.TurnStateType, protocol.TurnStatePayload{State: "agent"})
+	s.sendTurnJSON(current.ctx, current, protocol.TranscriptFinalType, protocol.TextPayload{Text: transcript})
+
+	runtimeTurn.Transcript = transcript
+	runtimeTurn.PCM16Mono = pcm
+	runtimeTurn.SampleRate = protocol.UplinkSampleRate
+	agentCtx := pipeline.WithTurnContext(runtimeCtx, runtimeTurn)
+	var reply string
+	var ui *pipeline.UICard
 	agentStarted := time.Now()
-	var response string
+	earlyUI := false
+	agentCtx = capability.WithPresentationSink(agentCtx, func(p capability.Presentation) {
+		if sendErr := s.sendTurnJSON(current.ctx, current, protocol.UICardType, protocol.UICardPayload{UI: &pipeline.UICard{Kind: p.Kind, Title: p.Title, Primary: p.Primary, Secondary: p.Secondary, Progress: p.Progress}}); sendErr == nil {
+			earlyUI = true
+		}
+	})
 	if streaming, ok := s.components.Agent.(pipeline.StreamingAgent); ok {
-		var builder strings.Builder
-		err = streaming.RespondStream(turnCtx, transcript, func(delta string) error {
-			if !s.isCurrent(current) {
-				return context.Canceled
+		metrics, streamErr := s.processStreamingReply(current, agentCtx, transcript, streaming)
+		observability.Record(agentCtx, observability.Event{Name: observability.EventTurnStage, Stage: "agent_stream", DurationMS: metrics.AgentTotal.Milliseconds(), Outcome: observabilityOutcome(streamErr)})
+		if metrics.FirstSegmentAt > 0 {
+			observability.Record(agentCtx, observability.Event{Name: observability.EventTurnStage, Stage: "first_segment", DurationMS: metrics.FirstSegmentAt.Milliseconds(), Outcome: "ok"})
+		}
+		if metrics.TTSActive > 0 {
+			observability.Record(agentCtx, observability.Event{Name: observability.EventTurnStage, Stage: "tts_stream", DurationMS: metrics.TTSActive.Milliseconds(), Outcome: observabilityOutcome(streamErr)})
+		}
+		if streamErr != nil {
+			if !errors.Is(streamErr, context.Canceled) {
+				s.failTurn(current, "agent_stream_failed", streamErr)
 			}
-			builder.WriteString(delta)
-			return nil
-		})
-		response = builder.String()
+			return
+		}
+		observability.Record(agentCtx, observability.Event{Name: observability.EventTurnEnd, DurationMS: time.Since(turnStarted).Milliseconds(), Outcome: "ok"})
+		s.logger.Info("streaming voice turn completed",
+			"turn_id", current.id, "session_id", s.id, "device_id", s.deviceID, "user_id", s.userID,
+			"asr_ms", asrDuration.Milliseconds(), "agent_total_ms", metrics.AgentTotal.Milliseconds(),
+			"first_segment_ms", metrics.FirstSegmentAt.Milliseconds(), "tts_active_ms", metrics.TTSActive.Milliseconds(),
+			"total_ms", time.Since(turnStarted).Milliseconds())
+		s.mu.Lock()
+		if s.active == current {
+			s.active = nil
+		}
+		s.mu.Unlock()
+		return
+	}
+	if rich, ok := s.components.Agent.(pipeline.RichAgent); ok {
+		result, richErr := rich.RespondRich(agentCtx, current.id, transcript)
+		reply, ui, err = result.Text, result.UI, richErr
 	} else {
-		response, err = s.components.Agent.Respond(turnCtx, transcript)
+		reply, err = s.components.Agent.Respond(agentCtx, current.id, transcript)
 	}
 	agentDuration := time.Since(agentStarted)
+	observability.Record(agentCtx, observability.Event{Name: observability.EventTurnStage, Stage: "agent", DurationMS: agentDuration.Milliseconds(), Outcome: observabilityOutcome(err)})
 	if err != nil {
 		s.failTurn(current, "agent_failed", err)
 		return
@@ -668,45 +706,42 @@ func (s *session) processTurn(current *turn) {
 	if !s.isCurrent(current) {
 		return
 	}
-	s.setTurnState(current, "tts")
-	_ = s.sendTurnJSON(current.ctx, current, protocol.TurnStateType, protocol.TurnStatePayload{State: "tts"})
+	s.setTurnState(current, "speaking")
+	if ui != nil && !earlyUI {
+		if err := s.sendTurnJSON(current.ctx, current, protocol.UICardType, protocol.UICardPayload{UI: ui}); err != nil {
+			s.failTurn(current, "control_write_failed", err)
+			return
+		}
+	}
+	if err := s.sendTurnMediaJSON(current.ctx, current, protocol.TTSLifecycleType, protocol.TTSLifecyclePayload{State: "start"}); err != nil {
+		s.failTurn(current, "media_write_failed", err)
+		return
+	}
+	if err := s.sendTurnMediaJSON(current.ctx, current, protocol.TTSLifecycleType, protocol.TTSLifecyclePayload{State: "sentence_start", Text: reply}); err != nil {
+		s.failTurn(current, "media_write_failed", err)
+		return
+	}
 	ttsStarted := time.Now()
-	started := false
-	streamErr := s.components.TTS.StreamPCM(turnCtx, response, func(pcm []int16) error {
-		if !s.isCurrent(current) {
-			return context.Canceled
-		}
-		if !started {
-			started = true
-			if err := s.sendTurnMediaJSON(current.ctx, current, protocol.TTSStartType, protocol.TTSStartPayload{SampleRateHz: 24000}); err != nil {
-				return err
-			}
-		}
-		if err := s.sendTurn(current.ctx, current, outbound{kind: websocket.MessageBinary, data: pipeline.PCM16Bytes(pcm)}); err != nil {
+	err = s.components.TTS.Synthesize(agentCtx, reply, func(frame []byte) error {
+		packet, err := s.codec.EncodeDownlink(frame)
+		if err != nil {
 			return err
 		}
-		return nil
+		return s.sendTurn(current.ctx, current, outbound{kind: websocket.MessageBinary, data: packet})
 	})
 	ttsDuration := time.Since(ttsStarted)
-	if streamErr != nil {
-		s.failTurn(current, "tts_failed", streamErr)
+	observability.Record(agentCtx, observability.Event{Name: observability.EventTurnStage, Stage: "tts", DurationMS: ttsDuration.Milliseconds(), Outcome: observabilityOutcome(err)})
+	if err != nil {
+		if !errors.Is(err, context.Canceled) {
+			s.failTurn(current, "tts_failed", err)
+		}
 		return
 	}
 	if !s.isCurrent(current) {
 		return
 	}
-	if !started {
-		if err := s.sendTurnMediaJSON(current.ctx, current, protocol.TTSStartType, protocol.TTSStartPayload{SampleRateHz: 24000}); err != nil {
-			s.failTurn(current, "tts_start_failed", err)
-			return
-		}
-	}
-	if err := s.sendTurnMediaJSON(current.ctx, current, protocol.TTSSentenceType, protocol.TTSSentencePayload{Text: response}); err != nil {
-		s.failTurn(current, "tts_sentence_failed", err)
-		return
-	}
-	if err := s.sendTurnMediaJSON(current.ctx, current, protocol.TTSStopType, protocol.TTSStopPayload{}); err != nil {
-		s.failTurn(current, "tts_stop_failed", err)
+	if err := s.sendTurnMediaJSON(current.ctx, current, protocol.TTSLifecycleType, protocol.TTSLifecyclePayload{State: "stop"}); err != nil {
+		s.failTurn(current, "media_write_failed", err)
 		return
 	}
 	observability.Record(agentCtx, observability.Event{Name: observability.EventTurnEnd, DurationMS: time.Since(turnStarted).Milliseconds(), Outcome: "ok"})
@@ -734,30 +769,14 @@ func (s *session) setTurnState(candidate *turn, state string) {
 	}
 }
 
-func waitForTurn(current *turn, timeout time.Duration) bool {
-	if current == nil || current.done == nil {
-		return true
-	}
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-	select {
-	case <-current.done:
-		return true
-	case <-timer.C:
-		return false
-	}
-}
-
-func (s *session) cancelActiveAndJoin(timeout time.Duration) bool {
+func (s *session) cancelActive() {
 	s.mu.Lock()
-	current := s.active
-	if current != nil {
-		current.cancel()
+	defer s.mu.Unlock()
+	if s.active != nil {
+		s.active.cancel()
 		s.active = nil
-		s.generation++
+		s.generation++ // invalidate queued turn-scoped output
 	}
-	s.mu.Unlock()
-	return waitForTurn(current, timeout)
 }
 
 func (s *session) interruptActive(ctx context.Context, reason string) {
@@ -766,19 +785,13 @@ func (s *session) interruptActive(ctx context.Context, reason string) {
 	if current != nil {
 		current.cancel()
 		s.active = nil
-		s.generation++
+		s.generation++ // invalidate any already-queued old audio/control
 	}
 	s.mu.Unlock()
 	if current != nil {
-		joinStarted := time.Now()
-		joined := waitForTurn(current, turnCancellationJoinMax)
-		joinDuration := time.Since(joinStarted)
 		observability.RecordTo(s.observer, observability.Event{
-			Name: observability.EventTurnInterrupted, Outcome: "cancelled", Reason: reason, DurationMS: joinDuration.Milliseconds(), Correlation: s.turnCorrelation(current),
+			Name: observability.EventTurnInterrupted, Outcome: "cancelled", Reason: reason, Correlation: s.turnCorrelation(current),
 		})
-		if !joined {
-			s.logger.Warn("interrupted turn exceeded cancellation join bound", "session_id", s.id, "turn_id", current.id, "reason", reason, "join_ms", joinDuration.Milliseconds())
-		}
 		_ = s.sendJSONMeta(ctx, protocol.TurnStateType, protocol.Metadata{
 			TurnID: current.id, GenerationID: current.generation,
 		}, protocol.TurnStatePayload{State: "interrupted", Reason: reason})
@@ -851,6 +864,10 @@ func (s *session) sendTurn(ctx context.Context, current *turn, message outbound)
 	return s.send(ctx, message)
 }
 
+// sendTurnMediaJSON enqueues a turn-scoped TTS lifecycle event on the same
+// FIFO lane as its audio frames. Urgent control messages keep their separate
+// priority lane, while media causality is explicit rather than dependent on
+// scheduler timing across two queues.
 func (s *session) sendTurnMediaJSON(ctx context.Context, current *turn, messageType protocol.MessageType, payload any) error {
 	if current == nil {
 		return fmt.Errorf("turn is required")
@@ -862,11 +879,11 @@ func (s *session) sendTurnMediaJSON(ctx context.Context, current *turn, messageT
 		return err
 	}
 	out := outbound{kind: websocket.MessageText, data: data, turnScoped: true, generation: current.generation}
+	// Media control is causally required after previously accepted audio. It may
+	// wait for bounded queue capacity instead of failing on a transiently-full
+	// lane; ordinary audio frame production remains non-blocking via sendTurn.
 	waitCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	if err := waitCtx.Err(); err != nil {
-		return err
-	}
 	select {
 	case <-waitCtx.Done():
 		return waitCtx.Err()
@@ -914,6 +931,8 @@ func (s *session) processInbound(messageID string, data []byte, action func() er
 	}
 	outcome := action()
 	if outcome != nil {
+		// Failed actions are not replay records: transient pre-commit failures
+		// must be retryable with the same message_id in the live session.
 		return outcome
 	}
 	const maximumRememberedMessages = 256
@@ -928,9 +947,6 @@ func (s *session) processInbound(messageID string, data []byte, action func() er
 }
 
 func (s *session) send(ctx context.Context, message outbound) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
 	queue := s.controlWrites
 	label := "control"
 	if message.kind == websocket.MessageBinary {
@@ -1222,6 +1238,8 @@ func (s *Server) handlePrivacyPatch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// Full policy replacement is deliberate: privacy booleans must not get
+	// ambiguous zero-value PATCH semantics.
 	var p privacy.Policy
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&p); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
