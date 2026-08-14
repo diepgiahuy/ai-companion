@@ -3,6 +3,7 @@
 #include "companion/esp_sr_audio_frontend.hpp"
 #include "companion/gpio_button.hpp"
 #include "companion/ssd1306_display.hpp"
+#include "companion/transport_policy.hpp"
 #include "companion/websocket_voice_backend.hpp"
 #include "companion/wifi_station.hpp"
 
@@ -43,6 +44,12 @@ extern "C" void app_main() {
   if (!audio.initialize()) {
     ESP_LOGE(kTag, "I2S audio initialization failed");
     display.show(UiState::error, "AUDIO ERROR");
+    return;
+  }
+  if (!secure_product_transport(CONFIG_COMPANION_SERVER_URL,
+                                CONFIG_COMPANION_DEVICE_CREDENTIAL)) {
+    ESP_LOGE(kTag, "product transport requires wss:// and an enrolled device credential");
+    display.show(UiState::error, "SECURE CONFIG ERROR");
     return;
   }
 
@@ -91,7 +98,7 @@ extern "C" void app_main() {
   static CompanionApp app(audio, audio, display, button, backend,
                           audio_frontend, app_config);
   app.start(now_ms());
-  ESP_LOGI(kTag, "hardware POC using ESP-SR AEC/WakeNet/VAD + WebSocket protocol v2");
+  ESP_LOGI(kTag, "hardware POC using ESP-SR AEC/WakeNet/VAD + secure WebSocket protocol v2");
 
   while (true) {
     app.tick(now_ms());
