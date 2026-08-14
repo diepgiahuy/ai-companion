@@ -195,9 +195,11 @@ func (s *Store) ApplyRetention(ctx context.Context, now time.Time) (privacy.Rete
 		}
 		policies = append(policies, policy)
 	}
-	if err := rows.Close(); err != nil {
+	if err := rows.Err(); err != nil {
+		rows.Close()
 		return privacy.RetentionReport{}, err
 	}
+	rows.Close()
 
 	var report privacy.RetentionReport
 	for _, policy := range policies {
@@ -234,9 +236,11 @@ func (s *Store) ApplyRetention(ctx context.Context, now time.Time) (privacy.Rete
 					paths = append(paths, path)
 				}
 			}
-			if err := voiceRows.Close(); err != nil {
+			if err := voiceRows.Err(); err != nil {
+				voiceRows.Close()
 				return report, err
 			}
+			voiceRows.Close()
 			tag, err := s.pool.Exec(ctx, `DELETE FROM voice_memos WHERE user_id=$1 AND created_at<$2`, policy.userID, cutoff)
 			if err != nil {
 				return report, err
