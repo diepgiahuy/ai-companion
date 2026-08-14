@@ -194,6 +194,7 @@ func main() {
 		os.Exit(1)
 	}
 	components.Agent = adkAgent
+	components = server.GuardProviderComponents(components)
 
 	serverOptions := []server.Option{
 		server.WithStore(data), server.WithLocation(location),
