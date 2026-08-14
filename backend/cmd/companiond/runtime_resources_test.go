@@ -17,7 +17,7 @@ type closingASR struct{ closeFunc }
 func (closingASR) Transcribe(context.Context, []byte) (string, error) { return "", nil }
 
 type closingAgent struct{ closeFunc }
-func (closingAgent) Respond(context.Context, string) (string, error) { return "", nil }
+func (closingAgent) Respond(context.Context, string, string) (string, error) { return "", nil }
 
 type closingTTS struct{ closeFunc }
 func (closingTTS) Synthesize(context.Context, string, func([]byte) error) error { return nil }
