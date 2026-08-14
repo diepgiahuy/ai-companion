@@ -15,6 +15,17 @@ import (
 // tooling failures explicit instead of silently selecting another runtime.
 var ErrNotBuilt = errors.New("ADK runtime is not included in this build; rebuild with -tags=adk")
 
+const (
+	// ModelProtocolResponses uses the OpenAI Responses-compatible transport. It
+	// remains the default and is the reference path for Qwen-Flash.
+	ModelProtocolResponses = "responses"
+	// ModelProtocolChatCompletions uses OpenAI-compatible /chat/completions
+	// underneath the same ADK llmagent runtime. This is needed for GLM-4-Flash,
+	// whose documented compatibility surface is Chat Completions rather than
+	// Responses.
+	ModelProtocolChatCompletions = "chat_completions"
+)
+
 // UsageGuard is intentionally framework-neutral so quota policy stays owned by
 // Companion instead of ADK/provider code.
 type UsageGuard interface {
@@ -27,6 +38,7 @@ type UsageGuard interface {
 type Config struct {
 	AppName       string
 	ModelName     string
+	ModelProtocol string
 	BaseURL       string
 	APIKey        string
 	Instruction   string
