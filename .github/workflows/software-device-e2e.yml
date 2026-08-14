@@ -79,6 +79,8 @@ jobs:
             artifacts/software-device/evidence-tool-timer-observability.json tool timer.create
           python3 host/companion_software_device/validate_observability.py \
             artifacts/software-device/evidence-tool-memory-observability.json tool memory.remember
+          python3 host/companion_software_device/validate_observability.py \
+            artifacts/software-device/evidence-tool-device-volume-observability.json tool device.volume.set
 
           python3 - <<'PY'
           import json
@@ -102,7 +104,7 @@ jobs:
           assert parity['memory'] == {
               'count': 1, 'key': 'preferred_language', 'kind': 'semantic', 'value': 'Vietnamese'
           }
-          print('AUTHORITATIVE TOOL PARITY PASS: expense/budget/note/journal/reminder/timer/memory')
+          print('AUTHORITATIVE TOOL PARITY PASS: expense/budget/note/journal/reminder/timer/memory + device capability wire')
           PY
       - name: Upload orchestration evidence
         if: always()

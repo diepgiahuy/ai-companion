@@ -28,6 +28,11 @@ public:
     uint64_t stale_controls{};
     uint64_t discarded_binary_packets{};
     uint64_t config_reports{};
+    uint64_t capability_advertisements{};
+    uint64_t capability_calls{};
+    uint64_t capability_results{};
+    uint64_t capability_cancels{};
+    int capability_volume{-1};
   };
 
   WebSocketVoiceBackend(std::string url, std::string token, std::string device_id);
@@ -89,7 +94,8 @@ private:
   std::string encode_control(int type_index, std::string payload_json,
                              std::string turn_id = {},
                              std::string correlation_id = {},
-                             bool include_session = true);
+                             bool include_session = true,
+                             std::optional<uint64_t> generation_id = std::nullopt);
   void enqueue_event(BackendEventType type, std::string_view text = {});
   void handle_text(uint64_t generation, const std::string& text);
   void handle_binary(uint64_t generation, std::span<const uint8_t> packet);

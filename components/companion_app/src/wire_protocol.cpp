@@ -5,12 +5,14 @@
 namespace companion::protocol {
 namespace {
 
-constexpr std::array<std::string_view, 31> kTypeNames{
+constexpr std::array<std::string_view, 35> kTypeNames{
     "session.hello", "session.ready", "session.ping", "session.pong",
     "turn.listen", "turn.abort", "turn.state", "transcript.final",
     "tts.lifecycle", "agent.status", "ui.card", "ui.state", "alarm.fired",
     "alarm.ack", "schedule.updated", "config.update", "config.report",
     "protocol.error",
+    "capability.advertise", "capability.call", "capability.result",
+    "capability.cancel",
     "gesture.notification", "voice_mail.available", "voice_mail.claim",
     "voice_mail.claimed", "voice_mail.playback_result", "voice_mail.consumed",
     "voice_mail.expired", "pairing.session_create", "pairing.session_created",

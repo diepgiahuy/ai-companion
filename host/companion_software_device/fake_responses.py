@@ -67,6 +67,11 @@ CASES = {
             "valid_from": "2026-08-13T15:20:00+07:00",
         },
     },
+    "Tier1 volume 42": {
+        "id": "device_volume",
+        "tool": "device.volume.set",
+        "args": {"volume": 42},
+    },
 }
 
 
