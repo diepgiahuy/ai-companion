@@ -213,7 +213,7 @@ func main() {
 
 	httpServer := &http.Server{
 		Addr:              address,
-		Handler:           service.Handler(),
+		Handler:           deviceOriginGuard(service.Handler()),
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       90 * time.Second,
 	}
