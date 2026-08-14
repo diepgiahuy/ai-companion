@@ -55,15 +55,19 @@ jobs:
             go vet -tags "adk,mcp,nolibopusfile" ./...
             go test -tags "adk,mcp,nolibopusfile" -race -count=1 ./...
           '
+      - name: Test vulnerability gate policy
+        run: python3 scripts/test_check_govuln_gate.py
       - name: Go vulnerability reachability scan
         run: |
+          set -eu
           docker run --rm companion-quality sh -c '
             set -eu
             export GOBIN=/tmp/go-tools
             go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
             cd /src/backend
-            /tmp/go-tools/govulncheck -tags=adk,mcp,nolibopusfile -test ./...
-          '
+            /tmp/go-tools/govulncheck -json -scan symbol -tags=adk,mcp,nolibopusfile -test ./...
+          ' > /tmp/govulncheck.json
+          python3 scripts/check_govuln_gate.py /tmp/govulncheck.json
       - name: Diff hygiene
         run: git diff --check
 
