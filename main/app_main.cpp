@@ -1,5 +1,6 @@
 #include "companion/app.hpp"
 #include "companion/esp32_audio.hpp"
+#include "companion/esp_sr_audio_frontend.hpp"
 #include "companion/gpio_button.hpp"
 #include "companion/ssd1306_display.hpp"
 #include "companion/websocket_voice_backend.hpp"
@@ -24,6 +25,7 @@ extern "C" void app_main() {
   using namespace companion;
 
   static Esp32Audio audio;
+  static EspSrAudioFrontend audio_frontend;
   static Ssd1306Display display;
   static GpioButton button;
   static WifiStation wifi;
@@ -86,9 +88,10 @@ extern "C" void app_main() {
   app_config.smart_vad_enabled = false;
 #endif
 
-  static CompanionApp app(audio, audio, display, button, backend, app_config);
+  static CompanionApp app(audio, audio, display, button, backend,
+                          audio_frontend, app_config);
   app.start(now_ms());
-  ESP_LOGI(kTag, "hardware POC using WebSocket protocol v2 backend");
+  ESP_LOGI(kTag, "hardware POC using ESP-SR AEC/WakeNet/VAD + WebSocket protocol v2");
 
   while (true) {
     app.tick(now_ms());
