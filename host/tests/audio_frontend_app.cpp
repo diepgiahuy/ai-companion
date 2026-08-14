@@ -1,0 +1,266 @@
+#include "companion/app.hpp"
+
+#include <algorithm>
+#include <array>
+#include <cassert>
+#include <cstdint>
+#include <span>
+#include <string>
+#include <utility>
+#include <vector>
+
+using namespace companion;
+
+namespace {
+
+struct MonitorMicrophone final : Microphone {
+  bool active{};
+  size_t starts{};
+  size_t stops{};
+  int16_t sample{1'000};
+
+  bool start_capture() override {
+    active = true;
+    ++starts;
+    return true;
+  }
+  size_t read_capture(std::span<int16_t> destination) override {
+    if (!active) return 0;
+    const size_t count = std::min(destination.size(), kAudioFrameSamples);
+    std::fill_n(destination.begin(), count, sample);
+    return count;
+  }
+  void stop_capture() override {
+    if (active) ++stops;
+    active = false;
+  }
+};
+
+struct RecordingSpeaker final : Speaker {
+  bool active{};
+  uint32_t rate{};
+  size_t written{};
+
+  bool start_playback(uint32_t sample_rate_hz) override {
+    active = true;
+    rate = sample_rate_hz;
+    return true;
+  }
+  size_t write_playback(std::span<const int16_t> pcm) override {
+    if (!active) return 0;
+    written += pcm.size();
+    return pcm.size();
+  }
+  bool playback_drained() const override { return true; }
+  void stop_playback() override { active = false; }
+};
+
+struct RecordingDisplay final : Display {
+  std::vector<std::pair<UiState, std::string>> events;
+  void show(UiState state, std::string_view text) override {
+    events.emplace_back(state, std::string(text));
+  }
+};
+
+struct NoButton final : Button {
+  bool consume_press(uint64_t) override { return false; }
+};
+
+struct ScriptedFrontend final : AudioFrontend {
+  bool started{};
+  size_t resets{};
+  std::vector<AudioFrontendEvent> events;
+  size_t next_event{};
+  std::vector<int16_t> references;
+
+  bool start() override {
+    started = true;
+    return true;
+  }
+  void reset() override { ++resets; }
+  bool push_playback_reference(std::span<const int16_t> pcm_16k) override {
+    references.insert(references.end(), pcm_16k.begin(), pcm_16k.end());
+    return true;
+  }
+  AudioFrontendResult process_capture(std::span<const int16_t> microphone_16k,
+                                      std::span<int16_t> cleaned_16k) override {
+    const size_t count = std::min(microphone_16k.size(), cleaned_16k.size());
+    for (size_t i = 0; i < count; ++i) {
+      cleaned_16k[i] = static_cast<int16_t>(microphone_16k[i] / 2);
+    }
+    AudioFrontendEvent event = AudioFrontendEvent::none;
+    if (next_event < events.size()) event = events[next_event++];
+    return {.samples = count, .event = event};
+  }
+};
+
+struct ScriptedBackend final : VoiceBackend {
+  bool connected{};
+  size_t begin_count{};
+  size_t finish_count{};
+  size_t cancel_count{};
+  uint64_t received_samples{};
+  int16_t last_first_sample{};
+  uint32_t playback_rate{24'000};
+  std::vector<int16_t> playback;
+  size_t playback_offset{};
+  std::vector<BackendEvent> events;
+
+  bool start(uint64_t) override {
+    connected = true;
+    BackendEvent event{};
+    event.type = BackendEventType::connected;
+    events.push_back(event);
+    return true;
+  }
+  void tick(uint64_t) override {}
+  bool begin_turn(uint64_t, ListenMode) override {
+    ++begin_count;
+    return true;
+  }
+  bool send_audio(std::span<const int16_t> pcm) override {
+    received_samples += pcm.size();
+    if (!pcm.empty()) last_first_sample = pcm.front();
+    return true;
+  }
+  bool finish_turn(uint64_t) override {
+    ++finish_count;
+    return true;
+  }
+  void cancel_turn() override { ++cancel_count; }
+  bool poll_event(BackendEvent& event) override {
+    if (events.empty()) return false;
+    event = events.front();
+    events.erase(events.begin());
+    return true;
+  }
+  bool report_config(const RuntimeConfigPatch&, bool) override { return true; }
+  size_t read_playback(std::span<int16_t> destination) override {
+    const size_t remaining = playback.size() - playback_offset;
+    const size_t count = std::min(remaining, destination.size());
+    std::copy_n(playback.begin() + static_cast<std::ptrdiff_t>(playback_offset),
+                count, destination.begin());
+    playback_offset += count;
+    return count;
+  }
+  bool playback_empty() const override { return playback_offset == playback.size(); }
+  uint32_t playback_sample_rate_hz() const override { return playback_rate; }
+
+  void push(BackendEventType type) {
+    BackendEvent event{};
+    event.type = type;
+    events.push_back(event);
+  }
+};
+
+void connect_without_wake(CompanionApp& app, ScriptedFrontend& frontend) {
+  frontend.events.push_back(AudioFrontendEvent::none);
+  assert(app.start(0));
+  app.tick(0);
+  assert(app.state() == UiState::ready);
+}
+
+void wake_and_finish_one_turn(CompanionApp& app, ScriptedFrontend& frontend,
+                              ScriptedBackend& backend) {
+  frontend.events.push_back(AudioFrontendEvent::wake_detected);
+  app.tick(20);
+  assert(app.state() == UiState::listening);
+  assert(backend.begin_count == 1);
+
+  frontend.events.push_back(AudioFrontendEvent::speech_started);
+  app.tick(40);
+  assert(backend.received_samples == kAudioFrameSamples);
+  assert(backend.last_first_sample == 500); // cleaned AFE output, not raw microphone PCM.
+
+  frontend.events.push_back(AudioFrontendEvent::speech_ended);
+  app.tick(60);
+  assert(app.state() == UiState::processing);
+  assert(backend.finish_count == 1);
+}
+
+void wake_and_vad_use_canonical_turn_path() {
+  MonitorMicrophone microphone;
+  RecordingSpeaker speaker;
+  RecordingDisplay display;
+  NoButton button;
+  ScriptedBackend backend;
+  ScriptedFrontend frontend;
+  AppConfig config{};
+  config.vad_min_speech_ms = 0;
+  CompanionApp app(microphone, speaker, display, button, backend, frontend, config);
+
+  connect_without_wake(app, frontend);
+  assert(frontend.started);
+  assert(microphone.active);
+  assert(microphone.starts == 1);
+
+  wake_and_finish_one_turn(app, frontend, backend);
+  // Continuous frontend capture remains active through processing instead of
+  // creating a second microphone/voice pipeline per turn.
+  assert(microphone.active);
+  assert(microphone.starts == 1);
+}
+
+void playback_reference_and_speech_barge_in_share_generation_path() {
+  MonitorMicrophone microphone;
+  RecordingSpeaker speaker;
+  RecordingDisplay display;
+  NoButton button;
+  ScriptedBackend backend;
+  ScriptedFrontend frontend;
+  AppConfig config{};
+  config.vad_min_speech_ms = 0;
+  CompanionApp app(microphone, speaker, display, button, backend, frontend, config);
+
+  connect_without_wake(app, frontend);
+  wake_and_finish_one_turn(app, frontend, backend);
+
+  backend.playback = {100, 200, 300, 400, 500, 600};
+  backend.playback_offset = 0;
+  backend.push(BackendEventType::tts_started);
+  frontend.events.push_back(AudioFrontendEvent::speech_started);
+  app.tick(100);
+
+  assert(speaker.rate == 24'000);
+  assert(speaker.written == 6);
+  // 24 kHz -> 16 kHz reference: [100,250] [400,550]. The reference is fed
+  // only for samples the speaker actually accepted.
+  assert((frontend.references == std::vector<int16_t>{100, 250, 400, 550}));
+  assert(backend.cancel_count == 1);
+  assert(backend.begin_count == 2);
+  assert(app.state() == UiState::listening);
+}
+
+void alarm_suspends_hands_free_monitor_and_ready_restarts_it() {
+  MonitorMicrophone microphone;
+  RecordingSpeaker speaker;
+  RecordingDisplay display;
+  NoButton button;
+  ScriptedBackend backend;
+  ScriptedFrontend frontend;
+  AppConfig config{};
+  config.alarm_tone_ms = 0;
+  config.alarm_visible_ms = 100;
+  CompanionApp app(microphone, speaker, display, button, backend, frontend, config);
+
+  connect_without_wake(app, frontend);
+  backend.push(BackendEventType::alarm);
+  app.tick(10);
+  assert(app.state() == UiState::alarm);
+  assert(!microphone.active);
+  assert(microphone.stops == 1);
+
+  app.tick(110);
+  assert(app.state() == UiState::ready);
+  assert(microphone.active);
+  assert(microphone.starts == 2);
+}
+
+} // namespace
+
+int main() {
+  wake_and_vad_use_canonical_turn_path();
+  playback_reference_and_speech_barge_in_share_generation_path();
+  alarm_suspends_hands_free_monitor_and_ready_restarts_it();
+  return 0;
+}
