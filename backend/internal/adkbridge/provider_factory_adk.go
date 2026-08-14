@@ -46,5 +46,8 @@ func NewProvider(cfg Config) (pipeline.Agent, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newWithModel(cfg, withProviderToolAliases(llm))
+	if cfg.ProviderToolAliases {
+		llm = withProviderToolAliases(llm)
+	}
+	return newWithModel(cfg, llm)
 }
