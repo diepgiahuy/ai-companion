@@ -59,10 +59,12 @@ jobs:
         run: |
           docker run --rm companion-quality sh -c '
             set -eu
+            python3 /src/scripts/test_check_go_vulns.py
             export GOBIN=/tmp/go-tools
             go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
             cd /src/backend
-            /tmp/go-tools/govulncheck -tags=adk,mcp,nolibopusfile -test ./...
+            /tmp/go-tools/govulncheck -json -tags=adk,mcp,nolibopusfile -test ./... > /tmp/govulncheck.json
+            python3 /src/scripts/check_go_vulns.py /tmp/govulncheck.json
           '
       - name: Diff hygiene
         run: git diff --check
