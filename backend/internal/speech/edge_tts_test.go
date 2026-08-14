@@ -1,79 +1,142 @@
 package speech
 
 import (
+	"bytes"
 	"context"
-	"net/http"
-	"net/http/httptest"
+	"errors"
 	"strings"
 	"testing"
-	"time"
-
-	"github.com/coder/websocket"
 )
 
-func TestEdgeSecMSGECStableWithinFiveMinuteWindow(t *testing.T) {
-	first := edgeSecMSGEC(time.Date(2026, 8, 14, 4, 1, 0, 0, time.UTC), edgeTrustedClientToken)
-	second := edgeSecMSGEC(time.Date(2026, 8, 14, 4, 4, 59, 0, time.UTC), edgeTrustedClientToken)
-	third := edgeSecMSGEC(time.Date(2026, 8, 14, 4, 5, 0, 0, time.UTC), edgeTrustedClientToken)
-	if first != second { t.Fatalf("same 5-minute window changed token: %q != %q", first, second) }
-	if first == third { t.Fatal("next 5-minute window reused Sec-MS-GEC token") }
-	if len(first) != 64 || first != strings.ToUpper(first) { t.Fatalf("token=%q", first) }
+type edgeRunnerCall struct {
+	command string
+	args    []string
+	stdin   []byte
+	limit   int
 }
 
-func TestEdgeTTSStreamsRaw24kPCM(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("TrustedClientToken") == "" || r.URL.Query().Get("Sec-MS-GEC") == "" || r.URL.Query().Get("Sec-MS-GEC-Version") == "" || r.URL.Query().Get("ConnectionId") == "" {
-			t.Errorf("missing Edge query: %s", r.URL.RawQuery)
-		}
-		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
-		if err != nil { t.Errorf("accept: %v", err); return }
-		defer conn.CloseNow()
-		ctx := r.Context()
+type fakeEdgeRunner struct {
+	calls []edgeRunnerCall
+	run   func(int, edgeRunnerCall) ([]byte, error)
+}
 
-		kind, config, err := conn.Read(ctx)
-		if err != nil { t.Errorf("read config: %v", err); return }
-		if kind != websocket.MessageText || !strings.Contains(string(config), `"outputFormat":"raw-24khz-16bit-mono-pcm"`) || !strings.Contains(string(config), "Path:speech.config") {
-			t.Errorf("config=%q kind=%v", config, kind)
-			return
-		}
-		kind, ssml, err := conn.Read(ctx)
-		if err != nil { t.Errorf("read ssml: %v", err); return }
-		if kind != websocket.MessageText || !strings.Contains(string(ssml), "Path:ssml") || !strings.Contains(string(ssml), "vi-VN-HoaiMyNeural") || !strings.Contains(string(ssml), "xin &amp; chào") {
-			t.Errorf("ssml=%q kind=%v", ssml, kind)
-			return
-		}
-		binary := append([]byte("X-RequestId:test\r\nContent-Type:audio/pcm\r\nPath:audio\r\n"), []byte{1, 2, 3, 4}...)
-		_ = conn.Write(ctx, websocket.MessageBinary, binary)
-		_ = conn.Write(ctx, websocket.MessageText, []byte("Path:turn.end\r\n"))
-	}))
-	defer server.Close()
+func (r *fakeEdgeRunner) Run(_ context.Context, command string, args []string, stdin []byte, limit int) ([]byte, error) {
+	call := edgeRunnerCall{command: command, args: append([]string(nil), args...), stdin: append([]byte(nil), stdin...), limit: limit}
+	r.calls = append(r.calls, call)
+	if r.run != nil {
+		return r.run(len(r.calls)-1, call)
+	}
+	return nil, nil
+}
 
-	provider, err := NewEdgeTTS(EdgeTTSConfig{
-		URL: "ws" + strings.TrimPrefix(server.URL, "http"), Voice: "en-US-EmmaMultilingualNeural",
-		Now: func() time.Time { return time.Date(2026, 8, 14, 4, 0, 0, 0, time.UTC) },
-	})
-	if err != nil { t.Fatal(err) }
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	var frames [][]byte
+func TestEdgeTTSUsesUpstreamCLIThenDecodesTo24kPCM(t *testing.T) {
+	pcm := make([]byte, 6000)
+	for i := range pcm {
+		pcm[i] = byte(i % 251)
+	}
+	runner := &fakeEdgeRunner{}
+	runner.run = func(index int, call edgeRunnerCall) ([]byte, error) {
+		switch index {
+		case 0:
+			if call.command != "edge-tts" {
+				t.Fatalf("command=%q", call.command)
+			}
+			joined := strings.Join(call.args, " ")
+			for _, required := range []string{"--file -", "--voice vi-VN-HoaiMyNeural", "--write-media -", "--rate=+0%", "--volume=+0%", "--pitch=+0Hz"} {
+				if !strings.Contains(joined, required) {
+					t.Fatalf("edge args=%q missing %q", joined, required)
+				}
+			}
+			if string(call.stdin) != "xin chào" {
+				t.Fatalf("edge stdin=%q", call.stdin)
+			}
+			return []byte("fake-mp3"), nil
+		case 1:
+			if call.command != "ffmpeg" {
+				t.Fatalf("command=%q", call.command)
+			}
+			if string(call.stdin) != "fake-mp3" {
+				t.Fatalf("ffmpeg stdin=%q", call.stdin)
+			}
+			joined := strings.Join(call.args, " ")
+			for _, required := range []string{"-f s16le", "-ac 1", "-ar 24000", "pipe:1"} {
+				if !strings.Contains(joined, required) {
+					t.Fatalf("ffmpeg args=%q missing %q", joined, required)
+				}
+			}
+			return pcm, nil
+		default:
+			t.Fatalf("unexpected runner call %d", index)
+			return nil, nil
+		}
+	}
+	provider, err := NewEdgeTTS(EdgeTTSConfig{Runner: runner, PCMChunkBytes: 2880})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got bytes.Buffer
 	final := false
-	err = provider.Synthesize(ctx, TTSRequest{
-		Text: "xin & chào", Voice: "vi-VN-HoaiMyNeural", Locale: "vi-VN",
+	err = provider.Synthesize(context.Background(), TTSRequest{
+		Text: "xin chào", Voice: "vi-VN-HoaiMyNeural", Locale: "vi-VN",
 		Format: AudioFormat{SampleRate: 24000, Channels: 1},
 	}, func(event AudioEvent) error {
-		if len(event.PCM) > 0 { frames = append(frames, append([]byte(nil), event.PCM...)) }
-		if event.Final { final = true }
+		if len(event.PCM) > 0 {
+			got.Write(event.PCM)
+		}
+		if event.Final {
+			final = true
+		}
 		return nil
 	})
-	if err != nil { t.Fatal(err) }
-	if len(frames) != 1 || string(frames[0]) != string([]byte{1, 2, 3, 4}) || !final {
-		t.Fatalf("frames=%v final=%v", frames, final)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got.Bytes(), pcm) || !final {
+		t.Fatalf("pcm=%d bytes final=%v", got.Len(), final)
+	}
+	if len(runner.calls) != 2 {
+		t.Fatalf("runner calls=%d", len(runner.calls))
 	}
 }
 
-func TestEdgeTTSRejectsWrongPCMRate(t *testing.T) {
-	provider, err := NewEdgeTTS(EdgeTTSConfig{URL: "ws://127.0.0.1:1234"})
+func TestEdgeTTSFailsClosedOnSynthesisOrDecodeFailure(t *testing.T) {
+	t.Run("synthesis", func(t *testing.T) {
+		runner := &fakeEdgeRunner{run: func(_ int, _ edgeRunnerCall) ([]byte, error) { return nil, errors.New("edge unavailable") }}
+		provider, err := NewEdgeTTS(EdgeTTSConfig{Runner: runner})
+		if err != nil { t.Fatal(err) }
+		err = provider.Synthesize(context.Background(), TTSRequest{Text: "hello", Format: AudioFormat{SampleRate: 24000, Channels: 1}}, func(AudioEvent) error { return nil })
+		if err == nil || !strings.Contains(err.Error(), "synthesize MP3") { t.Fatalf("error=%v", err) }
+	})
+
+	t.Run("decode", func(t *testing.T) {
+		runner := &fakeEdgeRunner{run: func(index int, _ edgeRunnerCall) ([]byte, error) {
+			if index == 0 { return []byte("mp3"), nil }
+			return nil, errors.New("bad mp3")
+		}}
+		provider, err := NewEdgeTTS(EdgeTTSConfig{Runner: runner})
+		if err != nil { t.Fatal(err) }
+		err = provider.Synthesize(context.Background(), TTSRequest{Text: "hello", Format: AudioFormat{SampleRate: 24000, Channels: 1}}, func(AudioEvent) error { return nil })
+		if err == nil || !strings.Contains(err.Error(), "decode EdgeTTS MP3") { t.Fatalf("error=%v", err) }
+	})
+}
+
+func TestEdgeTTSRejectsWrongFormatAndOddChunkSize(t *testing.T) {
+	if _, err := NewEdgeTTS(EdgeTTSConfig{PCMChunkBytes: 3}); err == nil {
+		t.Fatal("odd PCM chunk size should fail")
+	}
+	provider, err := NewEdgeTTS(EdgeTTSConfig{Runner: &fakeEdgeRunner{}})
 	if err != nil { t.Fatal(err) }
 	err = provider.Synthesize(context.Background(), TTSRequest{Text: "hello", Format: AudioFormat{SampleRate: 16000, Channels: 1}}, func(AudioEvent) error { return nil })
-	if err == nil || !strings.Contains(err.Error(), "24000 Hz") { t.Fatalf("error=%v", err) }
+	if err == nil || !strings.Contains(err.Error(), "24000 Hz mono") { t.Fatalf("error=%v", err) }
+}
+
+func TestLimitedBufferFailsWhenOutputExceedsLimit(t *testing.T) {
+	var out bytes.Buffer
+	writer := &limitedBuffer{buffer: &out, remaining: 4}
+	if _, err := writer.Write([]byte{1, 2, 3, 4, 5}); err == nil {
+		t.Fatal("overflow should fail")
+	}
+	if out.Len() != 4 || !writer.overflow {
+		t.Fatalf("len=%d overflow=%v", out.Len(), writer.overflow)
+	}
 }
