@@ -7,6 +7,11 @@ cmake --build build-host
 ctest --test-dir build-host --output-on-failure
 python3 scripts/budget_check.py
 
+echo '== speech sidecar static check =='
+# py_compile validates the checked-in sidecar syntax without importing or
+# downloading FunASR/FastAPI/model dependencies in the normal software gate.
+python3 -m py_compile tools/funasr_mlt_server.py
+
 echo '== backend Go 1.26.5 + race + canonical adapter compile/test gates =='
 (cd backend && go env GOVERSION | grep -Eq '^go1\.26\.5$')
 set +e
