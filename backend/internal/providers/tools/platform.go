@@ -44,15 +44,23 @@ func RegisterPlatform(r *capability.ToolRegistry, d PlatformDependencies) error 
 			if e := json.Unmarshal([]byte(q.Arguments), &a); e != nil {
 				return capability.Failure(e)
 			}
+			key := strings.TrimSpace(a.Key)
+			value := strings.TrimSpace(a.Value)
 			at := d.Now()
-			if a.ValidFrom != "" {
+			validFromHash := "auto"
+			if strings.TrimSpace(a.ValidFrom) != "" {
 				var e error
-				at, e = time.Parse(time.RFC3339, a.ValidFrom)
+				at, e = time.Parse(time.RFC3339, strings.TrimSpace(a.ValidFrom))
 				if e != nil {
 					return capability.Failure(e)
 				}
+				validFromHash = at.UTC().Format(time.RFC3339Nano)
 			}
-			m, e := d.Memory.Remember(ctx, currentUser(ctx), a.Key, a.Kind, a.Value, "user_explicit", 1, at)
+			request, e := durableMutationRequest(ctx, "memory.remember", q.Key, map[string]any{"key": key, "kind": a.Kind, "value": value, "valid_from": validFromHash})
+			if e != nil {
+				return capability.Failure(e)
+			}
+			m, e := d.Memory.RememberMutation(ctx, request, currentUser(ctx), key, a.Kind, value, "user_explicit", 1, at)
 			if e != nil {
 				return capability.Failure(e)
 			}
@@ -83,10 +91,15 @@ func RegisterPlatform(r *capability.ToolRegistry, d PlatformDependencies) error 
 			if e := json.Unmarshal([]byte(q.Arguments), &a); e != nil {
 				return capability.Failure(e)
 			}
-			if e := d.Memory.Forget(ctx, currentUser(ctx), a.Key); e != nil {
+			key := strings.TrimSpace(a.Key)
+			request, e := durableMutationRequest(ctx, "memory.forget", q.Key, map[string]any{"key": key})
+			if e != nil {
 				return capability.Failure(e)
 			}
-			return capability.Success(map[string]any{"forgotten": a.Key})
+			if e := d.Memory.ForgetMutation(ctx, request, currentUser(ctx), key); e != nil {
+				return capability.Failure(e)
+			}
+			return capability.Success(map[string]any{"forgotten": key})
 		}}); err != nil {
 			return err
 		}
@@ -148,10 +161,23 @@ func registerMarketWatchTools(r *capability.ToolRegistry, d PlatformDependencies
 			if e := json.Unmarshal([]byte(q.Arguments), &a); e != nil {
 				return capability.Failure(e)
 			}
-			if a.Currency == "" {
-				a.Currency = "USD"
+			provider := strings.TrimSpace(a.Provider)
+			symbol := strings.TrimSpace(a.Symbol)
+			currency := strings.ToUpper(strings.TrimSpace(a.Currency))
+			if currency == "" {
+				currency = "USD"
 			}
-			w, e := d.MarketWatches.CreateMarketWatch(ctx, currentUser(ctx), currentDevice(ctx), q.Key, a.Provider, a.Symbol, a.Currency, a.Operator, a.Threshold)
+			operator := strings.TrimSpace(a.Operator)
+			deviceID := currentDevice(ctx)
+			request, e := durableMutationRequest(ctx, "market.watch.create", q.Key, map[string]any{"provider": provider, "symbol": symbol, "currency": currency, "operator": operator, "threshold": a.Threshold, "device_id": deviceID})
+			if e != nil {
+				return capability.Failure(e)
+			}
+			durable, ok := d.MarketWatches.(durableMarketWatchRepository)
+			if !ok {
+				return capability.Failure(fmt.Errorf("durable market watch repository is unavailable"))
+			}
+			w, e := durable.CreateMarketWatchMutation(ctx, request, currentUser(ctx), deviceID, provider, symbol, currency, operator, a.Threshold)
 			if e != nil {
 				return capability.Failure(e)
 			}
@@ -175,7 +201,15 @@ func registerMarketWatchTools(r *capability.ToolRegistry, d PlatformDependencies
 			if e := json.Unmarshal([]byte(q.Arguments), &a); e != nil {
 				return capability.Failure(e)
 			}
-			if e := d.MarketWatches.DeleteMarketWatch(ctx, currentUser(ctx), a.ID); e != nil {
+			request, e := durableMutationRequest(ctx, "market.watch.delete", q.Key, map[string]any{"id": a.ID})
+			if e != nil {
+				return capability.Failure(e)
+			}
+			durable, ok := d.MarketWatches.(durableMarketWatchRepository)
+			if !ok {
+				return capability.Failure(fmt.Errorf("durable market watch repository is unavailable"))
+			}
+			if e := durable.DeleteMarketWatchMutation(ctx, request, currentUser(ctx), a.ID); e != nil {
 				return capability.Failure(e)
 			}
 			return capability.Success(map[string]any{"deleted": "market_watch", "id": a.ID})

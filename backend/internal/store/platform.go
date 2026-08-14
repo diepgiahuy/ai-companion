@@ -109,7 +109,7 @@ func (s *Store) migratePlatform() error {
 		`CREATE INDEX IF NOT EXISTS idx_outbox_dispatch ON outbox(status,next_attempt_at,id)`,
 		`CREATE TABLE IF NOT EXISTS market_watches (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            idempotency_key TEXT NOT NULL UNIQUE,
+            idempotency_key TEXT NOT NULL,
             user_id TEXT NOT NULL,
             device_id TEXT NOT NULL,
             provider TEXT NOT NULL,
@@ -491,14 +491,21 @@ func (s *Store) CreateMarketWatch(ctx context.Context, user, device, key, provid
 		return market.Watch{}, fmt.Errorf("threshold must be positive")
 	}
 	now := time.Now().UTC()
-	_, e := s.db.ExecContext(ctx, `INSERT INTO market_watches(idempotency_key,user_id,device_id,provider,symbol,currency,operator,threshold,created_at) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(idempotency_key) DO NOTHING`, key, user, device, provider, symbol, currency, operator, threshold, now.Format(time.RFC3339Nano))
+	result, e := s.db.ExecContext(ctx, `INSERT INTO market_watches(idempotency_key,user_id,device_id,provider,symbol,currency,operator,threshold,created_at) SELECT ?,?,?,?,?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM market_watches WHERE user_id=? AND idempotency_key=?)`, key, user, device, provider, symbol, currency, operator, threshold, now.Format(time.RFC3339Nano), user, key)
 	if e != nil {
 		return market.Watch{}, e
+	}
+	id, e := result.LastInsertId()
+	if e != nil || id == 0 {
+		e = s.db.QueryRowContext(ctx, `SELECT id FROM market_watches WHERE user_id=? AND idempotency_key=? ORDER BY id LIMIT 1`, user, key).Scan(&id)
+		if e != nil {
+			return market.Watch{}, e
+		}
 	}
 	var w market.Watch
 	var en, last int
 	var created string
-	e = s.db.QueryRowContext(ctx, `SELECT id,user_id,device_id,provider,symbol,currency,operator,threshold,enabled,last_state,created_at FROM market_watches WHERE idempotency_key=?`, key).Scan(&w.ID, &w.UserID, &w.DeviceID, &w.Provider, &w.Symbol, &w.Currency, &w.Operator, &w.Threshold, &en, &last, &created)
+	e = s.db.QueryRowContext(ctx, `SELECT id,user_id,device_id,provider,symbol,currency,operator,threshold,enabled,last_state,created_at FROM market_watches WHERE id=?`, id).Scan(&w.ID, &w.UserID, &w.DeviceID, &w.Provider, &w.Symbol, &w.Currency, &w.Operator, &w.Threshold, &en, &last, &created)
 	w.Enabled = en != 0
 	w.LastState = last != 0
 	w.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
