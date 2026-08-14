@@ -23,6 +23,11 @@ ALLOWED_MODULE = "stdlib"
 ALLOWED_FIXED_VERSION = "go1.26.6"
 
 
+def annotation(level: str, title: str, message: str) -> None:
+    safe = message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+    print(f"::{level} title={title}::{safe}")
+
+
 def decode_stream(text: str) -> Iterable[dict[str, Any]]:
     decoder = json.JSONDecoder()
     index = 0
@@ -109,25 +114,31 @@ def main() -> int:
         text = args.json_file.read_text(encoding="utf-8")
         scanner_go, findings = reachable_findings(decode_stream(text))
     except (OSError, ValueError, json.JSONDecodeError) as exc:
-        print(f"ERROR: could not parse govulncheck JSON: {exc}", file=sys.stderr)
+        message = f"could not parse govulncheck JSON: {exc}"
+        annotation("error", "govulncheck JSON parse failure", message)
+        print(f"ERROR: {message}", file=sys.stderr)
         return 2
 
     if not scanner_go:
-        print("ERROR: govulncheck JSON did not identify the scanner Go version", file=sys.stderr)
+        message = "govulncheck JSON did not identify the scanner Go version"
+        annotation("error", "govulncheck metadata failure", message)
+        print(f"ERROR: {message}", file=sys.stderr)
         return 2
 
     allowed, blocked = evaluate(scanner_go, findings)
 
     for item in allowed:
-        print(
-            "::warning title=Temporary Go stdlib vulnerability exception::"
+        annotation(
+            "warning",
+            "Temporary Go stdlib vulnerability exception",
             f"{item}; tolerated only while {ALLOWED_SCANNER_GO} is the latest pinned stable toolchain. "
-            f"Remove issue #45 exception after {ALLOWED_FIXED_VERSION} stable is released."
+            f"Remove issue #45 exception after {ALLOWED_FIXED_VERSION} stable is released.",
         )
 
     if blocked:
         print("Reachable vulnerabilities remain blocking:", file=sys.stderr)
         for item in blocked:
+            annotation("error", "Reachable Go vulnerability", item)
             print(f"- {item}", file=sys.stderr)
         return 1
 
