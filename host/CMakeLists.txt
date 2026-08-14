@@ -31,6 +31,12 @@ target_link_libraries(audio_frontend_app_tests PRIVATE companion_app)
 target_compile_options(audio_frontend_app_tests PRIVATE -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
 add_test(NAME audio_frontend_app_tests COMMAND audio_frontend_app_tests)
 
+add_executable(transport_policy_tests tests/transport_policy.cpp)
+target_include_directories(transport_policy_tests PRIVATE ../components/esp32_network/include)
+target_compile_features(transport_policy_tests PRIVATE cxx_std_20)
+target_compile_options(transport_policy_tests PRIVATE -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
+add_test(NAME transport_policy_tests COMMAND transport_policy_tests)
+
 add_executable(protocol_vectors tests/protocol_vectors.cpp)
 target_link_libraries(protocol_vectors PRIVATE companion_app)
 target_compile_options(protocol_vectors PRIVATE -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
