@@ -37,17 +37,21 @@ jobs:
           docker logs companion-pg
           exit 1
 
-      - name: Generate Atlas integrity file and validate SQL
+      - name: Verify Atlas integrity and validate SQL
         run: |
           set -euo pipefail
           rm -rf .tmp-atlas-migrations
           mkdir .tmp-atlas-migrations
-          cp db/postgres/*.sql .tmp-atlas-migrations/
+          cp db/postgres/*.sql db/postgres/atlas.sum .tmp-atlas-migrations/
+          before="$(sha256sum .tmp-atlas-migrations/atlas.sum | awk '{print $1}')"
           docker run --rm -v "$PWD/.tmp-atlas-migrations:/migrations" \
             "$ATLAS_IMAGE" migrate hash --dir file:///migrations
-          echo '--- generated atlas.sum ---'
-          cat .tmp-atlas-migrations/atlas.sum
-          echo '--- end atlas.sum ---'
+          after="$(sha256sum .tmp-atlas-migrations/atlas.sum | awk '{print $1}')"
+          test "$before" = "$after" || {
+            echo 'Committed atlas.sum does not match migration SQL:' >&2
+            diff -u db/postgres/atlas.sum .tmp-atlas-migrations/atlas.sum >&2 || true
+            exit 1
+          }
           docker run --rm --network companion-pg-test \
             -v "$PWD/.tmp-atlas-migrations:/migrations" \
             "$ATLAS_IMAGE" migrate validate \
@@ -69,7 +73,7 @@ jobs:
           psqlq() { docker exec companion-pg psql -v ON_ERROR_STOP=1 -At -U companion -d companion -c "$1"; }
           test "$(psqlq "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name IN ('idempotency_records','legacy_idempotency_reservations','privacy_policies','outbox','voice_memos');")" = "5"
           test "$(psqlq "SELECT count(*) FROM information_schema.table_constraints WHERE table_name='idempotency_records' AND constraint_type='PRIMARY KEY';")" = "1"
-          test "$(psqlq "SELECT save_voice_audio::int || ':' || long_term_memory_enabled::int FROM (INSERT INTO privacy_policies(user_id,updated_at) VALUES('default-deny-check',now()) RETURNING save_voice_audio,long_term_memory_enabled) p;")" = "0:0"
+          test "$(psqlq "WITH inserted AS (INSERT INTO privacy_policies(user_id,updated_at) VALUES('default-deny-check',now()) RETURNING save_voice_audio,long_term_memory_enabled) SELECT save_voice_audio::int || ':' || long_term_memory_enabled::int FROM inserted;")" = "0:0"
           psqlq "INSERT INTO idempotency_records(actor_id,operation,idempotency_key,request_hash,outcome_json,created_at) VALUES('actor-a','note.create','same','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','{}',now());"
           psqlq "INSERT INTO idempotency_records(actor_id,operation,idempotency_key,request_hash,outcome_json,created_at) VALUES('actor-b','note.create','same','bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','{}',now());"
           test "$(psqlq "SELECT count(*) FROM idempotency_records WHERE idempotency_key='same';")" = "2"
