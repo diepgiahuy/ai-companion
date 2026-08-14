@@ -1,0 +1,22 @@
+name: Display benchmark harness
+
+on:
+  pull_request:
+    paths:
+      - "benchmarks/display/**"
+      - ".github/workflows/display_benchmark_harness.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-harness:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Unit test physical-result validator
+        run: python3 -m unittest -v benchmarks/display/test_summarize_results.py
+      - name: Compile validator
+        run: python3 -m py_compile benchmarks/display/summarize_results.py
