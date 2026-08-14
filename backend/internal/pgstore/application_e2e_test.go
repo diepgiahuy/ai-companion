@@ -66,11 +66,15 @@ func TestPostgresApplicationServerToolRestartNoSQLite(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	data, err := Open(ctx, dsn)
+	firstPool, err := Open(ctx, PoolConfig{DSN: dsn})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer data.Close()
+	firstData, err := New(firstPool)
+	if err != nil {
+		firstPool.Close()
+		t.Fatal(err)
+	}
 
 	prefix := fmt.Sprintf("app-pg-%d", time.Now().UnixNano())
 	userID := prefix + "-user"
@@ -79,16 +83,18 @@ func TestPostgresApplicationServerToolRestartNoSQLite(t *testing.T) {
 	idempotencyKey := prefix + "-note-key"
 	threadID := prefix + "-thread"
 
-	if err := data.EnrollDevice(ctx, domain.Identity{UserID: userID, DeviceID: deviceID, TenantID: "tier1", Plan: "test"}, credential); err != nil {
+	if err := firstData.EnrollDevice(ctx, domain.Identity{UserID: userID, DeviceID: deviceID, TenantID: "tier1", Plan: "test"}, credential); err != nil {
+		firstPool.Close()
 		t.Fatal(err)
 	}
 
 	sqlitePath := filepath.Join(t.TempDir(), "must-not-exist.db")
 	t.Setenv("COMPANION_DATABASE", sqlitePath)
 
-	firstConversation := conversationctx.New(data, nil)
+	firstConversation := conversationctx.New(firstData, nil)
 	firstRegistry := capability.NewToolRegistry()
-	if err := toolprovider.RegisterNative(firstRegistry, toolprovider.NativeDependencies{Store: data, Conversation: firstConversation}); err != nil {
+	if err := toolprovider.RegisterNative(firstRegistry, toolprovider.NativeDependencies{Store: firstData, Conversation: firstConversation}); err != nil {
+		firstPool.Close()
 		t.Fatal(err)
 	}
 	firstResults := make(chan string, 1)
@@ -96,30 +102,38 @@ func TestPostgresApplicationServerToolRestartNoSQLite(t *testing.T) {
 		registry: firstRegistry, conversation: firstConversation,
 		key: idempotencyKey, content: "alpha", results: firstResults,
 	}
-	firstService := newPostgresApplicationTestServer(data, firstAgent, "first transcript")
+	firstService := newPostgresApplicationTestServer(firstData, firstAgent, "first transcript")
 	firstHTTP := httptest.NewServer(firstService.Handler())
 
 	assertPostgresApplicationUnauthorized(t, firstHTTP.URL, deviceID, "wrong-credential")
 	runPostgresApplicationTurn(t, firstHTTP.URL, deviceID, credential, threadID, "turn-1")
 	firstResult := waitPostgresApplicationResult(t, firstResults)
 	if !toolResultOK(firstResult) {
+		firstHTTP.Close()
+		firstPool.Close()
 		t.Fatalf("first note tool failed: %s", firstResult)
 	}
 	firstHTTP.Close()
 
-	notes, err := data.ListNotes(ctx, userID, 10)
+	notes, err := firstData.ListNotes(ctx, userID, 10)
 	if err != nil || len(notes) != 1 || notes[0].Content != "alpha" {
+		firstPool.Close()
 		t.Fatalf("notes after first application instance=%+v err=%v", notes, err)
 	}
+	firstPool.Close()
 
-	// Simulate a process restart by rebuilding all application-facing services and
-	// server state while keeping only PostgreSQL durable state. No in-memory cache,
-	// server session, ToolRegistry or conversation service is reused.
-	secondData, err := Open(ctx, dsn)
+	// Simulate a process restart by rebuilding the PostgreSQL pool, application
+	// services, session hub, ToolRegistry and conversation service from scratch.
+	// The only state shared between instances is the PostgreSQL database itself.
+	secondPool, err := Open(ctx, PoolConfig{DSN: dsn})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer secondData.Close()
+	defer secondPool.Close()
+	secondData, err := New(secondPool)
+	if err != nil {
+		t.Fatal(err)
+	}
 	secondConversation := conversationctx.New(secondData, nil)
 	history, err := secondConversation.Recent(ctx, conversationctx.Scope{UserID: userID, ThreadID: threadID}, 10)
 	if err != nil || len(history) != 2 || history[0].Content != "first transcript" {
