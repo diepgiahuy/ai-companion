@@ -24,11 +24,18 @@ def finding(osv, module, fixed, function="Vulnerable"):
 class GateTests(unittest.TestCase):
     def test_allows_only_current_unreleased_stdlib_fix(self):
         go_version, allowed, blocked = gate.classify(
-            stream(findings=[finding("GO-TEST-1", "stdlib", "go1.26.6")])
+            stream(findings=[finding("GO-TEST-1", "stdlib", "v1.26.6")])
         )
         self.assertEqual(go_version, "go1.26.5")
         self.assertEqual(len(allowed), 1)
         self.assertEqual(blocked, [])
+
+    def test_toolchain_style_fixed_version_does_not_accidentally_match(self):
+        _, allowed, blocked = gate.classify(
+            stream(findings=[finding("GO-TEST-PREFIX", "stdlib", "go1.26.6")])
+        )
+        self.assertEqual(allowed, [])
+        self.assertEqual(len(blocked), 1)
 
     def test_blocks_module_vulnerability(self):
         _, allowed, blocked = gate.classify(
@@ -46,7 +53,7 @@ class GateTests(unittest.TestCase):
 
     def test_exception_stops_on_future_go_version(self):
         _, allowed, blocked = gate.classify(
-            stream(go_version="go1.26.6", findings=[finding("GO-TEST-4", "stdlib", "go1.26.6")])
+            stream(go_version="go1.26.6", findings=[finding("GO-TEST-4", "stdlib", "v1.26.6")])
         )
         self.assertEqual(allowed, [])
         self.assertEqual(len(blocked), 1)
