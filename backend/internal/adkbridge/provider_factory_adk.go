@@ -46,7 +46,8 @@ func NewProvider(cfg Config) (pipeline.Agent, error) {
 	if err != nil {
 		return nil, err
 	}
-	if cfg.ProviderToolAliases {
+	aliasesEnabled := cfg.ProviderToolAliases || strings.EqualFold(strings.TrimSpace(os.Getenv("ADK_PROVIDER_TOOL_ALIASES")), "true")
+	if aliasesEnabled {
 		llm = withProviderToolAliases(llm)
 	}
 	return newWithModel(cfg, llm)
