@@ -18,7 +18,10 @@ func TestConfigureSpeechComponentsLocalReference(t *testing.T) {
 	t.Setenv("COMPANION_SPEECH_PROFILE", speechProfileReferenceLocal)
 	t.Setenv("FUNASR_BASE_URL", "http://127.0.0.1:10095")
 	t.Setenv("FUNASR_MODEL", "custom")
-	t.Setenv("EDGE_TTS_URL", "ws://127.0.0.1:10096")
+	// These tests validate composition only; use a known executable rather than
+	// requiring the hosted CI image to install the optional Edge reference stack.
+	t.Setenv("EDGE_TTS_COMMAND", "true")
+	t.Setenv("EDGE_TTS_FFMPEG_COMMAND", "true")
 	components, err := configureSpeechComponents(runtimeconfig.Config{AllowMock: false})
 	if err != nil {
 		t.Fatal(err)
@@ -35,8 +38,21 @@ func TestConfigureSpeechComponentsLocalReferenceRequiresExplicitFunASRModel(t *t
 	t.Setenv("COMPANION_SPEECH_PROFILE", speechProfileReferenceLocal)
 	t.Setenv("FUNASR_BASE_URL", "http://127.0.0.1:10095")
 	t.Setenv("FUNASR_MODEL", "")
+	t.Setenv("EDGE_TTS_COMMAND", "true")
+	t.Setenv("EDGE_TTS_FFMPEG_COMMAND", "true")
 	if _, err := configureSpeechComponents(runtimeconfig.Config{AllowMock: false}); err == nil {
 		t.Fatal("reference-local silently accepted a missing FunASR model")
+	}
+}
+
+func TestConfigureSpeechComponentsLocalReferenceRequiresEdgeRuntime(t *testing.T) {
+	t.Setenv("COMPANION_SPEECH_PROFILE", speechProfileReferenceLocal)
+	t.Setenv("FUNASR_BASE_URL", "http://127.0.0.1:10095")
+	t.Setenv("FUNASR_MODEL", "custom")
+	t.Setenv("EDGE_TTS_COMMAND", "definitely-not-a-real-edge-tts-command")
+	t.Setenv("EDGE_TTS_FFMPEG_COMMAND", "true")
+	if _, err := configureSpeechComponents(runtimeconfig.Config{AllowMock: false}); err == nil {
+		t.Fatal("reference-local silently accepted a missing EdgeTTS executable")
 	}
 }
 
