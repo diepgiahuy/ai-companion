@@ -127,21 +127,25 @@ python3 "$ROOT/host/companion_software_device/validate_observability.py" "$CORE_
 # device are reused across process restarts. Restarting only changes MockASR's
 # deterministic transcript; the product agent remains ADK and the Responses
 # fixture must route every case through the public ToolRegistry definition.
+# The note-conflict case intentionally reuses call_note_1 after a restart with
+# different canonical arguments, proving the durable SQLite conflict path end to
+# end rather than only at repository-unit level.
 TOOL_DEVICE="software-device-tool"
 export COMPANION_DATABASE="$TMP/tool.db"
 TOOL_CREDENTIAL=""
 TOOL_CASES=(
-  "expense|Tier1 expense 50k|$TOOL_OUT|expense.log"
-  "budget|Tier1 budget weekly|${OUT%.json}-tool-budget.json|budget.set"
-  "note|Tier1 note|${OUT%.json}-tool-note.json|note.create"
-  "journal|Tier1 journal|${OUT%.json}-tool-journal.json|journal.create"
-  "reminder|Tier1 reminder|${OUT%.json}-tool-reminder.json|reminder.create"
-  "timer|Tier1 timer|${OUT%.json}-tool-timer.json|timer.create"
-  "memory|Tier1 memory|${OUT%.json}-tool-memory.json|memory.remember"
+  "expense|Tier1 expense 50k|$TOOL_OUT|expense.log|Tier-1 tool parity ok"
+  "budget|Tier1 budget weekly|${OUT%.json}-tool-budget.json|budget.set|Tier-1 tool parity ok"
+  "note|Tier1 note|${OUT%.json}-tool-note.json|note.create|Tier-1 tool parity ok"
+  "note-conflict|Tier1 note conflict|${OUT%.json}-tool-note-conflict.json|note.create|Tier-1 idempotency conflict ok"
+  "journal|Tier1 journal|${OUT%.json}-tool-journal.json|journal.create|Tier-1 tool parity ok"
+  "reminder|Tier1 reminder|${OUT%.json}-tool-reminder.json|reminder.create|Tier-1 tool parity ok"
+  "timer|Tier1 timer|${OUT%.json}-tool-timer.json|timer.create|Tier-1 tool parity ok"
+  "memory|Tier1 memory|${OUT%.json}-tool-memory.json|memory.remember|Tier-1 tool parity ok"
 )
 
 for spec in "${TOOL_CASES[@]}"; do
-  IFS='|' read -r case_id transcript evidence_path expected_tool <<<"$spec"
+  IFS='|' read -r case_id transcript evidence_path expected_tool expected_text <<<"$spec"
   export MOCK_TRANSCRIPT="$transcript"
   COMPANION_EVIDENCE_CONFIG_SHA256="$(printf '%s\n' \
     'profile=test' 'allow_mock=true' 'agent=adk:fake_responses' \
@@ -159,7 +163,7 @@ for spec in "${TOOL_CASES[@]}"; do
     --token "$TOOL_CREDENTIAL" \
     --admin-token "$COMPANION_ADMIN_TOKEN" \
     --scenario-set tool \
-    --expected-text "Tier-1 tool parity ok" \
+    --expected-text "$expected_text" \
     --evidence "$evidence_path"
   python3 "$ROOT/host/companion_software_device/validate_evidence.py" "$evidence_path"
   stop_server
