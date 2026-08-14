@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 
@@ -50,9 +51,17 @@ func configureSpeechComponents(cfg runtimeconfig.Config) (pipeline.Components, e
 		if err != nil {
 			return pipeline.Components{}, fmt.Errorf("configure FunASR: %w", err)
 		}
+		edgeCommand := value("EDGE_TTS_COMMAND", "edge-tts")
+		ffmpegCommand := value("EDGE_TTS_FFMPEG_COMMAND", "ffmpeg")
+		if err := requireExecutable(edgeCommand); err != nil {
+			return pipeline.Components{}, fmt.Errorf("configure EdgeTTS executable: %w", err)
+		}
+		if err := requireExecutable(ffmpegCommand); err != nil {
+			return pipeline.Components{}, fmt.Errorf("configure EdgeTTS decoder: %w", err)
+		}
 		edge, err := speech.NewEdgeTTS(speech.EdgeTTSConfig{
-			Command:       value("EDGE_TTS_COMMAND", "edge-tts"),
-			FFmpegCommand: value("EDGE_TTS_FFMPEG_COMMAND", "ffmpeg"),
+			Command:       edgeCommand,
+			FFmpegCommand: ffmpegCommand,
 			Voice:         value("EDGE_TTS_VOICE", "vi-VN-HoaiMyNeural"),
 			Rate:          value("EDGE_TTS_RATE", "+0%"),
 			Volume:        value("EDGE_TTS_VOLUME", "+0%"),
@@ -123,6 +132,17 @@ func configureSpeechComponents(cfg runtimeconfig.Config) (pipeline.Components, e
 	default:
 		return pipeline.Components{}, fmt.Errorf("unsupported COMPANION_SPEECH_PROFILE %q", profile)
 	}
+}
+
+func requireExecutable(command string) error {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return errors.New("executable command is empty")
+	}
+	if _, err := exec.LookPath(command); err != nil {
+		return fmt.Errorf("%q not found in PATH: %w", command, err)
+	}
+	return nil
 }
 
 func envBool(name string, fallback bool) bool {
