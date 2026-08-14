@@ -1,5 +1,7 @@
 #pragma once
 
+#include "companion/audio_frontend.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -132,6 +134,9 @@ class CompanionApp final {
 public:
   CompanionApp(Microphone& microphone, Speaker& speaker, Display& display,
                Button& button, VoiceBackend& backend, AppConfig config = {});
+  CompanionApp(Microphone& microphone, Speaker& speaker, Display& display,
+               Button& button, VoiceBackend& backend, AudioFrontend& audio_frontend,
+               AppConfig config = {});
 
   bool start(uint64_t now_ms);
   void tick(uint64_t now_ms);
@@ -145,6 +150,7 @@ private:
   Display& display_;
   Button& button_;
   VoiceBackend& backend_;
+  AudioFrontend* audio_frontend_{};
   AppConfig config_;
   UiState state_{UiState::booting};
   uint64_t recording_started_ms_{};
@@ -160,16 +166,21 @@ private:
   bool tts_finished_{};
   bool alarm_pending_{};
   bool alarm_tone_active_{};
+  bool microphone_capture_active_{};
   std::array<char, 96> upcoming_{};
   std::array<char, 96> pending_alarm_{};
   std::array<int16_t, kAudioFrameSamples> capture_frame_{};
+  std::array<int16_t, kAudioFrameSamples> cleaned_capture_frame_{};
   std::array<int16_t, kAudioFrameSamples> playback_frame_{};
+  std::array<int16_t, kAudioFrameSamples> playback_reference_frame_{};
+  PlaybackReference24To16 playback_reference_converter_{};
   size_t playback_count_{};
   size_t playback_offset_{};
 
   void process_backend_events(uint64_t now_ms);
   void process_backend_event(const BackendEvent& event, uint64_t now_ms);
   void pump_capture(uint64_t now_ms);
+  void pump_frontend_monitor(uint64_t now_ms);
   void pump_playback(uint64_t now_ms);
   void pump_alarm_tone();
   void begin_listening(uint64_t now_ms);
@@ -181,6 +192,11 @@ private:
   void set_upcoming(std::string_view text);
   void set_pending_alarm(std::string_view text);
   bool frame_has_voice(std::span<const int16_t> pcm) const;
+  bool ensure_frontend_capture();
+  bool push_playback_reference(std::span<const int16_t> accepted_pcm,
+                               uint32_t sample_rate_hz);
+  void handle_frontend_event(AudioFrontendEvent event, uint64_t now_ms);
+  void stop_capture_if_owned_by_turn();
   void fail(std::string_view reason);
 };
 
