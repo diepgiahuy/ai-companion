@@ -54,7 +54,12 @@ for spec in "${TOOL_CASES[@]}"; do
   IFS='|' read -r case_id transcript evidence_path expected_tool expected_text <<<"$spec"; export MOCK_TRANSCRIPT="$transcript"; COMPANION_EVIDENCE_CONFIG_SHA256="$(printf '%s\n' 'profile=test' 'allow_mock=true' 'agent=adk:fake_responses' 'auth=database_enrolled' "asr=mock:${transcript}" 'tts=mock' 'protocol=v2' "tool_case=${case_id}" | sha256sum | awk '{print $1}')"; export COMPANION_OBSERVABILITY_FILE="${evidence_path%.json}-observability.json"; start_server "$TOOL_SERVER_LOG"
   if [[ -z "$TOOL_CREDENTIAL" ]]; then TOOL_CREDENTIAL="$(enroll_device "$TOOL_DEVICE")"; expect_unauthorized "$TOOL_DEVICE" "wrong-tier1-credential"; fi
   if [[ "$case_id" == "memory" ]]; then set_memory_consent "default"; fi
-  "${SOFTWARE_DEVICE_BIN:-/usr/local/bin/companion_software_device}" --url ws://127.0.0.1:18000/v2/device --device-id "$TOOL_DEVICE" --token "$TOOL_CREDENTIAL" --admin-token "$COMPANION_ADMIN_TOKEN" --scenario-set tool --expected-text "$expected_text" --evidence "$evidence_path"
+  if ! "${SOFTWARE_DEVICE_BIN:-/usr/local/bin/companion_software_device}" --url ws://127.0.0.1:18000/v2/device --device-id "$TOOL_DEVICE" --token "$TOOL_CREDENTIAL" --admin-token "$COMPANION_ADMIN_TOKEN" --scenario-set tool --expected-text "$expected_text" --evidence "$evidence_path"; then
+    echo "Tier-1 tool case failed: ${case_id}" >&2
+    cat "$TOOL_SERVER_LOG" >&2
+    cat "$MODEL_LOG" >&2
+    exit 1
+  fi
   python3 "$ROOT/host/companion_software_device/validate_evidence.py" "$evidence_path"; stop_server
   if [[ "$case_id" == "note-conflict" ]]; then
     python3 "$ROOT/host/companion_software_device/validate_observability.py" "${evidence_path%.json}-observability.json" tool
