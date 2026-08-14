@@ -47,8 +47,8 @@ func (s *Store) VerifySchema(ctx context.Context) error {
 	var newerRevisions int
 	if err := s.pool.QueryRow(ctx, `
 		SELECT applied, total, COALESCE(error, ''),
-			(SELECT count(*) FROM public.atlas_schema_revisions WHERE version > $1)
-		FROM public.atlas_schema_revisions
+			(SELECT count(*) FROM atlas_schema_revisions.atlas_schema_revisions WHERE version > $1)
+		FROM atlas_schema_revisions.atlas_schema_revisions
 		WHERE version = $1
 	`, RequiredSchemaRevision).Scan(&applied, &total, &migrationError, &newerRevisions); err != nil {
 		return fmt.Errorf("verify Atlas schema revision %s: %w", RequiredSchemaRevision, err)
