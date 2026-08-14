@@ -16,7 +16,8 @@ func TestConfigureSpeechComponentsMockRequiresAllowMock(t *testing.T) {
 
 func TestConfigureSpeechComponentsLocalReference(t *testing.T) {
 	t.Setenv("COMPANION_SPEECH_PROFILE", speechProfileReferenceLocal)
-	t.Setenv("FUNASR_URL", "ws://127.0.0.1:10095")
+	t.Setenv("FUNASR_BASE_URL", "http://127.0.0.1:10095")
+	t.Setenv("FUNASR_MODEL", "custom")
 	t.Setenv("EDGE_TTS_URL", "ws://127.0.0.1:10096")
 	components, err := configureSpeechComponents(runtimeconfig.Config{AllowMock: false})
 	if err != nil {
@@ -27,6 +28,15 @@ func TestConfigureSpeechComponentsLocalReference(t *testing.T) {
 	}
 	if _, ok := components.ASR.(speech.PipelineAdapter); !ok {
 		t.Fatalf("ASR type=%T; want provider-neutral speech adapter", components.ASR)
+	}
+}
+
+func TestConfigureSpeechComponentsLocalReferenceRequiresExplicitFunASRModel(t *testing.T) {
+	t.Setenv("COMPANION_SPEECH_PROFILE", speechProfileReferenceLocal)
+	t.Setenv("FUNASR_BASE_URL", "http://127.0.0.1:10095")
+	t.Setenv("FUNASR_MODEL", "")
+	if _, err := configureSpeechComponents(runtimeconfig.Config{AllowMock: false}); err == nil {
+		t.Fatal("reference-local silently accepted a missing FunASR model")
 	}
 }
 
