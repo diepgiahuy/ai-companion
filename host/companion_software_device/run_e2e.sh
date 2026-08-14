@@ -62,6 +62,15 @@ revoke_device() {
     "http://127.0.0.1:18000/v1/admin/devices/${device_id}/credential" >/dev/null
 }
 
+set_memory_consent() {
+  local user_id="$1"
+  curl -fsS -X PATCH \
+    -H "Authorization: Bearer $COMPANION_ADMIN_TOKEN" \
+    -H 'Content-Type: application/json' \
+    --data '{"save_voice_audio":false,"long_term_memory_enabled":true,"conversation_retention_days":0,"voice_memo_retention_days":0,"memory_retention_days":0}' \
+    "http://127.0.0.1:18000/v1/admin/users/${user_id}/privacy" >/dev/null
+}
+
 expect_unauthorized() {
   local device_id="$1"
   local credential="$2"
@@ -95,9 +104,6 @@ for _ in $(seq 1 100); do
 done
 curl -fsS http://127.0.0.1:19000/healthz >/dev/null || { cat "$MODEL_LOG" >&2; exit 1; }
 
-# Core protocol/orchestration run through the ADK product runtime. ASR/TTS stay
-# deterministic Tier-1 fixtures; the agent boundary is the real ADK Responses
-# adapter and device authentication is the real SQLite enrollment path.
 CORE_DEVICE="software-device-core"
 export MOCK_TRANSCRIPT="tier1 transcript"
 export COMPANION_DATABASE="$TMP/companion.db"
@@ -123,10 +129,6 @@ python3 "$ROOT/host/companion_software_device/validate_evidence.py" "$OUT"
 stop_server
 python3 "$ROOT/host/companion_software_device/validate_observability.py" "$CORE_OBS_OUT" core
 
-# Representative ADK tool parity. The same durable SQLite database and enrolled
-# device are reused across process restarts. Restarting only changes MockASR's
-# deterministic transcript; the product agent remains ADK and the Responses
-# fixture must route every case through the public ToolRegistry definition.
 TOOL_DEVICE="software-device-tool"
 export COMPANION_DATABASE="$TMP/tool.db"
 TOOL_CREDENTIAL=""
@@ -153,6 +155,9 @@ for spec in "${TOOL_CASES[@]}"; do
     TOOL_CREDENTIAL="$(enroll_device "$TOOL_DEVICE")"
     expect_unauthorized "$TOOL_DEVICE" "wrong-tier1-credential"
   fi
+  if [[ "$case_id" == "memory" ]]; then
+    set_memory_consent "default"
+  fi
   "${SOFTWARE_DEVICE_BIN:-/usr/local/bin/companion_software_device}" \
     --url ws://127.0.0.1:18000/v2/device \
     --device-id "$TOOL_DEVICE" \
@@ -166,8 +171,6 @@ for spec in "${TOOL_CASES[@]}"; do
   python3 "$ROOT/host/companion_software_device/validate_observability.py" "${evidence_path%.json}-observability.json" tool "$expected_tool"
 done
 
-# Re-open the same authoritative DB only to exercise the final credential
-# lifecycle. A revoked credential must fail before WebSocket upgrade.
 export MOCK_TRANSCRIPT="Tier1 memory"
 export COMPANION_OBSERVABILITY_FILE="$TMP/final-auth-observability.json"
 start_server "$TOOL_SERVER_LOG"
