@@ -16,13 +16,10 @@ import (
 var ErrNotBuilt = errors.New("ADK runtime is not included in this build; rebuild with -tags=adk")
 
 const (
-	// ModelProtocolResponses uses the OpenAI Responses-compatible transport. It
-	// remains the default and is the reference path for Qwen-Flash.
+	// ModelProtocolResponses uses the OpenAI Responses-compatible transport.
 	ModelProtocolResponses = "responses"
 	// ModelProtocolChatCompletions uses OpenAI-compatible /chat/completions
-	// underneath the same ADK llmagent runtime. This is needed for GLM-4-Flash,
-	// whose documented compatibility surface is Chat Completions rather than
-	// Responses.
+	// underneath the same ADK llmagent runtime.
 	ModelProtocolChatCompletions = "chat_completions"
 )
 
@@ -39,6 +36,11 @@ type Config struct {
 	AppName       string
 	ModelName     string
 	ModelProtocol string
+	// ProviderToolAliases enables deterministic provider-safe function names
+	// while keeping Companion ToolRegistry names canonical. It is explicit so
+	// default/test providers do not silently change their externally visible
+	// tool schema. Enable it for strict GLM/Qwen reference endpoints.
+	ProviderToolAliases bool
 	BaseURL       string
 	APIKey        string
 	Instruction   string
