@@ -12,6 +12,7 @@ import (
 	"companion-server/internal/pgstore"
 	pgmigrate "companion-server/internal/pgstore/migrate"
 	"companion-server/internal/store"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestSQLiteToPostgresFullParity(t *testing.T) {
@@ -48,7 +49,7 @@ func TestSQLiteToPostgresFullParity(t *testing.T) {
 	}
 }
 
-func resetPostgres(t *testing.T, ctx context.Context, pool interface{ Exec(context.Context, string, ...any) (any, error) }) {
+func resetPostgres(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
 	// This helper is intentionally test-only. Production migration never truncates a target.
 	const truncate = `TRUNCATE TABLE
@@ -92,8 +93,6 @@ func seedSQLite(t *testing.T, db *sql.DB) {
 	for _, statement := range statements {
 		if _, err := db.ExecContext(ctx, statement); err != nil { t.Fatalf("seed SQLite statement failed: %v\n%s", err, statement) }
 	}
-	// Outbox is covered by real current SQLite triggers above. Verify this fixture
-	// actually exercises event parity instead of silently importing an empty table.
 	var outboxCount int
 	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM outbox`).Scan(&outboxCount); err != nil { t.Fatal(err) }
 	if outboxCount == 0 { t.Fatal("fixture produced no outbox rows") }
