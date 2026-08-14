@@ -143,6 +143,48 @@ func TestPostgresDurableMemoryMutationParity(t *testing.T) {
 	}
 }
 
+func TestPostgresDurableMarketWatchMutationParity(t *testing.T) {
+	pool := postgresTestPool(t)
+	store, err := New(pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	prefix := fmt.Sprintf("pg-market-mutation-%d", time.Now().UnixNano())
+	user := prefix + "-user"
+	device := prefix + "-device"
+	request := mutationRequest(t, prefix+"-actor", "market.watch.create", prefix+"-create", map[string]any{"provider": "test", "symbol": "XAU/USD", "currency": "USD", "operator": ">", "threshold": 3000.0})
+
+	first, err := store.CreateMarketWatchMutation(ctx, request, user, device, "test", "XAU/USD", "usd", ">", 3000)
+	if err != nil || first.ID < 1 || first.Currency != "USD" || !first.Enabled {
+		t.Fatalf("first=%+v err=%v", first, err)
+	}
+	replayed, err := store.CreateMarketWatchMutation(ctx, request, user, device, "test", "XAU/USD", "usd", ">", 3000)
+	if err != nil || replayed.ID != first.ID {
+		t.Fatalf("replayed=%+v err=%v", replayed, err)
+	}
+	watches, err := store.ListMarketWatches(ctx, user, device, 10)
+	if err != nil || len(watches) != 1 || watches[0].ID != first.ID {
+		t.Fatalf("watches=%+v err=%v", watches, err)
+	}
+	conflict := request
+	conflict.RequestHash, err = idempotency.HashValue(map[string]any{"provider": "test", "symbol": "XAU/USD", "currency": "USD", "operator": ">", "threshold": 4000.0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateMarketWatchMutation(ctx, conflict, user, device, "test", "XAU/USD", "USD", ">", 4000); !idempotency.IsConflict(err) {
+		t.Fatalf("expected idempotency conflict, got %v", err)
+	}
+
+	deleteRequest := mutationRequest(t, prefix+"-actor", "market.watch.delete", prefix+"-delete", map[string]any{"id": first.ID})
+	if err := store.DeleteMarketWatchMutation(ctx, deleteRequest, user, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DeleteMarketWatchMutation(ctx, deleteRequest, user, first.ID); err != nil {
+		t.Fatalf("delete replay: %v", err)
+	}
+}
+
 func TestPostgresOutboxSchedulerAndMarketParity(t *testing.T) {
 	pool := postgresTestPool(t)
 	store, err := New(pool)
