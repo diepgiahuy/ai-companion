@@ -103,6 +103,7 @@ func (t MessageType) Valid() bool {
 		TTSLifecycleType, AgentStatusType, UICardType, UIStateType,
 		AlarmFiredType, AlarmAckType, ScheduleUpdatedType, ConfigUpdateType,
 		ConfigReportType, ProtocolErrorType,
+		CapabilityAdvertiseType, CapabilityCallType, CapabilityResultType, CapabilityCancelType,
 		GestureNotificationType,
 		VoiceMailAvailableType, VoiceMailClaimType, VoiceMailClaimedType,
 		VoiceMailPlaybackResultType, VoiceMailConsumedType, VoiceMailExpiredType,
