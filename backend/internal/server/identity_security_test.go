@@ -62,7 +62,11 @@ func TestEnrolledIdentityOverridesForgedOwnershipHeaders(t *testing.T) {
 	if got.UserID != "owner-user" || got.DeviceID != "device-trusted" || got.TenantID != "owner-tenant" || got.Plan != "owner-plan" {
 		t.Fatalf("forged ownership headers escaped enrolled identity: %+v", got)
 	}
-	if got.ThreadID != "user-selected-thread" {
-		t.Fatalf("thread selection should remain a conversation concern, got=%q", got.ThreadID)
+	registered := service.hub.get("device-trusted")
+	if registered == nil || registered.threadID != "user-selected-thread" {
+		if registered == nil {
+			t.Fatal("registered session missing")
+		}
+		t.Fatalf("thread selection should remain a conversation concern, got=%q", registered.threadID)
 	}
 }
