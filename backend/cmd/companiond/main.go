@@ -145,7 +145,7 @@ func main() {
 		os.Exit(1)
 	}
 	toolRegistry.SetAuthorizer(policy.Authorizer{Features: features, Entitlements: data, Privacy: privacyService})
-	mcpCloser, err := configureMCP(toolRegistry, 10*time.Second)
+	mcpCloser, err := configureMCP(toolRegistry, resourceRegistry, 10*time.Second)
 	if err != nil {
 		logger.Error("initialize external MCP capabilities", "error", err)
 		os.Exit(1)
