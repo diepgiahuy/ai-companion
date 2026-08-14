@@ -2,12 +2,10 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -17,12 +15,8 @@ import (
 	"companion-server/internal/capability"
 	"companion-server/internal/controlplane"
 	conversationctx "companion-server/internal/conversation"
-	"companion-server/internal/domain"
-	"companion-server/internal/events"
 	"companion-server/internal/market"
 	"companion-server/internal/memory"
-	"companion-server/internal/observability"
-	"companion-server/internal/pipeline"
 	"companion-server/internal/policy"
 	"companion-server/internal/privacy"
 	conversationprovider "companion-server/internal/providers/conversation"
@@ -39,6 +33,7 @@ func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	observer, flushObservability := configureObservability(logger)
 	defer flushObservability()
+
 	runtimeCfg, err := runtimeconfig.Load()
 	if err != nil {
 		logger.Error("load runtime configuration", "error", err)
@@ -59,18 +54,12 @@ func main() {
 	}
 	defer data.Close()
 
-	// ASR/TTS are still deterministic POC providers in this checkpoint. Make the
-	// limitation explicit: a production profile cannot accidentally boot with
-	// mocks and later be mistaken for a real-voice release.
-	if !runtimeCfg.AllowMock {
-		logger.Error("real ASR/TTS providers are required when mock providers are disabled", "profile", runtimeCfg.Profile)
+	components, err := configureSpeechComponents(runtimeCfg)
+	if err != nil {
+		logger.Error("configure speech providers", "error", err, "profile", runtimeCfg.Profile, "speech_profile", os.Getenv("COMPANION_SPEECH_PROFILE"))
 		os.Exit(1)
 	}
-	components := pipeline.Components{
-		ASR:    pipeline.MockASR{Transcript: os.Getenv("MOCK_TRANSCRIPT")},
-		TTS:    pipeline.MockTTS{},
-		Codecs: pipeline.OpusFactory{},
-	}
+
 	timezone := value("COMPANION_TIMEZONE", "Asia/Ho_Chi_Minh")
 	location, err := time.LoadLocation(timezone)
 	if err != nil {
@@ -89,17 +78,27 @@ func main() {
 		conversationCache,
 	)
 
-	// Production-shaped control plane kept local for the POC: device twin,
-	// remote config and feature evaluation are provider boundaries, not hard-coded
-	// into the voice runtime.
 	b := true
 	vad := 450
 	silence := 800
 	minSpeech := 250
 	idle := 5000
 	alarm := 10000
-	control := controlplane.New(data, controlplane.RuntimeConfig{SmartVADEnabled: &b, VADThreshold: &vad, VADSilenceMS: &silence, VADMinSpeechMS: &minSpeech, IdleAfterMS: &idle, AlarmVisibleMS: &alarm, Locale: "vi-VN", Timezone: timezone, VoiceKey: "default"})
-	for _, f := range []controlplane.Flag{{Key: "memory.long_term", Enabled: true, Rollout: 100}, {Key: "market.live", Enabled: true, Rollout: 100}} {
+	control := controlplane.New(data, controlplane.RuntimeConfig{
+		SmartVADEnabled: &b,
+		VADThreshold:    &vad,
+		VADSilenceMS:    &silence,
+		VADMinSpeechMS:  &minSpeech,
+		IdleAfterMS:     &idle,
+		AlarmVisibleMS:  &alarm,
+		Locale:          "vi-VN",
+		Timezone:        timezone,
+		VoiceKey:        "default",
+	})
+	for _, f := range []controlplane.Flag{
+		{Key: "memory.long_term", Enabled: true, Rollout: 100},
+		{Key: "market.live", Enabled: true, Rollout: 100},
+	} {
 		_ = data.EnsureFlag(context.Background(), f)
 	}
 	features := controlplane.NewFeatures(data)
@@ -117,13 +116,21 @@ func main() {
 	privacyService := privacy.New(data)
 	featureCatalog := controlplane.NewFeatureCatalog(data)
 	seedFeatureCatalog(context.Background(), featureCatalog, logger)
+
 	var embedding memory.EmbeddingProvider = memory.HashEmbedding{Dimensions: 96}
 	if base := os.Getenv("EMBEDDING_BASE_URL"); base != "" {
-		embedding = memory.OpenAIEmbedding{BaseURL: base, APIKey: os.Getenv("EMBEDDING_API_KEY"), Model: value("EMBEDDING_MODEL", "text-embedding"), Client: &http.Client{Timeout: 20 * time.Second}}
+		embedding = memory.OpenAIEmbedding{
+			BaseURL: base,
+			APIKey:  os.Getenv("EMBEDDING_API_KEY"),
+			Model:   value("EMBEDDING_MODEL", "text-embedding"),
+			Client:  &http.Client{Timeout: 20 * time.Second},
+		}
 	}
 	memoryService := memory.New(data, embedding)
 	httpClient := &http.Client{Timeout: 8 * time.Second}
-	marketProviders := []market.Provider{market.CoinGecko{APIKey: os.Getenv("COINGECKO_API_KEY"), Client: httpClient}}
+	marketProviders := []market.Provider{
+		market.CoinGecko{APIKey: os.Getenv("COINGECKO_API_KEY"), Client: httpClient},
+	}
 	if k := os.Getenv("TWELVEDATA_API_KEY"); k != "" {
 		marketProviders = append(marketProviders, market.TwelveData{APIKey: k, Client: httpClient})
 	}
@@ -142,14 +149,18 @@ func main() {
 	}
 	toolRegistry := capability.NewToolRegistry()
 	if err := toolprovider.RegisterNative(toolRegistry, toolprovider.NativeDependencies{
-		Store: data, Conversation: conversationService, Resources: resourceRegistry,
+		Store:         data,
+		Conversation:  conversationService,
+		Resources:     resourceRegistry,
 		VoicePrivacy:  privacyService,
 		RecordingsDir: value("COMPANION_RECORDINGS_DIR", "data/recordings"),
 	}); err != nil {
 		logger.Error("register native tools", "error", err)
 		os.Exit(1)
 	}
-	if err := toolprovider.RegisterPlatform(toolRegistry, toolprovider.PlatformDependencies{Memory: memoryService, Market: marketService, MarketWatches: data}); err != nil {
+	if err := toolprovider.RegisterPlatform(toolRegistry, toolprovider.PlatformDependencies{
+		Memory: memoryService, Market: marketService, MarketWatches: data,
+	}); err != nil {
 		logger.Error("register platform tools", "error", err)
 		os.Exit(1)
 	}
@@ -177,6 +188,7 @@ func main() {
 	adkAgent, err := adkbridge.New(adkbridge.Config{
 		AppName:       "companion",
 		ModelName:     adkModel,
+		ModelProtocol: strings.TrimSpace(os.Getenv("ADK_MODEL_PROTOCOL")),
 		BaseURL:       adkBaseURL,
 		APIKey:        os.Getenv("ADK_OPENAI_API_KEY"),
 		Instruction:   adkPrompt.Text,
@@ -189,16 +201,22 @@ func main() {
 		UsageMeter:    data,
 	})
 	if err != nil {
-		logger.Error("initialize ADK runtime", "error", err, "hint", "build with -tags=adk; ADK_OPENAI_BASE_URL must expose the OpenAI Responses API")
+		logger.Error("initialize ADK runtime", "error", err, "hint", "build with -tags=adk and set ADK_MODEL_PROTOCOL=responses or chat_completions")
 		os.Exit(1)
 	}
 	components.Agent = adkAgent
 
 	serverOptions := []server.Option{
-		server.WithStore(data), server.WithLocation(location),
+		server.WithStore(data),
+		server.WithLocation(location),
 		server.WithIdentityResolver(server.HeaderIdentityResolver{DefaultUserID: value("COMPANION_DEFAULT_USER_ID", "default")}),
-		server.WithControlPlane(control), server.WithFirmwareService(firmwareService), server.WithPrivacyService(privacyService), server.WithFeatureCatalog(featureCatalog), server.WithAdminToken(os.Getenv("COMPANION_ADMIN_TOKEN")),
-		server.WithDeviceCredentialManager(data), server.WithEntitlementManager(data),
+		server.WithControlPlane(control),
+		server.WithFirmwareService(firmwareService),
+		server.WithPrivacyService(privacyService),
+		server.WithFeatureCatalog(featureCatalog),
+		server.WithAdminToken(os.Getenv("COMPANION_ADMIN_TOKEN")),
+		server.WithDeviceCredentialManager(data),
+		server.WithEntitlementManager(data),
 		server.WithDeviceAuthenticator(data),
 		server.WithObservabilityRecorder(observer),
 	}
@@ -217,7 +235,6 @@ func main() {
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       90 * time.Second,
 	}
-
 	go func() {
 		logger.Info("companion server listening", "address", address)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -231,163 +248,5 @@ func main() {
 	defer cancel()
 	if err := httpServer.Shutdown(ctx); err != nil {
 		logger.Error("graceful shutdown failed", "error", err)
-	}
-}
-
-func configureObservability(logger *slog.Logger) (observability.Recorder, func()) {
-	path := strings.TrimSpace(os.Getenv("COMPANION_OBSERVABILITY_FILE"))
-	if path == "" {
-		return observability.Nop(), func() {}
-	}
-	capacity := 4096
-	if raw := strings.TrimSpace(os.Getenv("COMPANION_OBSERVABILITY_CAPACITY")); raw != "" {
-		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
-			capacity = parsed
-		}
-	}
-	recorder := observability.NewRingRecorder(capacity)
-	flush := func() {
-		snapshot := recorder.Snapshot()
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			logger.Error("create observability snapshot directory", "error", err)
-			return
-		}
-		file, err := os.Create(path)
-		if err != nil {
-			logger.Error("create observability snapshot", "error", err)
-			return
-		}
-		defer file.Close()
-		if err := observability.WriteSnapshot(file, snapshot); err != nil {
-			logger.Error("write observability snapshot", "error", err)
-			return
-		}
-		logger.Info("observability snapshot written", "events", len(snapshot.Events), "dropped", snapshot.Dropped)
-	}
-	return recorder, flush
-}
-
-func loadPromptBundle(cfg runtimeconfig.Config) (*promptpkg.Bundle, error) {
-	if cfg.LLM.PromptDir != "" {
-		return promptpkg.LoadDirectory(cfg.LLM.PromptDir)
-	}
-	return promptpkg.LoadDefault()
-}
-
-func value(name, fallback string) string {
-	if current := os.Getenv(name); current != "" {
-		return current
-	}
-	return fallback
-}
-
-func runOutbox(ctx context.Context, out events.Outbox, logger *slog.Logger) {
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case now := <-ticker.C:
-			_ = events.Dispatch(ctx, out, func(_ context.Context, e events.Event) error {
-				logger.Debug("domain event", "type", e.Type, "subject", e.Subject, "event_id", e.ID)
-				return nil
-			}, now, 50)
-		}
-	}
-}
-
-type marketWatchRepo interface {
-	market.WatchRepository
-	domain.ScheduleRepository
-}
-
-func runMarketWatcher(ctx context.Context, repo marketWatchRepo, quotes *market.Service, logger *slog.Logger) {
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-	check := func(now time.Time) {
-		watches, e := repo.EnabledMarketWatches(ctx, 200)
-		if e != nil {
-			logger.Warn("market watches load failed", "error", e)
-			return
-		}
-		for _, w := range watches {
-			q, e := quotes.Quote(ctx, w.Provider, w.Symbol, w.Currency)
-			if e != nil {
-				logger.Warn("market watch quote failed", "watch_id", w.ID, "error", e)
-				continue
-			}
-			state := market.Matches(w, q.Price)
-			if state && !w.LastState {
-				title := fmt.Sprintf("%s %.4f %s %s %.4f", w.Symbol, q.Price, q.Currency, w.Operator, w.Threshold)
-				if atomicRepo, ok := repo.(interface {
-					TriggerMarketWatch(context.Context, market.Watch, string, time.Time) (bool, error)
-				}); ok {
-					if _, e := atomicRepo.TriggerMarketWatch(ctx, w, title, now); e != nil {
-						logger.Warn("market alert transaction failed", "watch_id", w.ID, "error", e)
-					}
-				} else {
-					key := fmt.Sprintf("market-watch:%d:%d", w.ID, now.Unix())
-					if e := repo.CreateReminderForDevice(ctx, w.UserID, key, w.DeviceID, title, now); e != nil {
-						logger.Warn("market alert schedule failed", "watch_id", w.ID, "error", e)
-						continue
-					}
-					_ = repo.SetMarketWatchState(ctx, w.ID, true)
-				}
-			} else if state != w.LastState {
-				_ = repo.SetMarketWatchState(ctx, w.ID, state)
-			}
-		}
-	}
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case now := <-ticker.C:
-			check(now)
-		}
-	}
-}
-
-func runRetention(ctx context.Context, svc *privacy.Service, logger *slog.Logger) {
-	ticker := time.NewTicker(6 * time.Hour)
-	defer ticker.Stop()
-	apply := func() {
-		report, err := svc.ApplyRetention(ctx)
-		if err != nil {
-			logger.Warn("retention failed", "error", err)
-			return
-		}
-		for _, path := range report.OrphanPaths {
-			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-				logger.Warn("retained voice file cleanup failed", "path", path, "error", err)
-			}
-		}
-		if report.ConversationRows+report.MemoryRows+report.VoiceMemoRows > 0 {
-			logger.Info("retention applied", "conversation_rows", report.ConversationRows, "memory_rows", report.MemoryRows, "voice_memo_rows", report.VoiceMemoRows)
-		}
-	}
-	apply()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			apply()
-		}
-	}
-}
-
-func seedFeatureCatalog(ctx context.Context, c *controlplane.FeatureCatalog, logger *slog.Logger) {
-	modules := []controlplane.FeatureModule{
-		{ID: "core.finance", Version: 1, Lifecycle: "released", Execution: "native", MinProtocol: 1, Tools: []string{"expense.*", "budget.*"}, Resources: []string{"expenses://*", "budget://*"}, UICards: []string{"expense_summary"}, Locales: []string{"vi-VN", "en-US"}, Implementation: "native.finance"},
-		{ID: "core.schedule", Version: 1, Lifecycle: "released", Execution: "native", MinProtocol: 1, Tools: []string{"timer.*", "reminder.*"}, Resources: []string{"timers://*", "reminders://*"}, Implementation: "native.schedule"},
-		{ID: "memory.long_term", Version: 1, Lifecycle: "beta", Execution: "native", MinProtocol: 1, Tools: []string{"memory.*"}, ConfigKeys: []string{"memory.long_term"}, Implementation: "native.memory"},
-		{ID: "market.live", Version: 1, Lifecycle: "beta", Execution: "native", MinProtocol: 1, Tools: []string{"market.*"}, UICards: []string{"market_price"}, Implementation: "native.market"},
-	}
-	for _, m := range modules {
-		if err := c.Put(ctx, m); err != nil {
-			logger.Warn("feature catalog seed failed", "feature", m.ID, "error", err)
-		}
 	}
 }
