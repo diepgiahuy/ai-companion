@@ -1,171 +1,202 @@
 package speech
 
 import (
+	"bytes"
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"html"
-	"net/http"
-	"net/url"
+	"os/exec"
 	"strings"
-	"time"
-
-	"github.com/coder/websocket"
 )
 
 const (
-	edgeTrustedClientToken = "6A5AA1D4EAFF4E9FB37E23D68491D6F4"
-	edgeChromiumVersion    = "143.0.3650.75"
-	edgeBaseWSS            = "wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1"
-	edgeRawPCM24k          = "raw-24khz-16bit-mono-pcm"
+	defaultEdgeTTSMaxMP3Bytes = 16 * 1024 * 1024
+	defaultEdgeTTSMaxPCMBytes = 32 * 1024 * 1024
+	defaultEdgePCMChunkBytes  = 2880 // 60 ms of 24 kHz mono PCM16
 )
 
+// EdgeTTSRunner is injectable so unit tests verify the exact process boundary
+// without network access or requiring Python/ffmpeg in the Go test image.
+type EdgeTTSRunner interface {
+	Run(ctx context.Context, command string, args []string, stdin []byte, maxOutputBytes int) ([]byte, error)
+}
+
+type execEdgeTTSRunner struct{}
+
+func (execEdgeTTSRunner) Run(ctx context.Context, command string, args []string, stdin []byte, maxOutputBytes int) ([]byte, error) {
+	if maxOutputBytes <= 0 {
+		return nil, errors.New("process output limit must be positive")
+	}
+	cmd := exec.CommandContext(ctx, command, args...)
+	cmd.Stdin = bytes.NewReader(stdin)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &limitedBuffer{buffer: &stdout, remaining: maxOutputBytes}
+	cmd.Stderr = &limitedBuffer{buffer: &stderr, remaining: 64 * 1024}
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, fmt.Errorf("%s failed: %w: %s", command, err, strings.TrimSpace(stderr.String()))
+	}
+	return stdout.Bytes(), nil
+}
+
+type limitedBuffer struct {
+	buffer    *bytes.Buffer
+	remaining int
+	overflow  bool
+}
+
+func (w *limitedBuffer) Write(p []byte) (int, error) {
+	if w.overflow {
+		return len(p), nil
+	}
+	if len(p) > w.remaining {
+		if w.remaining > 0 {
+			_, _ = w.buffer.Write(p[:w.remaining])
+		}
+		w.remaining = 0
+		w.overflow = true
+		return len(p), errors.New("process output exceeded configured limit")
+	}
+	n, err := w.buffer.Write(p)
+	w.remaining -= n
+	return n, err
+}
+
 type EdgeTTSConfig struct {
-	URL                string
-	Voice              string
-	TrustedClientToken string
-	ChromiumVersion    string
-	Rate               string
-	Volume             string
-	Pitch              string
-	HTTPClient         *http.Client
-	Now                func() time.Time
+	Command       string
+	FFmpegCommand string
+	Voice         string
+	Rate          string
+	Volume        string
+	Pitch         string
+	Runner        EdgeTTSRunner
+	MaxMP3Bytes   int
+	MaxPCMBytes   int
+	PCMChunkBytes int
 }
 
 func (c EdgeTTSConfig) normalized() (EdgeTTSConfig, error) {
-	if strings.TrimSpace(c.URL) == "" { c.URL = edgeBaseWSS }
-	parsed, err := url.Parse(c.URL)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return c, fmt.Errorf("invalid EdgeTTS URL %q", c.URL)
+	if strings.TrimSpace(c.Command) == "" {
+		c.Command = "edge-tts"
 	}
-	if parsed.Scheme != "wss" && parsed.Hostname() != "localhost" && parsed.Hostname() != "127.0.0.1" {
-		return c, errors.New("EdgeTTS URL must use wss outside localhost")
+	if strings.TrimSpace(c.FFmpegCommand) == "" {
+		c.FFmpegCommand = "ffmpeg"
 	}
-	if strings.TrimSpace(c.Voice) == "" { c.Voice = "en-US-EmmaMultilingualNeural" }
-	if strings.TrimSpace(c.TrustedClientToken) == "" { c.TrustedClientToken = edgeTrustedClientToken }
-	if strings.TrimSpace(c.ChromiumVersion) == "" { c.ChromiumVersion = edgeChromiumVersion }
-	if c.Rate == "" { c.Rate = "+0%" }
-	if c.Volume == "" { c.Volume = "+0%" }
-	if c.Pitch == "" { c.Pitch = "+0Hz" }
-	if c.Now == nil { c.Now = time.Now }
+	if strings.TrimSpace(c.Voice) == "" {
+		c.Voice = "vi-VN-HoaiMyNeural"
+	}
+	if c.Rate == "" {
+		c.Rate = "+0%"
+	}
+	if c.Volume == "" {
+		c.Volume = "+0%"
+	}
+	if c.Pitch == "" {
+		c.Pitch = "+0Hz"
+	}
+	if c.Runner == nil {
+		c.Runner = execEdgeTTSRunner{}
+	}
+	if c.MaxMP3Bytes <= 0 {
+		c.MaxMP3Bytes = defaultEdgeTTSMaxMP3Bytes
+	}
+	if c.MaxPCMBytes <= 0 {
+		c.MaxPCMBytes = defaultEdgeTTSMaxPCMBytes
+	}
+	if c.PCMChunkBytes <= 0 {
+		c.PCMChunkBytes = defaultEdgePCMChunkBytes
+	}
+	if c.PCMChunkBytes%2 != 0 {
+		return c, errors.New("EdgeTTS PCM chunk size must align to 16-bit samples")
+	}
 	return c, nil
 }
 
-type EdgeTTSProvider struct { config EdgeTTSConfig }
+type EdgeTTSProvider struct {
+	config EdgeTTSConfig
+}
 
 func NewEdgeTTS(config EdgeTTSConfig) (*EdgeTTSProvider, error) {
 	normalized, err := config.normalized()
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	return &EdgeTTSProvider{config: normalized}, nil
 }
 
 func (p *EdgeTTSProvider) Synthesize(ctx context.Context, request TTSRequest, emit func(AudioEvent) error) error {
-	if p == nil { return errors.New("EdgeTTS provider is nil") }
-	if emit == nil { return errors.New("EdgeTTS emit callback is required") }
-	if err := request.Format.Validate(); err != nil { return err }
-	if request.Format.SampleRate != 24000 {
-		return fmt.Errorf("EdgeTTS reference path requires 24000 Hz PCM; got %d", request.Format.SampleRate)
+	if p == nil {
+		return errors.New("EdgeTTS provider is nil")
 	}
-	if strings.TrimSpace(request.Text) == "" { return errors.New("EdgeTTS text is required") }
-
-	requestID, err := randomHex(16)
-	if err != nil { return err }
-	muid, err := randomHex(16)
-	if err != nil { return err }
-	dialURL, err := edgeDialURL(p.config, requestID)
-	if err != nil { return err }
-
-	headers := http.Header{}
-	major := strings.SplitN(p.config.ChromiumVersion, ".", 2)[0]
-	headers.Set("User-Agent", fmt.Sprintf("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/%s.0.0.0 Safari/537.36 Edg/%s.0.0.0", major, major))
-	headers.Set("Pragma", "no-cache")
-	headers.Set("Cache-Control", "no-cache")
-	headers.Set("Origin", "chrome-extension://jdiccldimpdaibmpdkjnbmckianbfold")
-	headers.Set("Cookie", "muid="+strings.ToUpper(muid)+";")
-	options := &websocket.DialOptions{HTTPHeader: headers}
-	if p.config.HTTPClient != nil { options.HTTPClient = p.config.HTTPClient }
-	conn, _, err := websocket.Dial(ctx, dialURL, options)
-	if err != nil { return fmt.Errorf("dial EdgeTTS: %w", err) }
-	defer conn.Close(websocket.StatusNormalClosure, "EdgeTTS synthesis complete")
-
-	voice := p.config.Voice
-	if strings.TrimSpace(request.Voice) != "" { voice = request.Voice }
-	timestamp := p.config.Now().UTC().Format(time.RFC1123)
-	timestamp = strings.Replace(timestamp, "UTC", "GMT", 1)
-	configMessage := fmt.Sprintf("X-Timestamp:%s\r\nContent-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n{\"context\":{\"synthesis\":{\"audio\":{\"metadataoptions\":{\"sentenceBoundaryEnabled\":\"false\",\"wordBoundaryEnabled\":\"false\"},\"outputFormat\":\"%s\"}}}}\r\n", timestamp, edgeRawPCM24k)
-	if err := conn.Write(ctx, websocket.MessageText, []byte(configMessage)); err != nil {
-		return fmt.Errorf("write EdgeTTS speech config: %w", err)
+	if emit == nil {
+		return errors.New("EdgeTTS emit callback is required")
 	}
-	ssml := edgeSSML(request.Text, voice, p.config.Rate, p.config.Volume, p.config.Pitch)
-	ssmlMessage := fmt.Sprintf("X-RequestId:%s\r\nContent-Type:application/ssml+xml\r\nX-Timestamp:%s\r\nPath:ssml\r\n\r\n%s", requestID, timestamp, ssml)
-	if err := conn.Write(ctx, websocket.MessageText, []byte(ssmlMessage)); err != nil {
-		return fmt.Errorf("write EdgeTTS SSML: %w", err)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := request.Format.Validate(); err != nil {
+		return err
+	}
+	if request.Format.SampleRate != 24000 || request.Format.Channels != 1 {
+		return fmt.Errorf("EdgeTTS reference path requires 24000 Hz mono PCM; got %d Hz/%d channels", request.Format.SampleRate, request.Format.Channels)
+	}
+	text := strings.TrimSpace(request.Text)
+	if text == "" {
+		return errors.New("EdgeTTS text is required")
+	}
+	voice := strings.TrimSpace(request.Voice)
+	if voice == "" {
+		voice = p.config.Voice
 	}
 
-	receivedAudio := false
-	for {
-		kind, raw, err := conn.Read(ctx)
-		if err != nil {
-			if ctx.Err() != nil { return ctx.Err() }
-			return fmt.Errorf("read EdgeTTS response: %w", err)
+	// Current upstream edge-tts writes its 24 kHz mono MP3 media to stdout when
+	// --write-media=-. Feed text through stdin so it never appears in a shell
+	// command string or process list.
+	mp3, err := p.config.Runner.Run(ctx, p.config.Command, []string{
+		"--file", "-",
+		"--voice", voice,
+		"--rate=" + p.config.Rate,
+		"--volume=" + p.config.Volume,
+		"--pitch=" + p.config.Pitch,
+		"--write-media", "-",
+	}, []byte(text), p.config.MaxMP3Bytes)
+	if err != nil {
+		return fmt.Errorf("EdgeTTS synthesize MP3: %w", err)
+	}
+	if len(mp3) == 0 {
+		return errors.New("EdgeTTS completed without audio")
+	}
+
+	pcm, err := p.config.Runner.Run(ctx, p.config.FFmpegCommand, []string{
+		"-hide_banner", "-loglevel", "error",
+		"-i", "pipe:0",
+		"-f", "s16le", "-acodec", "pcm_s16le",
+		"-ac", "1", "-ar", "24000",
+		"pipe:1",
+	}, mp3, p.config.MaxPCMBytes)
+	if err != nil {
+		return fmt.Errorf("decode EdgeTTS MP3: %w", err)
+	}
+	if len(pcm) == 0 || len(pcm)%2 != 0 {
+		return fmt.Errorf("EdgeTTS decoder returned invalid PCM length %d", len(pcm))
+	}
+
+	for offset := 0; offset < len(pcm); offset += p.config.PCMChunkBytes {
+		end := offset + p.config.PCMChunkBytes
+		if end > len(pcm) {
+			end = len(pcm)
 		}
-		switch kind {
-		case websocket.MessageBinary:
-			pcm, ok := edgeAudioPayload(raw)
-			if !ok || len(pcm) == 0 { continue }
-			receivedAudio = true
-			if err := emit(AudioEvent{PCM: pcm}); err != nil { return err }
-		case websocket.MessageText:
-			message := string(raw)
-			if strings.Contains(message, "Path:turn.end") {
-				if !receivedAudio { return errors.New("EdgeTTS completed without audio") }
-				return emit(AudioEvent{Final: true})
-			}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := emit(AudioEvent{PCM: append([]byte(nil), pcm[offset:end]...)}); err != nil {
+			return err
 		}
 	}
-}
-
-func edgeDialURL(config EdgeTTSConfig, connectionID string) (string, error) {
-	parsed, err := url.Parse(config.URL)
-	if err != nil { return "", err }
-	query := parsed.Query()
-	query.Set("TrustedClientToken", config.TrustedClientToken)
-	query.Set("Sec-MS-GEC", edgeSecMSGEC(config.Now(), config.TrustedClientToken))
-	query.Set("Sec-MS-GEC-Version", "1-"+config.ChromiumVersion)
-	query.Set("ConnectionId", connectionID)
-	parsed.RawQuery = query.Encode()
-	return parsed.String(), nil
-}
-
-func edgeSecMSGEC(now time.Time, trustedClientToken string) string {
-	seconds := now.UTC().Unix() + 11644473600
-	seconds -= seconds % 300
-	windowsTicks := seconds * 10_000_000
-	sum := sha256.Sum256([]byte(fmt.Sprintf("%d%s", windowsTicks, trustedClientToken)))
-	return strings.ToUpper(hex.EncodeToString(sum[:]))
-}
-
-func edgeSSML(text, voice, rate, volume, pitch string) string {
-	return fmt.Sprintf(`<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="en-US"><voice name="%s"><prosody pitch="%s" rate="%s" volume="%s">%s</prosody></voice></speak>`,
-		html.EscapeString(voice), html.EscapeString(pitch), html.EscapeString(rate), html.EscapeString(volume), html.EscapeString(text))
-}
-
-func edgeAudioPayload(raw []byte) ([]byte, bool) {
-	marker := []byte("Path:audio\r\n")
-	index := strings.Index(string(raw), string(marker))
-	if index < 0 { return nil, false }
-	start := index + len(marker)
-	if start >= len(raw) { return nil, false }
-	return append([]byte(nil), raw[start:]...), true
-}
-
-func randomHex(n int) (string, error) {
-	buf := make([]byte, n)
-	if _, err := rand.Read(buf); err != nil { return "", err }
-	return hex.EncodeToString(buf), nil
+	return emit(AudioEvent{Final: true})
 }
 
 var _ StreamingTTSProvider = (*EdgeTTSProvider)(nil)
