@@ -3,6 +3,7 @@ package migrate_test
 import (
 	"context"
 	"database/sql"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -16,7 +17,7 @@ import (
 )
 
 func TestPostgresToSQLiteRecoveryParityAndRuntimeShape(t *testing.T) {
-	dsn := strings.TrimSpace(testPostgresMigrationDSN())
+	dsn := strings.TrimSpace(os.Getenv("COMPANION_POSTGRES_MIGRATION_TEST_DSN"))
 	if dsn == "" {
 		t.Skip("COMPANION_POSTGRES_MIGRATION_TEST_DSN not set")
 	}
@@ -112,22 +113,4 @@ func TestPostgresToSQLiteRecoveryParityAndRuntimeShape(t *testing.T) {
 	if after != before+1 {
 		t.Fatalf("recovered SQLite outbox trigger inactive: before=%d after=%d", before, after)
 	}
-}
-
-func testPostgresMigrationDSN() string {
-	return strings.TrimSpace(getenv("COMPANION_POSTGRES_MIGRATION_TEST_DSN"))
-}
-
-var getenv = func(key string) string {
-	return lookupEnv(key)
-}
-
-func lookupEnv(key string) string {
-	// Kept tiny so the integration test remains self-contained and does not
-	// expose migration configuration to production code.
-	return strings.TrimSpace(envValue(key))
-}
-
-var envValue = func(key string) string {
-	return ""
 }
