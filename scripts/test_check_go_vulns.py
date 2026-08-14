@@ -10,7 +10,7 @@ class GoVulnGateTest(unittest.TestCase):
             "go1.26.5",
             [{
                 "osv": "GO-TEST-0001",
-                "fixed_version": "go1.26.6",
+                "fixed_version": "v1.26.6",
                 "trace": [{"module": "stdlib", "package": "net/http", "function": "Serve"}],
             }],
         )
@@ -34,8 +34,20 @@ class GoVulnGateTest(unittest.TestCase):
             "go1.26.6",
             [{
                 "osv": "GO-TEST-0003",
-                "fixed_version": "go1.26.6",
+                "fixed_version": "v1.26.6",
                 "trace": [{"module": "stdlib", "package": "crypto/x509", "function": "ParseCertificate"}],
+            }],
+        )
+        self.assertEqual(allowed, [])
+        self.assertEqual(len(blocked), 1)
+
+    def test_rejects_lookalike_go_prefix_fixed_version(self):
+        allowed, blocked = gate.evaluate(
+            "go1.26.5",
+            [{
+                "osv": "GO-TEST-0004",
+                "fixed_version": "go1.26.6",
+                "trace": [{"module": "stdlib", "package": "net/http", "function": "Serve"}],
             }],
         )
         self.assertEqual(allowed, [])
@@ -44,8 +56,8 @@ class GoVulnGateTest(unittest.TestCase):
     def test_only_symbol_findings_count_as_reachable(self):
         messages = [
             {"config": {"go_version": "go1.26.5"}},
-            {"finding": {"osv": "GO-TEST-0004", "fixed_version": "go1.26.6", "trace": [{"module": "stdlib"}]}},
-            {"finding": {"osv": "GO-TEST-0004", "fixed_version": "go1.26.6", "trace": [{"module": "stdlib", "package": "net/http", "function": "Serve"}]}},
+            {"finding": {"osv": "GO-TEST-0005", "fixed_version": "v1.26.6", "trace": [{"module": "stdlib"}]}},
+            {"finding": {"osv": "GO-TEST-0005", "fixed_version": "v1.26.6", "trace": [{"module": "stdlib", "package": "net/http", "function": "Serve"}]}},
         ]
         scanner_go, findings = gate.reachable_findings(messages)
         self.assertEqual(scanner_go, "go1.26.5")
