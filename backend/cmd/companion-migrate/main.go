@@ -16,6 +16,7 @@ import (
 
 	"companion-server/internal/pgstore"
 	pgmigrate "companion-server/internal/pgstore/migrate"
+	"github.com/jackc/pgx/v5/pgxpool"
 	_ "modernc.org/sqlite"
 )
 
@@ -27,7 +28,9 @@ func main() {
 }
 
 func run(args []string) error {
-	if len(args) == 0 { return errors.New("usage: companion-migrate import|verify|digest-postgres [flags]") }
+	if len(args) == 0 {
+		return errors.New("usage: companion-migrate import|verify|digest-postgres [flags]")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
@@ -69,23 +72,32 @@ func run(args []string) error {
 	}
 }
 
-func openBoth(ctx context.Context, sqlitePath, postgresDSN string) (*sql.DB, interface{ Close(); }, func(), error) {
-	// Kept only as a compile-time guard below; the concrete helper is used by
-	// each call site so provider types do not leak into migration contracts.
-	return nil, nil, func() {}, errors.New("unreachable")
+func openBoth(ctx context.Context, sqlitePath, postgresDSN string) (*sql.DB, *pgxpool.Pool, func(), error) {
+	sqlitePath = strings.TrimSpace(sqlitePath)
+	if sqlitePath == "" { return nil, nil, nil, errors.New("--sqlite is required") }
+	source, err := sql.Open("sqlite", sqlitePath)
+	if err != nil { return nil, nil, nil, fmt.Errorf("open SQLite: %w", err) }
+	if err := source.PingContext(ctx); err != nil {
+		source.Close()
+		return nil, nil, nil, fmt.Errorf("ping SQLite: %w", err)
+	}
+	target, err := openPostgres(ctx, postgresDSN)
+	if err != nil {
+		source.Close()
+		return nil, nil, nil, err
+	}
+	closeAll := func() { target.Close(); _ = source.Close() }
+	return source, target, closeAll, nil
 }
 
-func openPostgres(ctx context.Context, dsn string) (*pgxPool, error) { return nil, errors.New("unreachable") }
-
-// pgxPool is replaced below by concrete helpers in init-safe wrappers. Keeping
-// this command intentionally small avoids provider types in exported packages.
-type pgxPool struct{}
-func (*pgxPool) Close() {}
+func openPostgres(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
+	dsn = strings.TrimSpace(dsn)
+	if dsn == "" { return nil, errors.New("--postgres is required") }
+	return pgstore.Open(ctx, pgstore.PoolConfig{DSN: dsn, MaxConns: 4})
+}
 
 func writeReport(report pgmigrate.Report) error {
 	encoder := json.NewEncoder(os.Stdout)
 	encoder.SetIndent("", "  ")
 	return encoder.Encode(report)
 }
-
-var _ = strings.TrimSpace
