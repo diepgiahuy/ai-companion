@@ -14,15 +14,18 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func (s *Store) PendingOutbox(ctx context.Context, now time.Time, limit int) ([]events.Event,error){
-	if limit<=0||limit>500{limit=100};tx,err:=s.pool.Begin(ctx);if err!=nil{return nil,err};defer tx.Rollback(ctx)
-	rows,err:=tx.Query(ctx,`SELECT id,event_id,source,event_type,subject,user_id,data_json,occurred_at,attempts FROM outbox WHERE status='pending' AND next_attempt_at<=$1 ORDER BY id LIMIT $2 FOR UPDATE SKIP LOCKED`,now.UTC(),limit);if err!=nil{return nil,err};type row struct{id int64;e events.Event};var selected []row
-	for rows.Next(){var r row;var raw []byte;if err:=rows.Scan(&r.id,&r.e.ID,&r.e.Source,&r.e.Type,&r.e.Subject,&r.e.UserID,&raw,&r.e.OccurredAt,&r.e.Attempts);err!=nil{rows.Close();return nil,err};r.e.OccurredAt=r.e.OccurredAt.UTC();if len(raw)>0{_ = json.Unmarshal(raw,&r.e.Data)};selected=append(selected,r)};if err:=rows.Err();err!=nil{rows.Close();return nil,err};rows.Close()
-	if len(selected)>0{ids:=make([]int64,0,len(selected));for _,r:=range selected{ids=append(ids,r.id)};if _,err:=tx.Exec(ctx,`UPDATE outbox SET status='dispatching' WHERE id=ANY($1)`,ids);err!=nil{return nil,err}}
-	if err:=tx.Commit(ctx);err!=nil{return nil,err};out:=make([]events.Event,0,len(selected));for _,r:=range selected{out=append(out,r.e)};return out,nil
+func (s *Store) Enqueue(ctx context.Context,event events.Event)error{
+	if strings.TrimSpace(event.ID)==""||strings.TrimSpace(event.Source)==""||strings.TrimSpace(event.Type)==""{return fmt.Errorf("outbox event id source and type are required")}
+	if event.Time.IsZero(){event.Time=time.Now().UTC()};data:=event.Data;if len(data)==0{data=json.RawMessage(`{}`)};if !json.Valid(data){return fmt.Errorf("outbox data must be valid JSON")}
+	_,err:=s.pool.Exec(ctx,`INSERT INTO outbox(event_id,source,event_type,subject,user_id,data_json,occurred_at,status,attempts,next_attempt_at,last_error) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7,'pending',0,$7,'') ON CONFLICT(event_id) DO NOTHING`,event.ID,event.Source,event.Type,event.Subject,owner(event.UserID),string(data),event.Time.UTC());return err
 }
-func (s *Store) MarkOutboxSent(ctx context.Context,eventID string)error{tag,err:=s.pool.Exec(ctx,`UPDATE outbox SET status='sent',last_error='' WHERE event_id=$1 AND status='dispatching'`,eventID);if err!=nil{return err};return requireRowsChanged(tag.RowsAffected(),"outbox event")}
-func (s *Store) RetryOutbox(ctx context.Context,eventID,lastError string,next time.Time)error{tag,err:=s.pool.Exec(ctx,`UPDATE outbox SET status='pending',attempts=attempts+1,last_error=$1,next_attempt_at=$2 WHERE event_id=$3 AND status='dispatching'`,strings.TrimSpace(lastError),next.UTC(),eventID);if err!=nil{return err};return requireRowsChanged(tag.RowsAffected(),"outbox event")}
+func (s *Store) Claim(ctx context.Context,now time.Time,limit int)([]events.Pending,error){
+	if limit<=0||limit>500{limit=100};tx,err:=s.pool.Begin(ctx);if err!=nil{return nil,err};defer tx.Rollback(ctx)
+	rows,err:=tx.Query(ctx,`SELECT id,event_id,source,event_type,subject,user_id,data_json,occurred_at,attempts,next_attempt_at FROM outbox WHERE status='pending' AND next_attempt_at<=$1 ORDER BY id LIMIT $2 FOR UPDATE SKIP LOCKED`,now.UTC(),limit);if err!=nil{return nil,err};var out []events.Pending;var ids []int64
+	for rows.Next(){var p events.Pending;var raw []byte;if err:=rows.Scan(&p.RowID,&p.Event.ID,&p.Event.Source,&p.Event.Type,&p.Event.Subject,&p.Event.UserID,&raw,&p.Event.Time,&p.Attempts,&p.NextAttempt);err!=nil{rows.Close();return nil,err};p.Event.Time=p.Event.Time.UTC();p.NextAttempt=p.NextAttempt.UTC();p.Event.Data=append(json.RawMessage(nil),raw...);out=append(out,p);ids=append(ids,p.RowID)};if err:=rows.Err();err!=nil{rows.Close();return nil,err};rows.Close();if len(ids)>0{if _,err:=tx.Exec(ctx,`UPDATE outbox SET status='dispatching' WHERE id=ANY($1)`,ids);err!=nil{return nil,err}};if err:=tx.Commit(ctx);err!=nil{return nil,err};return out,nil
+}
+func (s *Store) MarkSent(ctx context.Context,rowID int64)error{tag,err:=s.pool.Exec(ctx,`UPDATE outbox SET status='sent',last_error='' WHERE id=$1 AND status='dispatching'`,rowID);if err!=nil{return err};return requireRowsChanged(tag.RowsAffected(),"outbox event")}
+func (s *Store) Retry(ctx context.Context,rowID int64,lastError string,next time.Time)error{tag,err:=s.pool.Exec(ctx,`UPDATE outbox SET status='pending',attempts=attempts+1,last_error=$1,next_attempt_at=$2 WHERE id=$3 AND status='dispatching'`,strings.TrimSpace(lastError),next.UTC(),rowID);if err!=nil{return err};return requireRowsChanged(tag.RowsAffected(),"outbox event")}
 func (s *Store) RecoverOutbox(ctx context.Context)error{_,err:=s.pool.Exec(ctx,`UPDATE outbox SET status='pending' WHERE status='dispatching'`);return err}
 
 func (s *Store) CreateMarketWatch(ctx context.Context,userID,key,deviceID,provider,symbol,currency,operator string,threshold float64)(market.Watch,error){
