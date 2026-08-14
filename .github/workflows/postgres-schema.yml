@@ -1,0 +1,94 @@
+name: postgres-schema
+
+on:
+  pull_request:
+    paths:
+      - "db/postgres/**"
+      - ".github/workflows/postgres-schema.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  phase-a-schema:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      POSTGRES_IMAGE: postgres:18.4-bookworm@sha256:1961f96e6029a02c3812d7cb329a3b03a3ac2bb067058dec17b0f5596aca9296
+      ATLAS_IMAGE: arigaio/atlas:1.2.0-community-distroless@sha256:0527e6aaaf8078ca3398cac75209f8f43a13e96bc15b3dfdeffe7cef5451c96e
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Start disposable PostgreSQL 18.4
+        run: |
+          set -euo pipefail
+          docker network create companion-pg-test
+          docker run -d --rm --name companion-pg --network companion-pg-test \
+            -e POSTGRES_PASSWORD=companion \
+            -e POSTGRES_USER=companion \
+            -e POSTGRES_DB=companion \
+            "$POSTGRES_IMAGE"
+          for _ in $(seq 1 60); do
+            if docker exec companion-pg pg_isready -U companion -d companion >/dev/null 2>&1; then exit 0; fi
+            sleep 1
+          done
+          docker logs companion-pg
+          exit 1
+
+      - name: Verify Atlas integrity and validate SQL
+        run: |
+          set -euo pipefail
+          rm -rf .tmp-atlas-migrations
+          mkdir .tmp-atlas-migrations
+          cp db/postgres/*.sql db/postgres/atlas.sum .tmp-atlas-migrations/
+          before="$(sha256sum .tmp-atlas-migrations/atlas.sum | awk '{print $1}')"
+          docker run --rm -v "$PWD/.tmp-atlas-migrations:/migrations" \
+            "$ATLAS_IMAGE" migrate hash --dir file:///migrations
+          after="$(sha256sum .tmp-atlas-migrations/atlas.sum | awk '{print $1}')"
+          test "$before" = "$after" || {
+            echo 'Committed atlas.sum does not match migration SQL:' >&2
+            diff -u db/postgres/atlas.sum .tmp-atlas-migrations/atlas.sum >&2 || true
+            exit 1
+          }
+          docker run --rm --network companion-pg-test \
+            -v "$PWD/.tmp-atlas-migrations:/migrations" \
+            "$ATLAS_IMAGE" migrate validate \
+            --dir file:///migrations \
+            --dev-url 'postgres://companion:companion@companion-pg:5432/companion?sslmode=disable'
+
+      - name: Apply migration through Atlas
+        run: |
+          set -euo pipefail
+          docker run --rm --network companion-pg-test \
+            -v "$PWD/.tmp-atlas-migrations:/migrations" \
+            "$ATLAS_IMAGE" migrate apply \
+            --dir file:///migrations \
+            --url 'postgres://companion:companion@companion-pg:5432/companion?sslmode=disable'
+
+      - name: Assert post-27 invariants
+        run: |
+          set -euo pipefail
+          psqlq() { docker exec companion-pg psql -v ON_ERROR_STOP=1 -At -U companion -d companion -c "$1"; }
+          test "$(psqlq "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name IN ('idempotency_records','legacy_idempotency_reservations','privacy_policies','outbox','voice_memos');")" = "5"
+          test "$(psqlq "SELECT count(*) FROM information_schema.table_constraints WHERE table_name='idempotency_records' AND constraint_type='PRIMARY KEY';")" = "1"
+          test "$(psqlq "WITH inserted AS (INSERT INTO privacy_policies(user_id,updated_at) VALUES('default-deny-check',now()) RETURNING save_voice_audio,long_term_memory_enabled) SELECT save_voice_audio::int || ':' || long_term_memory_enabled::int FROM inserted;")" = "0:0"
+          psqlq "INSERT INTO idempotency_records(actor_id,operation,idempotency_key,request_hash,outcome_json,created_at) VALUES('actor-a','note.create','same','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','{}',now());"
+          psqlq "INSERT INTO idempotency_records(actor_id,operation,idempotency_key,request_hash,outcome_json,created_at) VALUES('actor-b','note.create','same','bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','{}',now());"
+          test "$(psqlq "SELECT count(*) FROM idempotency_records WHERE idempotency_key='same';")" = "2"
+          psqlq "INSERT INTO expenses(idempotency_key,user_id,amount_vnd,category,description,occurred_at,created_at) VALUES('pg-e2e','u',50000,'food','phase-a',now(),now());"
+          test "$(psqlq "SELECT count(*) FROM outbox WHERE event_type='expense.created' AND user_id='u';")" = "1"
+
+      - name: Re-apply is a no-op
+        run: |
+          set -euo pipefail
+          before_idempotency="$(docker exec companion-pg psql -v ON_ERROR_STOP=1 -At -U companion -d companion -c "SELECT count(*) FROM idempotency_records;")"
+          before_outbox="$(docker exec companion-pg psql -v ON_ERROR_STOP=1 -At -U companion -d companion -c "SELECT count(*) FROM outbox;")"
+          output="$(docker run --rm --network companion-pg-test -v "$PWD/.tmp-atlas-migrations:/migrations" "$ATLAS_IMAGE" migrate apply --dir file:///migrations --url 'postgres://companion:companion@companion-pg:5432/companion?sslmode=disable')"
+          printf '%s\n' "$output"
+          grep -Fq 'No migration files to execute' <<<"$output"
+          after_idempotency="$(docker exec companion-pg psql -v ON_ERROR_STOP=1 -At -U companion -d companion -c "SELECT count(*) FROM idempotency_records;")"
+          after_outbox="$(docker exec companion-pg psql -v ON_ERROR_STOP=1 -At -U companion -d companion -c "SELECT count(*) FROM outbox;")"
+          test "$before_idempotency" = "$after_idempotency"
+          test "$before_outbox" = "$after_outbox"
