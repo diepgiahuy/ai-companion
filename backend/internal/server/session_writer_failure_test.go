@@ -12,7 +12,7 @@ import (
 	"github.com/coder/websocket"
 )
 
-func TestWriteLoopTerminatesPromptlyAfterPeerTransportFailure(t *testing.T) {
+func TestWriteLoopTerminatesWithinSessionDeadlineAfterPeerTransportFailure(t *testing.T) {
 	accepted := make(chan *websocket.Conn, 1)
 	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		connection, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
@@ -24,7 +24,7 @@ func TestWriteLoopTerminatesPromptlyAfterPeerTransportFailure(t *testing.T) {
 	}))
 	defer httpServer.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
 	defer cancel()
 	client, _, err := websocket.Dial(ctx, "ws"+httpServer.URL[len("http"):], nil)
 	if err != nil {
@@ -42,17 +42,15 @@ func TestWriteLoopTerminatesPromptlyAfterPeerTransportFailure(t *testing.T) {
 	go func() { done <- s.writeLoop(ctx) }()
 
 	client.CloseNow()
-	// Let the peer FIN/RST become visible before forcing a server write. The
-	// test does not depend on readLoop: it exercises the actual WebSocket writer.
 	time.Sleep(10 * time.Millisecond)
 	s.controlWrites <- outbound{kind: websocket.MessageText, data: []byte(`{"type":"probe"}`)}
 
 	select {
 	case err := <-done:
 		if err == nil {
-			t.Fatal("writer loop returned nil after peer transport failure")
+			t.Fatal("writer loop returned nil after peer transport failure/session deadline")
 		}
 	case <-time.After(time.Second):
-		t.Fatal("writer loop did not terminate within the bounded failure window")
+		t.Fatal("writer loop exceeded the bounded session failure window")
 	}
 }
