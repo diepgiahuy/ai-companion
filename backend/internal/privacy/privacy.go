@@ -26,12 +26,26 @@ type Repository interface {
 	SetPrivacyPolicy(context.Context, Policy) error
 	ApplyRetention(context.Context, time.Time) (RetentionReport, error)
 }
-type Service struct {
-	repo Repository
-	now  func() time.Time
+
+type RecordingReferenceRepository interface {
+	ReferencedVoiceMemoPaths(context.Context) ([]string, error)
 }
 
-func New(repo Repository) *Service { return &Service{repo: repo, now: time.Now} }
+type Service struct {
+	repo          Repository
+	now           func() time.Time
+	recordingsDir string
+	orphanGrace   time.Duration
+}
+
+func New(repo Repository) *Service {
+	return &Service{
+		repo:          repo,
+		now:           time.Now,
+		recordingsDir: defaultRecordingsDir(),
+		orphanGrace:   time.Hour,
+	}
+}
 func (s *Service) Policy(ctx context.Context, user string) (Policy, error) {
 	p, ok, err := s.repo.GetPrivacyPolicy(ctx, user)
 	if err != nil {
@@ -66,5 +80,23 @@ func (s *Service) VoiceAudioAllowed(ctx context.Context, user string) bool {
 	return e == nil && p.SaveVoiceAudio
 }
 func (s *Service) ApplyRetention(ctx context.Context) (RetentionReport, error) {
-	return s.repo.ApplyRetention(ctx, s.now().UTC())
+	now := s.now().UTC()
+	report, err := s.repo.ApplyRetention(ctx, now)
+	if err != nil {
+		return RetentionReport{}, err
+	}
+	references, ok := s.repo.(RecordingReferenceRepository)
+	if !ok || s.recordingsDir == "" {
+		return report, nil
+	}
+	paths, err := references.ReferencedVoiceMemoPaths(ctx)
+	if err != nil {
+		return RetentionReport{}, fmt.Errorf("load voice memo recording references: %w", err)
+	}
+	orphans, err := findRecordingOrphans(s.recordingsDir, paths, now, s.orphanGrace)
+	if err != nil {
+		return RetentionReport{}, err
+	}
+	report.OrphanPaths = appendUniquePaths(report.OrphanPaths, orphans...)
+	return report, nil
 }
