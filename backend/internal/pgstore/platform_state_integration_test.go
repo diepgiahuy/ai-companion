@@ -106,11 +106,14 @@ func TestPostgresOutboxSchedulerAndMarketParity(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	// Outbox claim is intentionally process-global. Earlier integration cases and
-	// the schema invariant step create trigger rows in this same disposable DB,
-	// so isolate this lifecycle fixture rather than weakening the production claim.
-	if _, err := store.pool.Exec(ctx, `DELETE FROM outbox`); err != nil {
-		t.Fatal(err)
+	// Outbox and reminder claims are intentionally process-global. Earlier
+	// integration cases and schema invariants create trigger/worker rows in this
+	// same disposable DB, so isolate this lifecycle fixture rather than weakening
+	// the production global claim semantics.
+	for _, table := range []string{"outbox", "reminders", "market_watches"} {
+		if _, err := store.pool.Exec(ctx, `DELETE FROM `+table); err != nil {
+			t.Fatal(err)
+		}
 	}
 	prefix := fmt.Sprintf("pg-worker-%d", time.Now().UnixNano())
 	user := prefix + "-user"
