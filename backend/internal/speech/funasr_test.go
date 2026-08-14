@@ -112,10 +112,20 @@ func TestFunASRBoundsBufferedTurnAudio(t *testing.T) {
 }
 
 func TestFunASRHTTPCallHonorsCancellation(t *testing.T) {
+	requestStarted := make(chan struct{}, 1)
+	releaseHandler := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		<-r.Context().Done()
+		select {
+		case requestStarted <- struct{}{}:
+		default:
+		}
+		select {
+		case <-r.Context().Done():
+		case <-releaseHandler:
+		}
 	}))
 	defer server.Close()
+
 	provider, err := NewFunASR(FunASRConfig{BaseURL: server.URL + "/v1", Model: "custom"})
 	if err != nil {
 		t.Fatal(err)
@@ -131,12 +141,35 @@ func TestFunASRHTTPCallHonorsCancellation(t *testing.T) {
 	if err := stream.CloseInput(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-	defer cancel()
-	_, err = stream.Wait(ctx)
-	if err == nil || (!strings.Contains(err.Error(), "context deadline") && !strings.Contains(err.Error(), "context canceled")) {
-		t.Fatalf("cancel error=%v", err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() {
+		_, waitErr := stream.Wait(ctx)
+		result <- waitErr
+	}()
+
+	select {
+	case <-requestStarted:
+	case <-time.After(time.Second):
+		close(releaseHandler)
+		t.Fatal("FunASR request never reached test server")
 	}
+	cancel()
+	select {
+	case waitErr := <-result:
+		if waitErr == nil || (!strings.Contains(waitErr.Error(), "context deadline") && !strings.Contains(waitErr.Error(), "context canceled")) {
+			close(releaseHandler)
+			t.Fatalf("cancel error=%v", waitErr)
+		}
+	case <-time.After(time.Second):
+		close(releaseHandler)
+		t.Fatal("FunASR Wait did not return promptly after cancellation")
+	}
+	// Do not make httptest teardown depend on transport-specific propagation of
+	// request cancellation. The provider cancellation assertion is complete;
+	// release the server handler explicitly so Server.Close is always bounded.
+	close(releaseHandler)
 }
 
 func TestFunASRRejectsWrongSampleRateOddPCMAndInvalidConfig(t *testing.T) {
