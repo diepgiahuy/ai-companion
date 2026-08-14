@@ -42,17 +42,17 @@ func configureSpeechComponents(cfg runtimeconfig.Config) (pipeline.Components, e
 
 	case speechProfileReferenceLocal:
 		funASR, err := speech.NewFunASR(speech.FunASRConfig{
-			URL:      strings.TrimSpace(os.Getenv("FUNASR_URL")),
-			Mode:     value("FUNASR_MODE", "2pass"),
-			Hotwords: os.Getenv("FUNASR_HOTWORDS"),
-			UseITN:   envBool("FUNASR_USE_ITN", true),
+			BaseURL:    strings.TrimSpace(os.Getenv("FUNASR_BASE_URL")),
+			Model:      strings.TrimSpace(os.Getenv("FUNASR_MODEL")),
+			Language:   strings.TrimSpace(os.Getenv("FUNASR_LANGUAGE")),
+			MaxPCMBytes: envInt("FUNASR_MAX_PCM_BYTES", 4*1024*1024),
 		})
 		if err != nil {
 			return pipeline.Components{}, fmt.Errorf("configure FunASR: %w", err)
 		}
 		edge, err := speech.NewEdgeTTS(speech.EdgeTTSConfig{
 			URL:             os.Getenv("EDGE_TTS_URL"),
-			Voice:           value("EDGE_TTS_VOICE", "en-US-EmmaMultilingualNeural"),
+			Voice:           value("EDGE_TTS_VOICE", "vi-VN-HoaiMyNeural"),
 			Rate:            value("EDGE_TTS_RATE", "+0%"),
 			Volume:          value("EDGE_TTS_VOLUME", "+0%"),
 			Pitch:           value("EDGE_TTS_PITCH", "+0Hz"),
@@ -67,7 +67,7 @@ func configureSpeechComponents(cfg runtimeconfig.Config) (pipeline.Components, e
 			ASRFormat:   speech.AudioFormat{SampleRate: 16000, Channels: 1},
 			TTSFormat:   speech.AudioFormat{SampleRate: 24000, Channels: 1},
 			Locale:      value("COMPANION_SPEECH_LOCALE", "vi-VN"),
-			Voice:       value("EDGE_TTS_VOICE", "en-US-EmmaMultilingualNeural"),
+			Voice:       value("EDGE_TTS_VOICE", "vi-VN-HoaiMyNeural"),
 		}
 		if err := adapter.Validate(); err != nil {
 			return pipeline.Components{}, err
