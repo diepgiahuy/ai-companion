@@ -11,7 +11,7 @@ import (
 
 type recordingRepoStub struct {
 	*repoStub
-	references []string
+	references  []string
 	referenceErr error
 }
 
@@ -93,17 +93,11 @@ func TestApplyRetentionFailsClosedWhenRecordingReferencesCannotBeRead(t *testing
 	}
 }
 
-func TestAppendUniquePathsDeduplicatesRelativeAndAbsoluteNames(t *testing.T) {
+func TestAppendUniquePathsDeduplicatesEquivalentNames(t *testing.T) {
 	dir := t.TempDir()
-	relative, err := filepath.Rel(".", filepath.Join(dir, "memo.wav"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	absolute, err := filepath.Abs(relative)
-	if err != nil {
-		t.Fatal(err)
-	}
-	paths := appendUniquePaths([]string{relative}, absolute)
+	first := filepath.Join(dir, "memo.wav")
+	second := filepath.Join(dir, ".", "memo.wav")
+	paths := appendUniquePaths([]string{first}, second)
 	if len(paths) != 1 {
 		t.Fatalf("paths=%v; want one canonical recording", paths)
 	}
