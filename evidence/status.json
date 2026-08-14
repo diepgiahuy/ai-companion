@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-08-13T21:05:00+07:00",
+  "updated_at": "2026-08-14T22:24:58+07:00",
   "rules": {
     "allowed_statuses": [
       "passed",
@@ -13,15 +13,22 @@
     "mock_evidence_can_promote": false
   },
   "gates": {
-    "go_1_26_5_race_e2e": {
+    "go_1_26_6_race_e2e": {
       "status": "passed",
       "evidence": [
         {
           "kind": "github_actions",
-          "run_id": 31708039815,
-          "commit": "7ae065f6f8fb73cde8ee71087806d0189634406f",
+          "run_id": 31813909862,
+          "commit": "00ee795fd9b224563272c1046ad2f0ef103f9206",
           "workflow": "production-e2e",
-          "assertion": "exact Go 1.26.5 production dependency E2E passed on the observability PR head"
+          "assertion": "exact Go 1.26.6 production dependency E2E passed on PR #87 head"
+        },
+        {
+          "kind": "github_actions",
+          "run_id": 31813909819,
+          "commit": "00ee795fd9b224563272c1046ad2f0ef103f9206",
+          "workflow": "quality-security",
+          "assertion": "exact Go 1.26.6 production adapter vet and race gate passed on PR #87 head"
         }
       ]
     },
@@ -39,6 +46,13 @@
           "commit": "7ae065f6f8fb73cde8ee71087806d0189634406f",
           "workflow": "module-lock",
           "assertion": "Go 1.26.5 module tidy/verify gate passed on the observability PR head"
+        },
+        {
+          "kind": "github_actions",
+          "run_id": 31813909829,
+          "commit": "00ee795fd9b224563272c1046ad2f0ef103f9206",
+          "workflow": "module-lock",
+          "assertion": "Go 1.26.6 module tidy and verify produced a reproducible lock on PR #87 head"
         }
       ]
     },
@@ -56,6 +70,13 @@
           "commit": "7089bdad4a73fcc66ce225fc7a3495bdc542f9ed",
           "workflow": "quality-security",
           "assertion": "post-merge main module reproducibility, vet/race, govulncheck, evidence and diff-hygiene gates passed after the ADK/auth hard cut"
+        },
+        {
+          "kind": "github_actions",
+          "run_id": 31813909819,
+          "commit": "00ee795fd9b224563272c1046ad2f0ef103f9206",
+          "workflow": "quality-security",
+          "assertion": "plain blocking govulncheck v1.6.0 reported no reachable vulnerabilities with exact Go 1.26.6 on PR #87 head"
         }
       ]
     },
@@ -68,6 +89,13 @@
           "commit": "7ae065f6f8fb73cde8ee71087806d0189634406f",
           "workflow": "codeql",
           "assertion": "CodeQL Go traced build and analysis passed with adk,mcp,nolibopusfile production adapter tags"
+        },
+        {
+          "kind": "github_actions",
+          "run_id": 31813909869,
+          "commit": "00ee795fd9b224563272c1046ad2f0ef103f9206",
+          "workflow": "codeql",
+          "assertion": "CodeQL Go traced build and analysis passed with exact Go 1.26.6 on PR #87 head"
         }
       ]
     },

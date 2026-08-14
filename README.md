@@ -15,7 +15,7 @@ The table below distinguishes **implemented** from **production-proven**. A gree
 
 | Gate | Status | Evidence / requirement |
 |---|---:|---|
-| Exact Go 1.26.6 + race/E2E | 🟡 pending | Upgrade gate must pass clean GitHub Actions + Docker before promotion |
+| Exact Go 1.26.6 + race/E2E | ✅ passed | GitHub Actions run 31813909862 on PR #87 head |
 | Module reproducibility | ✅ passed | `go mod tidy` zero-diff + `go mod verify` |
 | Dependency vulnerability reachability | ✅ passed | `govulncheck` — 0 called vulnerabilities at verified checkpoint |
 | CodeQL | ✅ passed | GitHub CodeQL traced Go build on verified PR head |
