@@ -21,7 +21,8 @@ dependency, CI gate, or hardware setup exists.
 
 - `backend/`: Go modular monolith and provider adapters.
 - `backend/internal/domain/`: domain types and ports.
-- `backend/internal/store/`: current SQLite persistence and transactional outbox.
+- `backend/internal/pgstore/`: authoritative PostgreSQL persistence and transactional outbox.
+- `backend/internal/store/`: SQLite adapter retained only for explicit migration/recovery tooling and isolated tests.
 - `backend/internal/controlplane/`: device twins, feature metadata, config, privacy,
   identity, and OTA control-plane code.
 - `components/companion_app/`: hardware-independent firmware application logic.
@@ -50,8 +51,8 @@ dependency, CI gate, or hardware setup exists.
 
 ## Architecture boundaries
 
-- SQLite is the current POC source of truth. Postgres and other production
-  replacements remain adapters or roadmap items until implemented.
+- PostgreSQL is the sole product source of truth. `companiond` must not add a
+  SQLite/PostgreSQL selector, fallback, shadow read, or dual write.
 - Domain state stays behind typed Go ports. The LLM, semantic memory, feature
   metadata, and device UI are not authoritative databases.
 - State mutations that emit durable events use the existing transactional outbox
@@ -80,8 +81,9 @@ the behavior crosses a real boundary.
   self-hosted runner.
 
 Mocks and fakes are valid for pure logic, failure injection, and hardware/provider
-ports. Use real SQLite or other implemented stores for persistence integration, and
-real hardware for behavior that depends on RF, timing, audio, display, power, or
+ports. Use real PostgreSQL for product persistence integration and SQLite only for
+explicit migration/recovery or isolated adapter tests. Use real hardware for
+behavior that depends on RF, timing, audio, display, power, or
 physical input. Do not substitute console commands for a physical HIL claim unless
 the firmware deliberately exposes a documented test-control interface.
 

@@ -75,6 +75,10 @@ func TestPostgresApplicationServerToolRestartNoSQLite(t *testing.T) {
 		firstPool.Close()
 		t.Fatal(err)
 	}
+	if err := firstData.VerifySchema(ctx); err != nil {
+		firstPool.Close()
+		t.Fatal(err)
+	}
 
 	prefix := fmt.Sprintf("app-pg-%d", time.Now().UnixNano())
 	userID := prefix + "-user"
@@ -131,6 +135,9 @@ func TestPostgresApplicationServerToolRestartNoSQLite(t *testing.T) {
 	defer secondPool.Close()
 	secondData, err := New(secondPool)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := secondData.VerifySchema(ctx); err != nil {
 		t.Fatal(err)
 	}
 	secondConversation := conversationctx.New(secondData, nil)

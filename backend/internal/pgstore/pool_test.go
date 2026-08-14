@@ -9,7 +9,7 @@ func TestRequireSecurePostgresURL(t *testing.T) {
 		"postgres://u:p@example.com/db?sslmode=require",
 		"postgres://u:p@example.com/db?sslmode=verify-full",
 	} {
-		if err := requireSecurePostgresURL(raw); err != nil {
+		if err := requireSecurePostgresURL(raw, false); err != nil {
 			t.Fatalf("%s: %v", raw, err)
 		}
 	}
@@ -20,9 +20,15 @@ func TestRequireSecurePostgresURL(t *testing.T) {
 		"postgres://u:p@example.com/db?sslmode=disable",
 		"postgres://u:p@example.com/db?sslmode=prefer",
 	} {
-		if err := requireSecurePostgresURL(raw); err == nil {
+		if err := requireSecurePostgresURL(raw, false); err == nil {
 			t.Fatalf("%s: expected fail-closed error", raw)
 		}
+	}
+	if err := requireSecurePostgresURL("postgres://u:p@postgres/db?sslmode=disable", true); err != nil {
+		t.Fatalf("explicit non-production insecure remote: %v", err)
+	}
+	if err := requireSecurePostgresURL("postgres://u:p@postgres/db", true); err == nil {
+		t.Fatal("insecure remote opt-in must still require explicit sslmode=disable")
 	}
 }
 

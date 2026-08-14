@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"time"
 
+	"companion-server/internal/idempotency"
 	"companion-server/internal/memory"
 	"companion-server/internal/privacy"
 	"companion-server/internal/usage"
@@ -46,6 +48,36 @@ func (s *Store) UpsertMemory(ctx context.Context, item memory.Item) (memory.Item
 	item.ValidFrom = item.ValidFrom.UTC()
 	item.CreatedAt = item.CreatedAt.UTC()
 	return item, nil
+}
+
+func (s *Store) UpsertMemoryMutation(ctx context.Context, request idempotency.Request, item memory.Item) (memory.Item, error) {
+	item.Key = strings.TrimSpace(item.Key)
+	item.Value = strings.TrimSpace(item.Value)
+	if item.UserID == "" || item.Key == "" || item.Value == "" {
+		return item, fmt.Errorf("user, key and value required")
+	}
+	if item.ValidFrom.IsZero() {
+		item.ValidFrom = time.Now().UTC()
+	}
+	if item.CreatedAt.IsZero() {
+		item.CreatedAt = time.Now().UTC()
+	}
+	embedding, err := json.Marshal(item.Embedding)
+	if err != nil {
+		return item, err
+	}
+	return runMutationValue(ctx, s, request, "memory.remember", func(tx pgx.Tx) (memory.Item, error) {
+		item.UserID = owner(item.UserID)
+		item.ValidFrom = item.ValidFrom.UTC()
+		item.CreatedAt = item.CreatedAt.UTC()
+		if _, err := tx.Exec(ctx, `UPDATE memories SET valid_to=$1 WHERE user_id=$2 AND memory_key=$3 AND valid_to IS NULL AND deleted_at IS NULL`, item.ValidFrom, item.UserID, item.Key); err != nil {
+			return item, err
+		}
+		if err := tx.QueryRow(ctx, `INSERT INTO memories(user_id,memory_key,kind,value,valid_from,source,confidence,embedding,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9) RETURNING id`, item.UserID, item.Key, string(item.Kind), item.Value, item.ValidFrom, item.Source, item.Confidence, string(embedding), item.CreatedAt).Scan(&item.ID); err != nil {
+			return item, err
+		}
+		return item, nil
+	})
 }
 
 func (s *Store) CurrentMemories(ctx context.Context, userID string, now time.Time, limit int) ([]memory.Item, error) {
@@ -90,6 +122,21 @@ func (s *Store) ForgetMemory(ctx context.Context, userID, key string) error {
 		return err
 	}
 	return requireRowsChanged(tag.RowsAffected(), "memory key")
+}
+
+func (s *Store) ForgetMemoryMutation(ctx context.Context, request idempotency.Request, userID, key string) error {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return fmt.Errorf("memory key is required")
+	}
+	return runMutationMarker(ctx, s, request, "memory.forget", func(tx pgx.Tx) error {
+		now := time.Now().UTC()
+		tag, err := tx.Exec(ctx, `UPDATE memories SET deleted_at=$1,valid_to=COALESCE(valid_to,$1) WHERE user_id=$2 AND memory_key=$3 AND deleted_at IS NULL`, now, owner(userID), key)
+		if err != nil {
+			return err
+		}
+		return requireRowsChanged(tag.RowsAffected(), "memory key")
+	})
 }
 
 func (s *Store) UpsertVector(ctx context.Context, userID string, memoryID int64, vector []float32) error {
@@ -285,6 +332,7 @@ func (s *Store) TotalTokensSince(ctx context.Context, userID string, since time.
 }
 
 var _ memory.Repository = (*Store)(nil)
+var _ memory.DurableRepository = (*Store)(nil)
 var _ memory.VectorStore = (*Store)(nil)
 var _ privacy.Repository = (*Store)(nil)
 var _ privacy.RecordingReferenceRepository = (*Store)(nil)

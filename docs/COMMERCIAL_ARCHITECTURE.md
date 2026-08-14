@@ -25,7 +25,7 @@ ESP32-S3
   -> Go backend
        -> agent/model and speech adapters
        -> typed product commands and domain ports
-       -> SQLite authoritative state
+       -> PostgreSQL authoritative state
        -> transactional outbox
        -> control-plane services
   -> audio, button, and display hardware adapters
@@ -34,7 +34,8 @@ ESP32-S3
 Current repository seams:
 
 - `backend/internal/domain/`: domain types and ports.
-- `backend/internal/store/`: SQLite persistence and outbox implementation.
+- `backend/internal/pgstore/`: PostgreSQL persistence and outbox implementation.
+- `backend/internal/store/`: SQLite migration/recovery adapter and isolated tests.
 - `backend/internal/controlplane/`: device identity/twins, config, feature
   metadata, privacy, OTA metadata, and related control-plane behavior.
 - `backend/internal/protocol/`: device/backend protocol.
@@ -58,9 +59,10 @@ Authoritative product state lives in the implemented database adapter.
 - Device UI and local caches present or temporarily retain state; they do not become
   the backend source of truth.
 
-SQLite is the current POC store. Postgres, Ent, Atlas, River, Redis, vector stores,
-and other production replacements remain candidates or roadmap items until their
-adapters, migrations, tests, and rollback paths are implemented.
+PostgreSQL/pgx is the authoritative product store and Atlas owns its schema. SQLite
+is retained only for explicit cutover/recovery tooling and isolated tests. River,
+Redis, external vector stores, and other additions remain candidates or roadmap
+items until their adapters, tests, and rollback paths are implemented.
 
 ## 4. Data, control, and event boundaries
 

@@ -12,13 +12,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// PoolConfig keeps PostgreSQL connection policy explicit. Phase B uses this
-// package only in integration/migration tooling; product composition remains
-// SQLite until the hard-cut phase removes SQLite in one reviewed change.
+// PoolConfig keeps PostgreSQL connection policy explicit.
 type PoolConfig struct {
 	DSN               string
 	MaxConns          int32
 	MinConns          int32
+	AllowInsecureRemote bool
 	ConnectTimeout    time.Duration
 	MaxConnLifetime   time.Duration
 	MaxConnIdleTime   time.Duration
@@ -30,7 +29,7 @@ func (c PoolConfig) normalized() (PoolConfig, error) {
 	if c.DSN == "" {
 		return c, errors.New("PostgreSQL DSN is required")
 	}
-	if err := requireSecurePostgresURL(c.DSN); err != nil {
+	if err := requireSecurePostgresURL(c.DSN, c.AllowInsecureRemote); err != nil {
 		return c, err
 	}
 	if c.MaxConns <= 0 {
@@ -54,7 +53,7 @@ func (c PoolConfig) normalized() (PoolConfig, error) {
 	return c, nil
 }
 
-func requireSecurePostgresURL(raw string) error {
+func requireSecurePostgresURL(raw string, allowInsecureRemote bool) error {
 	parsed, err := url.Parse(raw)
 	if err != nil || (parsed.Scheme != "postgres" && parsed.Scheme != "postgresql") || parsed.Hostname() == "" {
 		return fmt.Errorf("PostgreSQL DSN must be a postgres:// or postgresql:// URL")
@@ -64,6 +63,9 @@ func requireSecurePostgresURL(raw string) error {
 		return nil
 	}
 	mode := strings.ToLower(strings.TrimSpace(parsed.Query().Get("sslmode")))
+	if allowInsecureRemote && mode == "disable" {
+		return nil
+	}
 	switch mode {
 	case "require", "verify-ca", "verify-full":
 		return nil

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"companion-server/internal/events"
+	"companion-server/internal/idempotency"
 	"companion-server/internal/market"
 	"companion-server/internal/memory"
 	"companion-server/internal/privacy"
@@ -96,6 +97,91 @@ func TestPostgresMemoryPrivacyAndUsageParity(t *testing.T) {
 	total, err := store.TotalTokensSince(ctx, user, now.Add(-time.Minute))
 	if err != nil || total != 8 {
 		t.Fatalf("usage=%d err=%v", total, err)
+	}
+}
+
+func TestPostgresDurableMemoryMutationParity(t *testing.T) {
+	pool := postgresTestPool(t)
+	store, err := New(pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	prefix := fmt.Sprintf("pg-memory-mutation-%d", time.Now().UnixNano())
+	user := prefix + "-user"
+	now := time.Now().UTC().Truncate(time.Second)
+	request := mutationRequest(t, prefix+"-actor", "memory.remember", prefix+"-remember", map[string]any{"key": "language", "value": "Vietnamese"})
+	item := memory.Item{UserID: user, Key: " language ", Kind: memory.Semantic, Value: " Vietnamese ", ValidFrom: now, Source: "test", Confidence: 1, CreatedAt: now}
+
+	first, err := store.UpsertMemoryMutation(ctx, request, item)
+	if err != nil || first.ID < 1 || first.Key != "language" || first.Value != "Vietnamese" {
+		t.Fatalf("first=%+v err=%v", first, err)
+	}
+	replayed, err := store.UpsertMemoryMutation(ctx, request, item)
+	if err != nil || replayed.ID != first.ID {
+		t.Fatalf("replayed=%+v err=%v", replayed, err)
+	}
+	current, err := store.CurrentMemories(ctx, user, now, 10)
+	if err != nil || len(current) != 1 || current[0].ID != first.ID {
+		t.Fatalf("current=%+v err=%v", current, err)
+	}
+	conflict := request
+	conflict.RequestHash, err = idempotency.HashValue(map[string]any{"key": "language", "value": "English"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.UpsertMemoryMutation(ctx, conflict, item); !idempotency.IsConflict(err) {
+		t.Fatalf("expected idempotency conflict, got %v", err)
+	}
+
+	forget := mutationRequest(t, prefix+"-actor", "memory.forget", prefix+"-forget", map[string]any{"key": "language"})
+	if err := store.ForgetMemoryMutation(ctx, forget, user, " language "); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ForgetMemoryMutation(ctx, forget, user, " language "); err != nil {
+		t.Fatalf("forget replay: %v", err)
+	}
+}
+
+func TestPostgresDurableMarketWatchMutationParity(t *testing.T) {
+	pool := postgresTestPool(t)
+	store, err := New(pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	prefix := fmt.Sprintf("pg-market-mutation-%d", time.Now().UnixNano())
+	user := prefix + "-user"
+	device := prefix + "-device"
+	request := mutationRequest(t, prefix+"-actor", "market.watch.create", prefix+"-create", map[string]any{"provider": "test", "symbol": "XAU/USD", "currency": "USD", "operator": ">", "threshold": 3000.0})
+
+	first, err := store.CreateMarketWatchMutation(ctx, request, user, device, "test", "XAU/USD", "usd", ">", 3000)
+	if err != nil || first.ID < 1 || first.Currency != "USD" || !first.Enabled {
+		t.Fatalf("first=%+v err=%v", first, err)
+	}
+	replayed, err := store.CreateMarketWatchMutation(ctx, request, user, device, "test", "XAU/USD", "usd", ">", 3000)
+	if err != nil || replayed.ID != first.ID {
+		t.Fatalf("replayed=%+v err=%v", replayed, err)
+	}
+	watches, err := store.ListMarketWatches(ctx, user, device, 10)
+	if err != nil || len(watches) != 1 || watches[0].ID != first.ID {
+		t.Fatalf("watches=%+v err=%v", watches, err)
+	}
+	conflict := request
+	conflict.RequestHash, err = idempotency.HashValue(map[string]any{"provider": "test", "symbol": "XAU/USD", "currency": "USD", "operator": ">", "threshold": 4000.0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateMarketWatchMutation(ctx, conflict, user, device, "test", "XAU/USD", "USD", ">", 4000); !idempotency.IsConflict(err) {
+		t.Fatalf("expected idempotency conflict, got %v", err)
+	}
+
+	deleteRequest := mutationRequest(t, prefix+"-actor", "market.watch.delete", prefix+"-delete", map[string]any{"id": first.ID})
+	if err := store.DeleteMarketWatchMutation(ctx, deleteRequest, user, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DeleteMarketWatchMutation(ctx, deleteRequest, user, first.ID); err != nil {
+		t.Fatalf("delete replay: %v", err)
 	}
 }
 

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"companion-server/internal/idempotency"
 )
 
 type Watch struct {
@@ -25,6 +27,12 @@ type WatchRepository interface {
 	DeleteMarketWatch(context.Context, string, int64) error
 	EnabledMarketWatches(context.Context, int) ([]Watch, error)
 	SetMarketWatchState(context.Context, int64, bool) error
+}
+
+type DurableWatchRepository interface {
+	WatchRepository
+	CreateMarketWatchMutation(context.Context, idempotency.Request, string, string, string, string, string, string, float64) (Watch, error)
+	DeleteMarketWatchMutation(context.Context, idempotency.Request, string, int64) error
 }
 
 func Matches(w Watch, price float64) bool {

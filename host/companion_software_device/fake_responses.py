@@ -28,7 +28,7 @@ CASES = {
         "args": {"content": "tier1 note"},
     },
     # Same call id as the canonical note case but different canonical payload.
-    # This drives the real ADK -> ToolRegistry -> SQLite conflict path across a
+    # This drives the real ADK -> ToolRegistry -> durable-store conflict path across a
     # backend restart without inventing a test-only mutation endpoint.
     "Tier1 note conflict": {
         "id": "note",

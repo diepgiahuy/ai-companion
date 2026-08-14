@@ -11,7 +11,7 @@ type DurableClearStore interface {
 	ClearMutation(context.Context, idempotency.Request, Scope) (bool, error)
 }
 
-// ClearMutation keeps cache invalidation outside the authoritative SQLite
+// ClearMutation keeps cache invalidation outside the authoritative database
 // transaction while requiring the store to persist clear + idempotency outcome
 // atomically. The returned boolean is true on replay.
 func (s *Service) ClearMutation(ctx context.Context, request idempotency.Request, scope Scope) (bool, error) {

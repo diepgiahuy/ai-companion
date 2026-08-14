@@ -70,9 +70,9 @@ Companion's conversation service/store remains authoritative for durable convers
 
 This avoids introducing a second ADK-owned product database while preserving restart/reconnect continuity.
 
-## Persistence migration rule
+## Persistence rule
 
-SQLite is the sole current database implementation. PostgreSQL/Ent/Atlas/River work must be implemented as a controlled migration and then hard-cut authoritative state. Do not leave permanent SQLite/PostgreSQL dual-write or shadow-read behavior just for backward compatibility.
+PostgreSQL/pgx is the sole product database implementation and Atlas owns schema migrations. `companiond` has no SQLite fallback, selector, shadow read or dual write. SQLite remains only in explicit cutover/recovery tooling and isolated tests. River is introduced only after the PostgreSQL transaction boundary is proven.
 
 ## Display migration rule
 

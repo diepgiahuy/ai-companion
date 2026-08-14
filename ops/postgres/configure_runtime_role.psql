@@ -1,0 +1,15 @@
+SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'runtime_user', :'runtime_password')
+WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'runtime_user')
+\gexec
+
+SELECT format('ALTER ROLE %I LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION', :'runtime_user', :'runtime_password')
+\gexec
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+REVOKE CREATE ON SCHEMA public FROM :"runtime_user";
+SELECT format('GRANT CONNECT ON DATABASE %I TO %I', current_database(), :'runtime_user')
+\gexec
+GRANT USAGE ON SCHEMA public TO :"runtime_user";
+GRANT USAGE ON SCHEMA atlas_schema_revisions TO :"runtime_user";
+GRANT SELECT ON atlas_schema_revisions.atlas_schema_revisions TO :"runtime_user";
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO :"runtime_user";
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO :"runtime_user";

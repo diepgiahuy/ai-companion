@@ -9,6 +9,7 @@ import (
 
 	"companion-server/internal/domain"
 	"companion-server/internal/events"
+	"companion-server/internal/idempotency"
 	"companion-server/internal/market"
 	"github.com/jackc/pgx/v5"
 )
@@ -141,6 +142,28 @@ func (s *Store) CreateMarketWatch(ctx context.Context, userID, deviceID, key, pr
 	return market.Watch{ID: id, UserID: userID, DeviceID: deviceID, Provider: provider, Symbol: symbol, Currency: currency, Operator: operator, Threshold: threshold, Enabled: true, CreatedAt: created}, nil
 }
 
+func (s *Store) CreateMarketWatchMutation(ctx context.Context, request idempotency.Request, userID, deviceID, provider, symbol, currency, operator string, threshold float64) (market.Watch, error) {
+	if err := market.ValidateOperator(operator); err != nil {
+		return market.Watch{}, err
+	}
+	userID = owner(userID)
+	deviceID = strings.TrimSpace(deviceID)
+	provider = strings.TrimSpace(provider)
+	symbol = strings.TrimSpace(symbol)
+	currency = strings.ToUpper(strings.TrimSpace(currency))
+	if provider == "" || symbol == "" || currency == "" || threshold <= 0 {
+		return market.Watch{}, fmt.Errorf("provider, symbol, currency and positive threshold are required")
+	}
+	return runMutationValue(ctx, s, request, "market.watch.create", func(tx pgx.Tx) (market.Watch, error) {
+		created := time.Now().UTC()
+		watch := market.Watch{UserID: userID, DeviceID: deviceID, Provider: provider, Symbol: symbol, Currency: currency, Operator: operator, Threshold: threshold, Enabled: true, CreatedAt: created}
+		if err := tx.QueryRow(ctx, `INSERT INTO market_watches(idempotency_key,user_id,device_id,provider,symbol,currency,operator,threshold,enabled,last_state,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,true,false,$9) RETURNING id`, request.Key, userID, deviceID, provider, symbol, currency, operator, threshold, created).Scan(&watch.ID); err != nil {
+			return market.Watch{}, err
+		}
+		return watch, nil
+	})
+}
+
 func (s *Store) ListMarketWatches(ctx context.Context, userID, deviceID string, limit int) ([]market.Watch, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 20
@@ -181,6 +204,19 @@ func (s *Store) DeleteMarketWatch(ctx context.Context, userID string, id int64) 
 		return err
 	}
 	return requireRowsChanged(tag.RowsAffected(), "market watch")
+}
+
+func (s *Store) DeleteMarketWatchMutation(ctx context.Context, request idempotency.Request, userID string, id int64) error {
+	if id < 1 {
+		return fmt.Errorf("market watch id is required")
+	}
+	return runMutationMarker(ctx, s, request, "market.watch.delete", func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `DELETE FROM market_watches WHERE id=$1 AND user_id=$2`, id, owner(userID))
+		if err != nil {
+			return err
+		}
+		return requireRowsChanged(tag.RowsAffected(), "market watch")
+	})
 }
 
 func (s *Store) EnabledMarketWatches(ctx context.Context, limit int) ([]market.Watch, error) {
@@ -309,3 +345,4 @@ func (s *Store) NextReminder(ctx context.Context, userID, deviceID string, now t
 
 var _ events.Outbox = (*Store)(nil)
 var _ market.WatchRepository = (*Store)(nil)
+var _ market.DurableWatchRepository = (*Store)(nil)

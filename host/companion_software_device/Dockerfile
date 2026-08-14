@@ -13,6 +13,7 @@ RUN cd backend && go mod download
 COPY . .
 RUN test "$(go env GOVERSION)" = "go1.26.6"
 RUN cd backend && go build -tags "adk,nolibopusfile" -o /usr/local/bin/companiond ./cmd/companiond
+RUN cd backend && go build -o /usr/local/bin/companion-verify-tier1-store ./cmd/companion-verify-tier1-store
 RUN cmake -S host/companion_software_device -B /build/software-device -G Ninja -DCMAKE_BUILD_TYPE=Release \
  && cmake --build /build/software-device --target companion_software_device \
  && cp /build/software-device/companion_software_device /usr/local/bin/companion_software_device

@@ -26,7 +26,7 @@ The table below distinguishes **implemented** from **production-proven**. A gree
 | Prompt regression quality | ⚪ unproven | Requires versioned real-model eval/red-team suite |
 | Destructive confirmation UX | ⚪ unproven | Exact tool+args authorization core implemented; durable user confirmation flow still needs proof |
 | Idempotency payload-conflict safety | ⚪ unproven | Same-key/different-payload conflict semantics not yet proven end-to-end |
-| PostgreSQL + Atlas/Ent + River | ⚪ unproven | Migration/job/backup/restart gates pending |
+| PostgreSQL + Atlas/pgx + River | ⚪ unproven | PostgreSQL hard-cut code is implemented; hosted cutover/Tier-1 evidence and River job gates remain pending |
 | External MCP interoperability | ⚪ unproven | SDK bridge compiles; real external MCP contract test pending |
 | Tier-1 headless software device | 🟡 partial | Real Go `/v2/device` + production `CompanionApp`/protocol v2 + ADK Responses adapter; core scenarios, enrolled-auth lifecycle and representative expense/budget/note/journal/reminder/timer/memory mutations are deterministic orchestration gates; no provider/physical promotion |
 | Canonical protocol v2 | 🟡 partial | Backend, firmware and host share v2; Tier-1 proves v2 session/turn flow plus deterministic v1 rejection; physical-device evidence remains pending |
@@ -50,6 +50,7 @@ The current `main` branch includes foundations for the next production stages wi
 - **Expanded GitHub CI/CD** — module lock, race/vet, govulncheck, CodeQL, evidence truth gate, dependency review capability detection, release provenance foundation.
 - **Physical HIL workflow** — fail-closed ESP-IDF build/flash/serial test using `pytest-embedded`; it never falls back to a mock result and runs only when a maintainer manually selects a trusted ref and explicit device port.
 - **Tier-1 headless software device** — production C++ `CompanionApp` + protocol v2 connect to real `companiond` through a host-only WebSocket/libopus adapter; the harness covers reconnect/barge-in/replay/config, wrong/revoked device credentials, ADK tool loops, and representative authoritative mutations for expense/budget/note/journal/reminder/timer/memory. Deterministic providers remain `orchestration_only`.
+- **PostgreSQL authoritative composition** — `companiond` requires one `COMPANION_DATABASE_URL`, verifies the exact Atlas revision before runtime initialization, and has no SQLite product fallback/selector. SQLite remains only in explicit cutover/recovery tooling and isolated tests; hosted promotion evidence and River remain pending.
 - **Observability contract (#25 in progress)** — Companion-owned bounded/non-blocking event schema with safe session/turn/generation correlation, tool outcome timing and Tier-1 JSON snapshots; no hosted telemetry vendor is selected by the runtime contract.
 
 See merged PR #1 for the original implementation diff and deliberately unclaimed gates.
@@ -89,8 +90,8 @@ Capability + policy boundary
         │
         ▼
 Authoritative state
-  ├─ current authoritative SQLite store
-  ├─ PostgreSQL/Ent/Atlas target
+  ├─ PostgreSQL/pgx authoritative store
+  ├─ Atlas-owned schema migrations
   ├─ River durable jobs target
   ├─ conversation store
   └─ memory / domain repositories
