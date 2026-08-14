@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"companion-server/internal/devicecap"
 	"companion-server/internal/domain"
 	"companion-server/internal/protocol"
 )
@@ -14,10 +15,17 @@ import (
 type sessionHub struct {
 	mu       sync.RWMutex
 	byDevice map[string]map[*session]struct{}
+
+	capabilityMu     sync.RWMutex
+	capabilityRouter *devicecap.Router
+	capabilityStates map[*session]*sessionCapabilityState
 }
 
 func newSessionHub() *sessionHub {
-	return &sessionHub{byDevice: make(map[string]map[*session]struct{})}
+	return &sessionHub{
+		byDevice:         make(map[string]map[*session]struct{}),
+		capabilityStates: make(map[*session]*sessionCapabilityState),
+	}
 }
 
 func (h *sessionHub) register(deviceID string, s *session) {
@@ -33,11 +41,67 @@ func (h *sessionHub) register(deviceID string, s *session) {
 
 func (h *sessionHub) unregister(deviceID string, s *session) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	set := h.byDevice[deviceID]
 	delete(set, s)
 	if len(set) == 0 {
 		delete(h.byDevice, deviceID)
+	}
+	h.mu.Unlock()
+	h.detachCapabilities(s)
+}
+
+func (h *sessionHub) setCapabilityRouter(router *devicecap.Router) {
+	h.capabilityMu.Lock()
+	h.capabilityRouter = router
+	h.capabilityMu.Unlock()
+}
+
+func (h *sessionHub) capabilityState(s *session, create bool) *sessionCapabilityState {
+	if h == nil || s == nil {
+		return nil
+	}
+	h.capabilityMu.Lock()
+	defer h.capabilityMu.Unlock()
+	if state := h.capabilityStates[s]; state != nil || !create {
+		return state
+	}
+	if h.capabilityRouter == nil {
+		return nil
+	}
+	state := &sessionCapabilityState{
+		router:     h.capabilityRouter,
+		advertised: map[string]protocol.CapabilityDescriptor{},
+		pending:    map[string]*capabilityPending{},
+	}
+	if err := h.capabilityRouter.Register(s.deviceID, s); err != nil {
+		return nil
+	}
+	h.capabilityStates[s] = state
+	return state
+}
+
+func (h *sessionHub) detachCapabilities(s *session) {
+	if h == nil || s == nil {
+		return
+	}
+	h.capabilityMu.Lock()
+	state := h.capabilityStates[s]
+	delete(h.capabilityStates, s)
+	h.capabilityMu.Unlock()
+	if state == nil {
+		return
+	}
+	state.mu.Lock()
+	state.closed = true
+	pending := state.pending
+	state.pending = map[string]*capabilityPending{}
+	state.advertised = map[string]protocol.CapabilityDescriptor{}
+	state.mu.Unlock()
+	for _, waiter := range pending {
+		close(waiter.result)
+	}
+	if state.router != nil {
+		state.router.Unregister(s.deviceID, s)
 	}
 }
 
