@@ -1,2 +1,0 @@
-{"config":{"protocol_version":"v1.0.0","scanner_name":"govulncheck","go_version":"go1.26.5","scan_level":"symbol"}}
-{"finding":{"osv":"GO-EXAMPLE-ALLOW","fixed_version":"go1.26.6","trace":[{"module":"stdlib","package":"net/http","function":"Example"},{"module":"companion-server","package":"companion-server/internal/server","function":"Caller"}]}}
