@@ -47,6 +47,7 @@ TOOL_CASES=(
   "reminder|Tier1 reminder|${OUT%.json}-tool-reminder.json|reminder.create|Tier-1 tool parity ok"
   "timer|Tier1 timer|${OUT%.json}-tool-timer.json|timer.create|Tier-1 tool parity ok"
   "memory|Tier1 memory|${OUT%.json}-tool-memory.json|memory.remember|Tier-1 tool parity ok"
+  "device-volume|Tier1 volume 42|${OUT%.json}-tool-device-volume.json|device.volume.set|Tier-1 tool parity ok"
 )
 for spec in "${TOOL_CASES[@]}"; do
   IFS='|' read -r case_id transcript evidence_path expected_tool expected_text <<<"$spec"; export MOCK_TRANSCRIPT="$transcript"; COMPANION_EVIDENCE_CONFIG_SHA256="$(printf '%s\n' 'profile=test' 'allow_mock=true' 'agent=adk:fake_responses' 'auth=database_enrolled' "asr=mock:${transcript}" 'tts=mock' 'protocol=v2' "tool_case=${case_id}" | sha256sum | awk '{print $1}')"; export COMPANION_OBSERVABILITY_FILE="${evidence_path%.json}-observability.json"; start_server "$TOOL_SERVER_LOG"
