@@ -6,6 +6,8 @@ on:
       - "host/companion_software_device/**"
       - "components/companion_app/**"
       - "backend/**"
+      - "db/postgres/**"
+      - "ops/postgres/**"
       - "testdata/scenarios/**"
       - "evidence/**"
       - "README.md"
@@ -19,6 +21,8 @@ on:
       - "host/companion_software_device/**"
       - "components/companion_app/**"
       - "backend/**"
+      - "db/postgres/**"
+      - "ops/postgres/**"
       - "testdata/scenarios/**"
       - "evidence/**"
       - "README.md"
@@ -39,16 +43,45 @@ jobs:
   tier1-orchestration:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      POSTGRES_IMAGE: postgres:18.4-bookworm@sha256:1961f96e6029a02c3812d7cb329a3b03a3ac2bb067058dec17b0f5596aca9296
+      ATLAS_IMAGE: arigaio/atlas:1.2.0-community-distroless@sha256:0527e6aaaf8078ca3398cac75209f8f43a13e96bc15b3dfdeffe7cef5451c96e
+      COMPANION_DATABASE_URL: postgres://companion_app:companion_app_test@127.0.0.1:55432/companion?sslmode=disable
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build Atlas-migrated PostgreSQL 18.4 data plane
+        run: |
+          set -euo pipefail
+          docker run -d --rm --name companion-tier1-pg \
+            -p 127.0.0.1:55432:5432 \
+            -e POSTGRES_PASSWORD=companion \
+            -e POSTGRES_USER=companion \
+            -e POSTGRES_DB=companion \
+            "$POSTGRES_IMAGE"
+          for _ in $(seq 1 60); do
+            if docker exec companion-tier1-pg pg_isready -U companion -d companion >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          docker exec companion-tier1-pg pg_isready -U companion -d companion
+          docker run --rm --network host \
+            -v "$PWD/db/postgres:/migrations:ro" \
+            "$ATLAS_IMAGE" migrate apply \
+            --dir file:///migrations \
+            --url 'postgres://companion:companion@127.0.0.1:55432/companion?sslmode=disable'
+          docker exec -i companion-tier1-pg psql -v ON_ERROR_STOP=1 -U companion -d companion \
+            --set=runtime_user=companion_app \
+            --set=runtime_password=companion_app_test \
+            < ops/postgres/configure_runtime_role.psql
+          test "$(docker exec companion-tier1-pg psql -v ON_ERROR_STOP=1 -At -U companion -d companion -c "SELECT rolsuper::int || ':' || rolcreatedb::int || ':' || rolcreaterole::int || ':' || has_schema_privilege('companion_app','public','CREATE')::int FROM pg_roles WHERE rolname='companion_app';")" = "0:0:0:0"
       - name: Build pinned host software-device image
         run: docker build -f host/companion_software_device/Dockerfile -t companion-software-device .
       - name: Run real-backend Tier-1 scenarios
         run: |
           mkdir -p artifacts/software-device
-          docker run --rm \
+          docker run --rm --network host \
             -e GITHUB_SHA="${GITHUB_SHA}" \
+            -e COMPANION_DATABASE_URL="${COMPANION_DATABASE_URL}" \
             -e COMPANION_EVIDENCE_OUT=/artifacts/software-device/evidence.json \
             -v "$PWD/artifacts:/artifacts" \
             companion-software-device
@@ -89,6 +122,10 @@ jobs:
           assert data.get('schema_version') == 2
           assert data.get('result') == 'passed'
           assert data.get('promotion') == 'orchestration_only'
+          assert data.get('authoritative_store') == 'postgresql'
+          assert data.get('schema_revision') == '20260814070000'
+          assert data.get('runtime_role') == 'companion_app'
+          assert data.get('schema_create_allowed') is False
           mutation = data.get('mutation', {})
           assert mutation.get('table') == 'expenses'
           assert mutation.get('count') == 1
@@ -106,6 +143,9 @@ jobs:
           }
           print('AUTHORITATIVE TOOL PARITY PASS: expense/budget/note/journal/reminder/timer/memory + device capability wire')
           PY
+      - name: Stop disposable PostgreSQL
+        if: always()
+        run: docker stop companion-tier1-pg >/dev/null 2>&1 || true
       - name: Upload orchestration evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

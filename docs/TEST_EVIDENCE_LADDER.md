@@ -12,7 +12,7 @@ C++ `CompanionApp` tests, Go unit/race/store tests, protocol-v2 golden vectors a
 
 The first dependency baseline is intentionally host-only and pinned by the test container: Boost.Beast/Boost.System 1.74 from Debian bookworm, libopus 1.3.1, and nlohmann-json 3.11.2. These packages never enter the ESP-IDF component graph.
 
-Current mandatory scenarios are session/turn/TTS, duplicate live-session message identity, barge-in generation cancellation, disconnect/reconnect with a new session, live config/report ordering, and deterministic protocol-v1 rejection. Synthetic microphone PCM and bounded speaker/display sinks require no host audio hardware. A second deterministic run switches only the model to an OpenAI-compatible fixture and proves the production legacy-agent/ToolRegistry/SQLite path creates exactly one expected `expense.create` mutation; it is still non-production provider evidence.
+Current mandatory scenarios are session/turn/TTS, duplicate live-session message identity, barge-in generation cancellation, disconnect/reconnect with a new session, live config/report ordering, and deterministic protocol-v1 rejection. Synthetic microphone PCM and bounded speaker/display sinks require no host audio hardware. Deterministic model runs exercise the production ADK/ToolRegistry/PostgreSQL path across server restarts and verify representative authoritative mutations; this is still non-production provider evidence.
 
 A Tier-1 run with `MockASR`, `MockAgent` and `MockTTS` is **orchestration evidence only**. Its artifact must say `evidence_class=tier1_orchestration` and `promotion=orchestration_only`; it cannot promote real ASR/TTS/model quality. #18 must plug real providers into this same device FSM/protocol harness rather than create another client.
 

@@ -4,7 +4,9 @@ on:
   pull_request:
     paths:
       - "db/postgres/**"
+      - "ops/postgres/**"
       - "backend/internal/pgstore/**"
+      - "backend/cmd/companiond/**"
       - "backend/cmd/companion-migrate/**"
       - "backend/go.mod"
       - "backend/go.sum"
@@ -72,6 +74,15 @@ jobs:
             --dir file:///migrations \
             --url 'postgres://companion:companion@companion-pg:5432/companion?sslmode=disable'
 
+      - name: Configure least-privilege application role
+        run: |
+          set -euo pipefail
+          docker exec -i companion-pg psql -v ON_ERROR_STOP=1 -U companion -d companion \
+            --set=runtime_user=companion_app \
+            --set=runtime_password=companion_app_test \
+            < ops/postgres/configure_runtime_role.psql
+          test "$(docker exec companion-pg psql -v ON_ERROR_STOP=1 -At -U companion -d companion -c "SELECT rolsuper::int || ':' || rolcreatedb::int || ':' || rolcreaterole::int || ':' || has_schema_privilege('companion_app','public','CREATE')::int FROM pg_roles WHERE rolname='companion_app';")" = "0:0:0:0"
+
       - name: Assert post-27 invariants
         run: |
           set -euo pipefail
@@ -88,10 +99,10 @@ jobs:
       - name: Run pgx Phase B transaction tests
         run: |
           set -euo pipefail
-          docker run --rm --network companion-pg-test \
+          docker run --rm --network host \
             -v "$PWD:/src" \
             -w /src/backend \
-            -e COMPANION_POSTGRES_TEST_DSN='postgres://companion:companion@companion-pg:5432/companion?sslmode=disable' \
+            -e COMPANION_POSTGRES_TEST_DSN='postgres://companion_app:companion_app_test@127.0.0.1:55432/companion?sslmode=disable' \
             golang:1.26.6-bookworm \
             sh -c 'set -eu; go test ./internal/pgstore -count=1 -timeout=2m'
 
@@ -101,7 +112,7 @@ jobs:
           docker run --rm --network host \
             -v "$PWD:/src" \
             -w /src/backend \
-            -e COMPANION_POSTGRES_APP_TEST_DSN='postgres://companion:companion@127.0.0.1:55432/companion?sslmode=disable' \
+            -e COMPANION_POSTGRES_APP_TEST_DSN='postgres://companion_app:companion_app_test@127.0.0.1:55432/companion?sslmode=disable' \
             golang:1.26.6-bookworm \
             sh -c 'set -eu; go test -tags="apppge2e,compilecheck" ./internal/pgstore -run "^TestPostgresApplicationServerToolRestartNoSQLite$" -count=1 -timeout=2m'
 

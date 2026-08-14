@@ -25,12 +25,10 @@ import (
 	"companion-server/internal/observability"
 	"companion-server/internal/policy"
 	"companion-server/internal/privacy"
-	conversationprovider "companion-server/internal/providers/conversation"
 	resourceprovider "companion-server/internal/providers/resources"
 	toolprovider "companion-server/internal/providers/tools"
 	"companion-server/internal/runtimeconfig"
 	"companion-server/internal/server"
-	"companion-server/internal/store"
 	"companion-server/internal/supervision"
 	"companion-server/internal/usage"
 	promptpkg "companion-server/prompts"
@@ -51,11 +49,11 @@ func main() {
 		os.Exit(1)
 	}
 	address := value("COMPANION_ADDRESS", ":8000")
-	databasePath := value("COMPANION_DATABASE", "companion.db")
-
-	data, err := store.Open(databasePath)
+	databaseCtx, cancelDatabase := context.WithTimeout(context.Background(), 15*time.Second)
+	data, err := openProductDatabase(databaseCtx, runtimeCfg.Profile)
+	cancelDatabase()
 	if err != nil {
-		logger.Error("open database", "error", err)
+		logger.Error("open authoritative PostgreSQL database", "error", err)
 		os.Exit(1)
 	}
 	defer data.Close()
@@ -78,7 +76,7 @@ func main() {
 	default:
 		conversationCache = conversationctx.NewMemoryCache(30*time.Minute, 100)
 	}
-	conversationService := conversationctx.New(conversationprovider.NewSQLite(data), conversationCache)
+	conversationService := conversationctx.New(data, conversationCache)
 
 	b := true
 	vad := 450

@@ -22,22 +22,23 @@ set_memory_consent(){ local user_id="$1"; curl -fsS -X PATCH -H "Authorization: 
 expect_unauthorized(){ local device_id="$1" credential="$2" status; status="$(curl -sS -o /dev/null -w '%{http_code}' -H "Device-Id: ${device_id}" -H "Authorization: Bearer ${credential}" http://127.0.0.1:18000/v2/device)"; [[ "$status" == "401" ]] || { echo "expected 401 for device=$device_id, got $status" >&2; return 1; }; }
 
 export COMPANION_PROFILE=test COMPANION_ALLOW_MOCK_PROVIDERS=true COMPANION_ADDRESS="127.0.0.1:18000" COMPANION_ADMIN_TOKEN="tier1-admin-token" COMPANION_TIMEZONE="Asia/Ho_Chi_Minh"
+test -n "${COMPANION_DATABASE_URL:-}" || { echo "COMPANION_DATABASE_URL is required" >&2; exit 1; }
 export COMPANION_EVIDENCE_COMMIT="${GITHUB_SHA:-$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)}" ADK_OPENAI_BASE_URL="http://127.0.0.1:19000/v1" ADK_OPENAI_API_KEY="tier1-fake-key" ADK_MODEL="tier1-fake-model"
 python3 "$ROOT/host/companion_software_device/fake_responses.py" >"$MODEL_LOG" 2>&1 & MODEL_PID=$!
 for _ in $(seq 1 100); do if curl -fsS http://127.0.0.1:19000/healthz >/dev/null; then break; fi; if ! kill -0 "$MODEL_PID" 2>/dev/null; then cat "$MODEL_LOG" >&2; exit 1; fi; sleep 0.05; done
 curl -fsS http://127.0.0.1:19000/healthz >/dev/null || { cat "$MODEL_LOG" >&2; exit 1; }
 
-CORE_DEVICE="software-device-core"; export MOCK_TRANSCRIPT="tier1 transcript" COMPANION_DATABASE="$TMP/companion.db" COMPANION_EVIDENCE_CONFIG_SHA256
+CORE_DEVICE="software-device-core"; export MOCK_TRANSCRIPT="tier1 transcript" COMPANION_EVIDENCE_CONFIG_SHA256
 COMPANION_EVIDENCE_CONFIG_SHA256="$(printf '%s\n' 'profile=test' 'allow_mock=true' 'agent=adk:fake_responses' 'auth=database_enrolled' 'asr=mock:tier1 transcript' 'tts=mock' 'protocol=v2' | sha256sum | awk '{print $1}')"
 export COMPANION_OBSERVABILITY_FILE="$CORE_OBS_OUT"; start_server "$SERVER_LOG"; CORE_CREDENTIAL="$(enroll_device "$CORE_DEVICE")"; expect_unauthorized "$CORE_DEVICE" "wrong-tier1-credential"
 "${SOFTWARE_DEVICE_BIN:-/usr/local/bin/companion_software_device}" --url ws://127.0.0.1:18000/v2/device --device-id "$CORE_DEVICE" --token "$CORE_CREDENTIAL" --admin-token "$COMPANION_ADMIN_TOKEN" --scenario-set core --evidence "$OUT"
 revoke_device "$CORE_DEVICE"; expect_unauthorized "$CORE_DEVICE" "$CORE_CREDENTIAL"; python3 "$ROOT/host/companion_software_device/validate_evidence.py" "$OUT"; stop_server; python3 "$ROOT/host/companion_software_device/validate_observability.py" "$CORE_OBS_OUT" core
 
-# Reuse one authoritative SQLite DB and enrolled device across server restarts.
+# Reuse one authoritative PostgreSQL DB and enrolled device across server restarts.
 # The note-conflict case deliberately reuses the same ADK function-call key with
 # different canonical arguments. The fake model only emits the expected success
 # text after observing the real IDEMPOTENCY_CONFLICT tool result.
-TOOL_DEVICE="software-device-tool"; export COMPANION_DATABASE="$TMP/tool.db"; TOOL_CREDENTIAL=""
+TOOL_DEVICE="software-device-tool"; TOOL_CREDENTIAL=""
 TOOL_CASES=(
   "expense|Tier1 expense 50k|$TOOL_OUT|expense.log|Tier-1 tool parity ok"
   "budget|Tier1 budget weekly|${OUT%.json}-tool-budget.json|budget.set|Tier-1 tool parity ok"
@@ -61,4 +62,4 @@ for spec in "${TOOL_CASES[@]}"; do
     python3 "$ROOT/host/companion_software_device/validate_observability.py" "${evidence_path%.json}-observability.json" tool "$expected_tool"
   fi
 done
-export MOCK_TRANSCRIPT="Tier1 memory" COMPANION_OBSERVABILITY_FILE="$TMP/final-auth-observability.json"; start_server "$TOOL_SERVER_LOG"; revoke_device "$TOOL_DEVICE"; expect_unauthorized "$TOOL_DEVICE" "$TOOL_CREDENTIAL"; stop_server; python3 "$ROOT/host/companion_software_device/verify_tool_db.py" "$TMP/tool.db" "$TOOL_DB_OUT"
+export MOCK_TRANSCRIPT="Tier1 memory" COMPANION_OBSERVABILITY_FILE="$TMP/final-auth-observability.json"; start_server "$TOOL_SERVER_LOG"; revoke_device "$TOOL_DEVICE"; expect_unauthorized "$TOOL_DEVICE" "$TOOL_CREDENTIAL"; stop_server; "${TIER1_STORE_VERIFIER_BIN:-/usr/local/bin/companion-verify-tier1-store}" --postgres "$COMPANION_DATABASE_URL" --output "$TOOL_DB_OUT"

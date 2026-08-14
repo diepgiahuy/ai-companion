@@ -20,13 +20,15 @@ WebSocket is the only current backend/device realtime transport. A future transp
 
 Database-enrolled **per-device credentials are the sole product device-auth path**. `/v2/device` fails closed when no authenticator is configured, when `Device-Id` or the Bearer credential is absent, when the credential is wrong, or after it is revoked. There is no shared device-token fallback.
 
-The admin credential endpoint emits a raw credential once; SQLite stores its SHA-256 digest with trusted user/device/tenant/plan ownership claims. Client transport headers cannot override those enrolled claims.
+The admin credential endpoint emits a raw credential once; PostgreSQL stores its SHA-256 digest with trusted user/device/tenant/plan ownership claims. Client transport headers cannot override those enrolled claims.
 
 ## Persistence
 
-SQLite is the sole current authoritative database. Repository ports keep domain code independent from the concrete store, but that seam does not imply multiple stores are active.
+PostgreSQL is the sole authoritative product database. `companiond` requires `COMPANION_DATABASE_URL`, opens a bounded pgx pool, and verifies the exact completed Atlas revision plus required outbox triggers before runtime initialization. It never creates or migrates schema.
 
-PostgreSQL/Ent/Atlas/River remain a future migration. When implemented, the migration must prove data/job/backup/restart semantics and then hard-cut authoritative state rather than leave permanent dual-read/dual-write compatibility.
+There is no SQLite/PostgreSQL selector, fallback, shadow read, or dual write. SQLite remains only in the explicit `companion-migrate` cutover/recovery command and isolated tests. River remains pending until the PostgreSQL hard-cut transaction boundary is proven by hosted integration gates.
+
+Run `ops/postgres/configure_runtime_role.psql` as the migration owner after each Atlas apply to create/refresh a non-DDL application role and grant it access to the current schema objects. `companiond` rejects superusers and roles that can create databases, roles, or objects in the `public` schema.
 
 ## Capability boundary
 
@@ -42,7 +44,7 @@ The ADK bridge exposes every public `ToolRegistry.Definitions()` entry through g
 
 Companion conversation storage remains the durable conversational source of truth. ADK's in-memory session service is a non-authoritative execution cache: when an ADK session is recreated after reconnect/process restart, bounded recent Companion history is rehydrated into it. Domain/tool state is always read from authoritative repositories.
 
-Tier-1 software-device evidence runs the production `CompanionApp` and ADK Responses adapter with deterministic ASR/TTS/model fixtures, database-enrolled credentials and real SQLite mutations. Mock/fake dependencies in this harness are **orchestration-only** evidence and do not prove provider or physical-device quality.
+Tier-1 software-device evidence runs the production `CompanionApp` and ADK Responses adapter with deterministic ASR/TTS/model fixtures, database-enrolled credentials and real PostgreSQL mutations across `companiond` restarts. Mock/fake dependencies in this harness are **orchestration-only** evidence and do not prove provider or physical-device quality.
 
 Mocks remain valid test doubles. They are not product fallback modes.
 
