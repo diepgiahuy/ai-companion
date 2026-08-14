@@ -106,8 +106,7 @@ func TestPostgresApplicationServerToolRestartNoSQLite(t *testing.T) {
 	firstHTTP := httptest.NewServer(firstService.Handler())
 
 	assertPostgresApplicationUnauthorized(t, firstHTTP.URL, deviceID, "wrong-credential")
-	runPostgresApplicationTurn(t, firstHTTP.URL, deviceID, credential, threadID, "turn-1")
-	firstResult := waitPostgresApplicationResult(t, firstResults)
+	firstResult := runPostgresApplicationTurn(t, firstHTTP.URL, deviceID, credential, threadID, "turn-1", firstResults)
 	if !toolResultOK(firstResult) {
 		firstHTTP.Close()
 		firstPool.Close()
@@ -153,8 +152,7 @@ func TestPostgresApplicationServerToolRestartNoSQLite(t *testing.T) {
 	secondHTTP := httptest.NewServer(secondService.Handler())
 	defer secondHTTP.Close()
 
-	runPostgresApplicationTurn(t, secondHTTP.URL, deviceID, credential, threadID, "turn-2")
-	conflict := waitPostgresApplicationResult(t, secondResults)
+	conflict := runPostgresApplicationTurn(t, secondHTTP.URL, deviceID, credential, threadID, "turn-2", secondResults)
 	if toolResultOK(conflict) || !strings.Contains(conflict, "IDEMPOTENCY_CONFLICT") {
 		t.Fatalf("same key with different semantic request did not fail closed: %s", conflict)
 	}
@@ -200,7 +198,7 @@ func assertPostgresApplicationUnauthorized(t *testing.T, baseURL, deviceID, cred
 	}
 }
 
-func runPostgresApplicationTurn(t *testing.T, baseURL, deviceID, credential, threadID, turnID string) {
+func runPostgresApplicationTurn(t *testing.T, baseURL, deviceID, credential, threadID, turnID string, results <-chan string) string {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
@@ -248,6 +246,7 @@ func runPostgresApplicationTurn(t *testing.T, baseURL, deviceID, credential, thr
 	if err := conn.Write(ctx, websocket.MessageText, stop); err != nil {
 		t.Fatal(err)
 	}
+	return waitPostgresApplicationResult(t, results)
 }
 
 func waitPostgresApplicationResult(t *testing.T, results <-chan string) string {
