@@ -1,6 +1,6 @@
-// Command companion-migrate is an explicit offline cutover tool. It is never
-// invoked by companiond and therefore cannot create a runtime SQLite/PostgreSQL
-// selector or dual-write path.
+// Command companion-migrate is an explicit offline cutover/recovery tool. It is
+// never invoked by companiond and therefore cannot create a runtime
+// SQLite/PostgreSQL selector or dual-write path.
 package main
 
 import (
@@ -11,11 +11,13 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"companion-server/internal/pgstore"
 	pgmigrate "companion-server/internal/pgstore/migrate"
+	sqlitestore "companion-server/internal/store"
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "modernc.org/sqlite"
 )
@@ -29,7 +31,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: companion-migrate import|verify|digest-postgres [flags]")
+		return errors.New("usage: companion-migrate import|verify|digest-postgres|export-sqlite [flags]")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -67,9 +69,94 @@ func run(args []string) error {
 		report, err := pgmigrate.DigestPostgres(ctx, pool)
 		if err != nil { return err }
 		return writeReport(report)
+	case "export-sqlite":
+		fs := flag.NewFlagSet("export-sqlite", flag.ContinueOnError)
+		postgresDSN := fs.String("postgres", "", "authoritative PostgreSQL DSN")
+		sqlitePath := fs.String("sqlite", "", "new recovery SQLite database path")
+		if err := fs.Parse(args[1:]); err != nil { return err }
+		report, err := exportSQLite(ctx, *postgresDSN, *sqlitePath)
+		if err != nil { return err }
+		return writeReport(report)
 	default:
 		return fmt.Errorf("unknown subcommand %q", args[0])
 	}
+}
+
+func exportSQLite(ctx context.Context, postgresDSN, destination string) (pgmigrate.Report, error) {
+	destination = strings.TrimSpace(destination)
+	if destination == "" {
+		return pgmigrate.Report{}, errors.New("--sqlite is required")
+	}
+	if _, err := os.Stat(destination); err == nil {
+		return pgmigrate.Report{}, fmt.Errorf("recovery SQLite destination already exists: %s", destination)
+	} else if !os.IsNotExist(err) {
+		return pgmigrate.Report{}, fmt.Errorf("inspect recovery SQLite destination: %w", err)
+	}
+	parent := filepath.Dir(destination)
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		return pgmigrate.Report{}, fmt.Errorf("prepare recovery directory: %w", err)
+	}
+	tempFile, err := os.CreateTemp(parent, "."+filepath.Base(destination)+".recovery-*.sqlite")
+	if err != nil {
+		return pgmigrate.Report{}, fmt.Errorf("create recovery SQLite temp file: %w", err)
+	}
+	tempPath := tempFile.Name()
+	if err := tempFile.Close(); err != nil {
+		_ = os.Remove(tempPath)
+		return pgmigrate.Report{}, err
+	}
+	promoted := false
+	defer func() {
+		if !promoted {
+			_ = os.Remove(tempPath)
+			_ = os.Remove(tempPath + "-wal")
+			_ = os.Remove(tempPath + "-shm")
+		}
+	}()
+
+	// Initialize only the current SQLite schema. This is explicit migration
+	// tooling; product startup is never pointed at this path automatically.
+	initialized, err := sqlitestore.Open(tempPath)
+	if err != nil {
+		return pgmigrate.Report{}, fmt.Errorf("initialize recovery SQLite schema: %w", err)
+	}
+	if err := initialized.Close(); err != nil {
+		return pgmigrate.Report{}, fmt.Errorf("close initialized recovery SQLite: %w", err)
+	}
+	target, err := sql.Open("sqlite", tempPath)
+	if err != nil {
+		return pgmigrate.Report{}, fmt.Errorf("open recovery SQLite: %w", err)
+	}
+	target.SetMaxOpenConns(1)
+	pool, err := openPostgres(ctx, postgresDSN)
+	if err != nil {
+		_ = target.Close()
+		return pgmigrate.Report{}, err
+	}
+	report, exportErr := pgmigrate.ExportPostgresToSQLite(ctx, pool, target)
+	pool.Close()
+	if exportErr != nil {
+		_ = target.Close()
+		return pgmigrate.Report{}, exportErr
+	}
+	// Consolidate WAL state so the promoted rollback artifact is a standalone
+	// SQLite file and can be moved/restored without sidecar files.
+	if _, err := target.ExecContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
+		_ = target.Close()
+		return pgmigrate.Report{}, fmt.Errorf("checkpoint recovery SQLite WAL: %w", err)
+	}
+	if _, err := target.ExecContext(ctx, `PRAGMA journal_mode=DELETE`); err != nil {
+		_ = target.Close()
+		return pgmigrate.Report{}, fmt.Errorf("finalize recovery SQLite journal: %w", err)
+	}
+	if err := target.Close(); err != nil {
+		return pgmigrate.Report{}, fmt.Errorf("close recovery SQLite: %w", err)
+	}
+	if err := os.Rename(tempPath, destination); err != nil {
+		return pgmigrate.Report{}, fmt.Errorf("promote recovery SQLite artifact: %w", err)
+	}
+	promoted = true
+	return report, nil
 }
 
 func openBoth(ctx context.Context, sqlitePath, postgresDSN string) (*sql.DB, *pgxpool.Pool, func(), error) {
@@ -77,6 +164,7 @@ func openBoth(ctx context.Context, sqlitePath, postgresDSN string) (*sql.DB, *pg
 	if sqlitePath == "" { return nil, nil, nil, errors.New("--sqlite is required") }
 	source, err := sql.Open("sqlite", sqlitePath)
 	if err != nil { return nil, nil, nil, fmt.Errorf("open SQLite: %w", err) }
+	source.SetMaxOpenConns(1)
 	if err := source.PingContext(ctx); err != nil {
 		source.Close()
 		return nil, nil, nil, fmt.Errorf("ping SQLite: %w", err)

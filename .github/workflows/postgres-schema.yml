@@ -17,7 +17,7 @@ permissions:
 jobs:
   phase-a-schema:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     env:
       POSTGRES_IMAGE: postgres:18.4-bookworm@sha256:1961f96e6029a02c3812d7cb329a3b03a3ac2bb067058dec17b0f5596aca9296
       ATLAS_IMAGE: arigaio/atlas:1.2.0-community-distroless@sha256:0527e6aaaf8078ca3398cac75209f8f43a13e96bc15b3dfdeffe7cef5451c96e
@@ -145,6 +145,40 @@ jobs:
           restore_ms=$(( (finished_ns - started_ns) / 1000000 ))
           db_bytes="$(docker exec companion-pg psql -v ON_ERROR_STOP=1 -At -U companion -d companion_restore -c "SELECT pg_database_size(current_database());")"
           printf '{"postgres":"18.4","restore_ms":%d,"restored_db_bytes":%s,"digest_match":true}\n' "$restore_ms" "$db_bytes" | tee .tmp-postgres-restore-evidence.json
+
+      - name: Exercise PostgreSQL to SQLite rollback round trip
+        run: |
+          set -euo pipefail
+          rm -f .tmp-recovered.sqlite .tmp-recovered.sqlite-wal .tmp-recovered.sqlite-shm
+          run_migrate() {
+            docker run --rm --network host \
+              -v "$PWD:/src" -w /src/backend golang:1.26.5-bookworm \
+              go run ./cmd/companion-migrate "$@"
+          }
+          restored_dsn='postgres://companion:companion@127.0.0.1:55432/companion_restore?sslmode=disable'
+          roundtrip_dsn='postgres://companion:companion@127.0.0.1:55432/companion_roundtrip?sslmode=disable'
+
+          run_migrate export-sqlite --postgres "$restored_dsn" --sqlite /src/.tmp-recovered.sqlite > .tmp-rollback-export.json
+          test -f .tmp-recovered.sqlite
+          test ! -e .tmp-recovered.sqlite-wal
+          test ! -e .tmp-recovered.sqlite-shm
+          run_migrate verify --sqlite /src/.tmp-recovered.sqlite --postgres "$restored_dsn" > .tmp-rollback-verify.json
+          if run_migrate export-sqlite --postgres "$restored_dsn" --sqlite /src/.tmp-recovered.sqlite >/dev/null 2>&1; then
+            echo 'rollback exporter overwrote an existing recovery artifact' >&2
+            exit 1
+          fi
+
+          docker exec companion-pg createdb -U companion companion_roundtrip
+          docker run --rm --network companion-pg-test \
+            -v "$PWD/.tmp-atlas-migrations:/migrations" \
+            "$ATLAS_IMAGE" migrate apply \
+            --dir file:///migrations \
+            --url 'postgres://companion:companion@companion-pg:5432/companion_roundtrip?sslmode=disable'
+          run_migrate import --sqlite /src/.tmp-recovered.sqlite --postgres "$roundtrip_dsn" > .tmp-rollback-reimport.json
+          run_migrate digest-postgres --postgres "$restored_dsn" > .tmp-rollback-source-digest.json
+          run_migrate digest-postgres --postgres "$roundtrip_dsn" > .tmp-rollback-roundtrip-digest.json
+          diff -u .tmp-rollback-source-digest.json .tmp-rollback-roundtrip-digest.json
+          printf '{"postgres_to_sqlite":true,"sqlite_to_postgres":true,"roundtrip_digest_match":true,"tables":24}\n' | tee .tmp-postgres-rollback-evidence.json
 
       - name: Re-apply is a no-op
         run: |
