@@ -4,7 +4,7 @@
 Temporary exception owned by issue #45:
 - scanner Go version must be exactly go1.26.5
 - the vulnerable symbol must be in module "stdlib"
-- govulncheck must report fixed_version exactly go1.26.6
+- govulncheck must report fixed_version exactly v1.26.6
 
 Anything else remains blocking. Delete this helper after the repository moves to
 Go 1.26.6 stable.
@@ -20,7 +20,10 @@ from typing import Any, Iterable
 
 ALLOWED_SCANNER_GO = "go1.26.5"
 ALLOWED_MODULE = "stdlib"
-ALLOWED_FIXED_VERSION = "go1.26.6"
+# govulncheck JSON encodes Go standard-library fixed versions with a leading
+# "v" (for example v1.26.6), while go env GOVERSION uses "go1.26.5".
+ALLOWED_FIXED_VERSION = "v1.26.6"
+TARGET_TOOLCHAIN = "go1.26.6"
 
 
 def annotation(level: str, title: str, message: str) -> None:
@@ -132,7 +135,7 @@ def main() -> int:
             "warning",
             "Temporary Go stdlib vulnerability exception",
             f"{item}; tolerated only while {ALLOWED_SCANNER_GO} is the latest pinned stable toolchain. "
-            f"Remove issue #45 exception after {ALLOWED_FIXED_VERSION} stable is released.",
+            f"Remove issue #45 exception after {TARGET_TOOLCHAIN} stable is released.",
         )
 
     if blocked:
