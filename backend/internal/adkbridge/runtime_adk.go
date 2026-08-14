@@ -6,10 +6,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"google.golang.org/genai"
@@ -17,7 +15,6 @@ import (
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/llmagent"
 	"google.golang.org/adk/v2/model"
-	"google.golang.org/adk/v2/model/openaimodel"
 	"google.golang.org/adk/v2/runner"
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/tool"
@@ -38,21 +35,11 @@ type Runtime struct {
 
 func Enabled() bool { return true }
 
+// New remains the stable product entrypoint. Provider transport selection is
+// delegated to NewProvider so Responses and Chat Completions still share one
+// ADK/ToolRegistry/conversation runtime instead of creating parallel agents.
 func New(cfg Config) (pipeline.Agent, error) {
-	if strings.TrimSpace(cfg.ModelName) == "" {
-		return nil, fmt.Errorf("ADK model name is required")
-	}
-	client := cfg.HTTPClient
-	if client == nil {
-		client = &http.Client{Timeout: 60 * time.Second}
-	}
-	llm, err := openaimodel.NewModel(context.Background(), cfg.ModelName, &openaimodel.ClientConfig{
-		APIKey: cfg.APIKey, BaseURL: strings.TrimSpace(cfg.BaseURL), HTTPClient: client,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("create ADK OpenAI-compatible model: %w", err)
-	}
-	return newWithModel(cfg, llm)
+	return NewProvider(cfg)
 }
 
 func newWithModel(cfg Config, llm model.LLM) (*Runtime, error) {
@@ -285,32 +272,52 @@ func durableTurnKey(turn pipeline.TurnContext, fallbackTurnID string) string {
 }
 
 func contentText(content *genai.Content) string {
-	if content == nil { return "" }
+	if content == nil {
+		return ""
+	}
 	var b strings.Builder
 	for _, part := range content.Parts {
-		if part != nil && part.Text != "" { b.WriteString(part.Text) }
+		if part != nil && part.Text != "" {
+			b.WriteString(part.Text)
+		}
 	}
 	return b.String()
 }
 
 func eventStatus(content *genai.Content) (string, string, []string) {
-	if content == nil { return "", "", nil }
+	if content == nil {
+		return "", "", nil
+	}
 	var callIDs []string
 	toolName := ""
 	for _, part := range content.Parts {
 		if part != nil && part.FunctionCall != nil {
 			callIDs = append(callIDs, part.FunctionCall.ID)
-			if toolName == "" { toolName = strings.TrimSpace(part.FunctionCall.Name) }
+			if toolName == "" {
+				toolName = strings.TrimSpace(part.FunctionCall.Name)
+			}
 		}
 	}
-	if len(callIDs) > 0 { return "tool_running", toolName, callIDs }
+	if len(callIDs) > 0 {
+		return "tool_running", toolName, callIDs
+	}
 	return "", "", nil
 }
 
-type presentationQueue struct { mu sync.Mutex; items []capability.Presentation }
-func (q *presentationQueue) Push(p capability.Presentation) { q.mu.Lock(); q.items = append(q.items, p); q.mu.Unlock() }
+type presentationQueue struct {
+	mu    sync.Mutex
+	items []capability.Presentation
+}
+
+func (q *presentationQueue) Push(p capability.Presentation) {
+	q.mu.Lock()
+	q.items = append(q.items, p)
+	q.mu.Unlock()
+}
+
 func (q *presentationQueue) Drain() []capability.Presentation {
-	q.mu.Lock(); defer q.mu.Unlock()
+	q.mu.Lock()
+	defer q.mu.Unlock()
 	out := append([]capability.Presentation(nil), q.items...)
 	q.items = q.items[:0]
 	return out
@@ -319,7 +326,9 @@ func (q *presentationQueue) Drain() []capability.Presentation {
 func emitPresentations(ps []capability.Presentation, emit func(pipeline.AgentStreamEvent) error) error {
 	for _, p := range ps {
 		ui := &pipeline.UICard{Kind: p.Kind, Title: p.Title, Primary: p.Primary, Secondary: p.Secondary, Progress: p.Progress}
-		if err := emit(pipeline.AgentStreamEvent{UI: ui}); err != nil { return err }
+		if err := emit(pipeline.AgentStreamEvent{UI: ui}); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -356,8 +365,12 @@ func buildRegistryTools(registry *capability.ToolRegistry) ([]tool.Tool, error) 
 
 func schemaFromMap(input map[string]any) (*jsonschema.Schema, error) {
 	payload, err := json.Marshal(input)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	var schema jsonschema.Schema
-	if err := json.Unmarshal(payload, &schema); err != nil { return nil, err }
+	if err := json.Unmarshal(payload, &schema); err != nil {
+		return nil, err
+	}
 	return &schema, nil
 }
