@@ -10,4 +10,10 @@ func New(Config) (pipeline.Agent, error) {
 	return nil, ErrNotBuilt
 }
 
+// NewProvider is the product composition entrypoint when provider protocol
+// selection is enabled. A binary without the adk tag still fails closed.
+func NewProvider(Config) (pipeline.Agent, error) {
+	return nil, ErrNotBuilt
+}
+
 func Enabled() bool { return false }
