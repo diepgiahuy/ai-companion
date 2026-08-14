@@ -10,7 +10,6 @@ import (
 	"companion-server/internal/domain"
 	"companion-server/internal/events"
 	"companion-server/internal/market"
-	"companion-server/internal/server"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -242,7 +241,7 @@ func (s *Store) ClaimDueReminders(ctx context.Context, now time.Time, limit int)
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
-	rows, err := tx.Query(ctx, `SELECT id,user_id,device_id,kind,title,fire_at,status,attempts,next_attempt_at,paused_remaining_seconds FROM reminders WHERE ((status='pending' AND fire_at<=$1) OR (status='sent' AND next_attempt_at IS NOT NULL AND next_attempt_at<=$1)) ORDER BY COALESCE(next_attempt_at,fire_at),id LIMIT $2 FOR UPDATE SKIP LOCKED`, now.UTC(), limit)
+	rows, err := tx.Query(ctx, `SELECT id,user_id,device_id,kind,title,fire_at,status,attempts,COALESCE(next_attempt_at,'epoch'::timestamptz),next_attempt_at IS NOT NULL,paused_remaining_seconds FROM reminders WHERE ((status='pending' AND fire_at<=$1) OR (status='sent' AND next_attempt_at IS NOT NULL AND next_attempt_at<=$1)) ORDER BY COALESCE(next_attempt_at,fire_at),id LIMIT $2 FOR UPDATE SKIP LOCKED`, now.UTC(), limit)
 	if err != nil {
 		return nil, err
 	}
@@ -264,24 +263,6 @@ func (s *Store) ClaimDueReminders(ctx context.Context, now time.Time, limit int)
 		return nil, err
 	}
 	return items, nil
-}
-
-func scanScheduled(rows pgx.Rows) ([]domain.ScheduledItem, error) {
-	var items []domain.ScheduledItem
-	for rows.Next() {
-		var item domain.ScheduledItem
-		var nextAttempt *time.Time
-		if err := rows.Scan(&item.ID, &item.UserID, &item.DeviceID, &item.Kind, &item.Title, &item.FireAt, &item.Status, &item.Attempts, &nextAttempt, &item.PausedRemainingSeconds); err != nil {
-			return nil, err
-		}
-		item.FireAt = item.FireAt.UTC()
-		if nextAttempt != nil {
-			value := nextAttempt.UTC()
-			item.NextAttempt = &value
-		}
-		items = append(items, item)
-	}
-	return items, rows.Err()
 }
 
 func (s *Store) MarkReminderSent(ctx context.Context, id int64, next time.Time) error {
@@ -328,4 +309,3 @@ func (s *Store) NextReminder(ctx context.Context, userID, deviceID string, now t
 
 var _ events.Outbox = (*Store)(nil)
 var _ market.WatchRepository = (*Store)(nil)
-var _ server.SchedulerRepository = (*Store)(nil)
