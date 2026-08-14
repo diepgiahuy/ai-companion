@@ -5,6 +5,7 @@ go 1.26.5
 require (
 	github.com/coder/websocket v1.8.15
 	github.com/google/jsonschema-go v0.4.3
+	github.com/jackc/pgx/v5 v5.10.0
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	google.golang.org/adk/v2 v2.2.0
 	google.golang.org/genai v1.67.0
