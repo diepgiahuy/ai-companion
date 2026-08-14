@@ -1,4 +1,4 @@
-FROM golang:1.26.5-bookworm
+FROM golang:1.26.6-bookworm
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential cmake ninja-build pkg-config libopus-dev libopusfile-dev python3 \
@@ -7,11 +7,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /src
 
 # Cache the Go dependency layer separately from source changes. The runtime gate
-# still verifies the exact Go 1.26.5 toolchain before executing tests.
+# still verifies the exact Go 1.26.6 toolchain before executing tests.
 COPY backend/go.mod backend/go.sum ./backend/
 RUN cd backend && go mod download
 
 COPY . .
-RUN go env GOVERSION | grep -Eq '^go1\.26\.5([.]|$)'
+RUN test "$(go env GOVERSION)" = "go1.26.6"
 
 CMD ["bash", "scripts/e2e.sh"]

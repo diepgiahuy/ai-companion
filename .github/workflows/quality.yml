@@ -34,7 +34,7 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Build exact Go 1.26.5 test image
+      - name: Build exact Go 1.26.6 test image
         run: docker build --pull -f Dockerfile.test -t companion-quality .
       - name: Module reproducibility and verification
         run: |
@@ -56,19 +56,16 @@ jobs:
             go vet -tags "adk,mcp,nolibopusfile" ./...
             go test -tags "adk,mcp,nolibopusfile" -race -count=1 ./...
           '
-      - name: Test vulnerability gate policy
-        run: python3 scripts/test_check_govuln_gate.py
       - name: Go vulnerability reachability scan
         run: |
-          set -eu
+          set -euo pipefail
           docker run --rm companion-quality sh -c '
             set -eu
             export GOBIN=/tmp/go-tools
             go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
             cd /src/backend
-            /tmp/go-tools/govulncheck -json -scan symbol -tags=adk,mcp,nolibopusfile -test ./...
-          ' > /tmp/govulncheck.json
-          python3 scripts/check_govuln_gate.py /tmp/govulncheck.json
+            /tmp/go-tools/govulncheck -scan symbol -tags=adk,mcp,nolibopusfile -test ./...
+          '
       - name: Diff hygiene
         run: git diff --check
       - name: Mirror legacy required status context

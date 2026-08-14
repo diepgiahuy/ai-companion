@@ -1,6 +1,6 @@
 # Companion Go backend
 
-Toolchain: **Go 1.26.5**. The only dependency graph is `go.mod` + `go.sum`.
+Toolchain: **Go 1.26.6**. The only dependency graph is `go.mod` + `go.sum`.
 
 ## Wire/runtime contract
 

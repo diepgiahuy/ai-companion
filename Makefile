@@ -23,7 +23,7 @@ e2e-container:
 .PHONY: backend-adk-gate
 backend-adk-gate:
 	@cd backend && version="$$(go env GOVERSION)"; \
-	if [ "$$version" != "go1.26.5" ]; then \
-		echo "ADK gate requires go1.26.5; got $$version" >&2; exit 1; \
+	if [ "$$version" != "go1.26.6" ]; then \
+		echo "ADK gate requires go1.26.6; got $$version" >&2; exit 1; \
 	fi; \
 	go test -tags "adk,nolibopusfile" -race -count=1 ./...

@@ -75,7 +75,7 @@ jobs:
           docker run --rm -v "$PWD/dist:/out" companion-release sh -c '
             set -eu
             cd /src/backend
-            test "$(go env GOVERSION)" = "go1.26.5"
+            test "$(go env GOVERSION)" = "go1.26.6"
             go mod verify
             go build -tags "adk,mcp,nolibopusfile" -trimpath -ldflags="-s -w -buildid=" -o /out/companiond ./cmd/companiond
           '
