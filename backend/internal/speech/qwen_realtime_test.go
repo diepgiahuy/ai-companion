@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -115,10 +116,14 @@ func TestQwenRealtimeFailsClosedWithoutRequiredConfig(t *testing.T) {
 	}
 }
 
-func TestQwenRealtimeRejectsOddPCM16Bytes(t *testing.T) {
-	provider, err := NewQwenRealtime(QwenRealtimeConfig{URL: "ws://127.0.0.1:1", Model: "qwen", APIKey: "key"})
-	if err != nil { t.Fatal(err) }
-	_ = provider // dial is intentionally not required to prove input shape at provider construction.
+func TestQwenRealtimeRejectsOddPCM16BytesBeforeNetworkWrite(t *testing.T) {
+	session := &qwenRealtimeSession{}
+	if err := session.AppendAudio(context.Background(), []byte{1, 2, 3}); err == nil || !strings.Contains(err.Error(), "even number of bytes") {
+		t.Fatalf("odd PCM error=%v", err)
+	}
+	if err := session.AppendAudio(context.Background(), nil); err != nil && !errors.Is(err, context.Canceled) {
+		t.Fatalf("empty PCM unexpectedly failed: %v", err)
+	}
 }
 
 func readQwenJSON(t *testing.T, ctx context.Context, conn *websocket.Conn) map[string]any {
