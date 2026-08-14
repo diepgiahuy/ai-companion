@@ -4,7 +4,7 @@ ESP32-S3 personal voice companion with a Go backend, realtime audio, durable per
 
 > **Stable checkpoint:** [`CP-SW2.3-20260812`](https://github.com/diepgiahuy/ai-companion/tree/CP-SW2.3-20260812)
 > **Active baseline:** `main` includes protocol v2, Tier-1 evidence, repository governance and the ADK/auth single-path hard cut through merged PR #34; physical/provider gates remain unproven
-> **Updated:** 2026-08-13
+> **Updated:** 2026-08-14
 > **Truth rule:** README is the human-readable source of truth. `evidence/status.json` is the machine-verifiable backing for production claims. Mock/fake tests may verify logic, but they cannot promote a production gate to `passed`.
 
 This project is intentionally a **modular Go monolith + ESP32 firmware**, not a microservice demo. The LLM is a reasoning/composition component; authoritative personal state lives behind domain repositories/tools.
@@ -15,7 +15,7 @@ The table below distinguishes **implemented** from **production-proven**. A gree
 
 | Gate | Status | Evidence / requirement |
 |---|---:|---|
-| Exact Go 1.26.5 + race/E2E | ✅ passed | Clean GitHub Actions + Docker production gate |
+| Exact Go 1.26.6 + race/E2E | 🟡 pending | Upgrade gate must pass clean GitHub Actions + Docker before promotion |
 | Module reproducibility | ✅ passed | `go mod tidy` zero-diff + `go mod verify` |
 | Dependency vulnerability reachability | ✅ passed | `govulncheck` — 0 called vulnerabilities at verified checkpoint |
 | CodeQL | ✅ passed | GitHub CodeQL traced Go build on verified PR head |
@@ -130,7 +130,7 @@ Non-goals include premature Kubernetes/microservices, arbitrary backend code hot
 
 ## Development / verification
 
-Exact production toolchain: **Go 1.26.5**.
+Exact production toolchain: **Go 1.26.6**.
 
 ```bash
 # Full containerized host + backend regression

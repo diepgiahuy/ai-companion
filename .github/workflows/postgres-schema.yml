@@ -92,7 +92,7 @@ jobs:
             -v "$PWD:/src" \
             -w /src/backend \
             -e COMPANION_POSTGRES_TEST_DSN='postgres://companion:companion@companion-pg:5432/companion?sslmode=disable' \
-            golang:1.26.5-bookworm \
+            golang:1.26.6-bookworm \
             sh -c 'set -eu; go test ./internal/pgstore -count=1 -timeout=2m'
 
       - name: Prove application server and ToolRegistry on PostgreSQL only
@@ -102,7 +102,7 @@ jobs:
             -v "$PWD:/src" \
             -w /src/backend \
             -e COMPANION_POSTGRES_APP_TEST_DSN='postgres://companion:companion@127.0.0.1:55432/companion?sslmode=disable' \
-            golang:1.26.5-bookworm \
+            golang:1.26.6-bookworm \
             sh -c 'set -eu; go test -tags="apppge2e,compilecheck" ./internal/pgstore -run "^TestPostgresApplicationServerToolRestartNoSQLite$" -count=1 -timeout=2m'
 
       - name: Build fresh migration-parity database
@@ -122,7 +122,7 @@ jobs:
             -v "$PWD:/src" \
             -w /src/backend \
             -e COMPANION_POSTGRES_MIGRATION_TEST_DSN='postgres://companion:companion@127.0.0.1:55432/companion_migration?sslmode=disable' \
-            golang:1.26.5-bookworm \
+            golang:1.26.6-bookworm \
             sh -c 'set -eu; go test ./internal/pgstore/migrate -count=1 -timeout=3m'
 
       - name: Exercise pg_dump restore and compare canonical state digest
@@ -130,7 +130,7 @@ jobs:
           set -euo pipefail
           digest() {
             docker run --rm --network host \
-              -v "$PWD:/src" -w /src/backend golang:1.26.5-bookworm \
+              -v "$PWD:/src" -w /src/backend golang:1.26.6-bookworm \
               go run ./cmd/companion-migrate digest-postgres \
               --postgres "postgres://companion:companion@127.0.0.1:55432/$1?sslmode=disable"
           }
@@ -152,7 +152,7 @@ jobs:
           rm -f .tmp-recovered.sqlite .tmp-recovered.sqlite-wal .tmp-recovered.sqlite-shm
           run_migrate() {
             docker run --rm --network host \
-              -v "$PWD:/src" -w /src/backend golang:1.26.5-bookworm \
+              -v "$PWD:/src" -w /src/backend golang:1.26.6-bookworm \
               go run ./cmd/companion-migrate "$@"
           }
           restored_dsn='postgres://companion:companion@127.0.0.1:55432/companion_restore?sslmode=disable'

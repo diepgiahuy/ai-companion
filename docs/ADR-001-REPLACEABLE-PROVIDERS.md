@@ -53,7 +53,7 @@ Implemented in this checkpoint:
 - authoritative tool presentations can be emitted to the UI immediately, before final LLM verbalization/TTS completes.
 - conversation history remains append-only but supports explicit thread clear; destructive context tools are only exposed on narrowly matched clear-history requests.
 - turn idempotency keys include the server session nonce so firmware turn counters can safely restart after reboot/reconnect.
-- backend acceptance is pinned to Go 1.26.5 in `go.mod` and the container gate.
+- backend acceptance is pinned to Go 1.26.6 in `go.mod` and the container gate.
 
 Still intentionally not claimed:
 - Redis/Mem0/Graphiti adapters.

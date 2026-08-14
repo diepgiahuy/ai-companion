@@ -7,8 +7,8 @@ cmake --build build-host
 ctest --test-dir build-host --output-on-failure
 python3 scripts/budget_check.py
 
-echo '== backend Go 1.26.5 + race + canonical adapter compile/test gates =='
-(cd backend && go env GOVERSION | grep -Eq '^go1\.26\.5$')
+echo '== backend Go 1.26.6 + race + canonical adapter compile/test gates =='
+(cd backend && test "$(go env GOVERSION)" = "go1.26.6")
 (cd backend && go test -tags "adk,mcp,nolibopusfile" -race -count=1 ./...)
 
 echo 'E2E PASS (software integration only; real provider/network/HIL gates are tracked separately)'
