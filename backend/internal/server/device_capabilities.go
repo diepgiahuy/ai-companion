@@ -23,37 +23,19 @@ type sessionCapabilityState struct {
 	mu         sync.Mutex
 	advertised map[string]protocol.CapabilityDescriptor
 	pending    map[string]*capabilityPending
-	watchOnce  sync.Once
 	closed     bool
 }
 
-var (
-	capabilityRoutersByHub    sync.Map // map[*sessionHub]*devicecap.Router
-	capabilityStateBySession sync.Map // map[*session]*sessionCapabilityState
-)
-
 // WithDeviceCapabilities binds the process-local authenticated device router to
-// the Server's existing WebSocket session hub. It does not add a transport or
-// expose provider/device schemas to the model.
+// this Server's own session hub. No package-global registry is used, so router
+// ownership and session capability state end with the Server/session lifecycle.
 func WithDeviceCapabilities(router *devicecap.Router) Option {
 	return func(s *Server) {
 		if s == nil || s.hub == nil || router == nil {
 			return
 		}
-		capabilityRoutersByHub.Store(s.hub, router)
+		s.hub.setCapabilityRouter(router)
 	}
-}
-
-func capabilityRouterForSession(s *session) *devicecap.Router {
-	if s == nil || s.hub == nil {
-		return nil
-	}
-	value, ok := capabilityRoutersByHub.Load(s.hub)
-	if !ok {
-		return nil
-	}
-	router, _ := value.(*devicecap.Router)
-	return router
 }
 
 func capabilityKey(name, version string) string {
@@ -67,76 +49,19 @@ func allowedDeviceCapability(descriptor protocol.CapabilityDescriptor) bool {
 }
 
 func capabilityState(s *session, create bool) *sessionCapabilityState {
-	if s == nil {
+	if s == nil || s.hub == nil {
 		return nil
 	}
-	if existing, ok := capabilityStateBySession.Load(s); ok {
-		state, _ := existing.(*sessionCapabilityState)
-		return state
-	}
-	if !create {
-		return nil
-	}
-	router := capabilityRouterForSession(s)
-	if router == nil {
-		return nil
-	}
-	state := &sessionCapabilityState{
-		router: router, advertised: map[string]protocol.CapabilityDescriptor{}, pending: map[string]*capabilityPending{},
-	}
-	actual, loaded := capabilityStateBySession.LoadOrStore(s, state)
-	if loaded {
-		state, _ = actual.(*sessionCapabilityState)
-		return state
-	}
-	if err := router.Register(s.deviceID, s); err != nil {
-		capabilityStateBySession.Delete(s)
-		return nil
-	}
-	return state
-}
-
-func watchDeviceCapabilitySession(ctx context.Context, s *session, state *sessionCapabilityState) {
-	if state == nil {
-		return
-	}
-	state.watchOnce.Do(func() {
-		go func() {
-			<-ctx.Done()
-			detachDeviceCapabilities(s)
-		}()
-	})
+	return s.hub.capabilityState(s, create)
 }
 
 func detachDeviceCapabilities(s *session) {
-	if s == nil {
+	if s == nil || s.hub == nil {
 		return
 	}
-	value, ok := capabilityStateBySession.LoadAndDelete(s)
-	if !ok {
-		return
-	}
-	state, _ := value.(*sessionCapabilityState)
-	if state == nil {
-		return
-	}
-	state.mu.Lock()
-	state.closed = true
-	pending := state.pending
-	state.pending = map[string]*capabilityPending{}
-	state.advertised = map[string]protocol.CapabilityDescriptor{}
-	state.mu.Unlock()
-	for _, waiter := range pending {
-		close(waiter.result)
-	}
-	if state.router != nil {
-		state.router.Unregister(s.deviceID, s)
-	}
+	s.hub.detachCapabilities(s)
 }
 
-// Supports implements devicecap.Endpoint. A model-visible tool is executable
-// only after the authenticated live device advertises the exact server-owned
-// capability version.
 func (s *session) Supports(name, version string) bool {
 	state := capabilityState(s, false)
 	if state == nil {
@@ -151,9 +76,6 @@ func (s *session) Supports(name, version string) bool {
 	return ok
 }
 
-// Call implements devicecap.Endpoint using the existing protocol-v2 WebSocket
-// control lane. Correlation is bounded to this authenticated session and the
-// current generation; cancellation sends a best-effort explicit cancel frame.
 func (s *session) Call(ctx context.Context, call devicecap.Call) (devicecap.Result, error) {
 	state := capabilityState(s, false)
 	if state == nil {
@@ -266,13 +188,10 @@ func capabilityRemoteError(code string) error {
 	}
 }
 
-// handleCapabilityControl intercepts only the device->server capability message
-// directions. Server->device call/cancel sent by a device continue to fall
-// through to handleControl and are rejected as invalid direction.
 func (s *session) handleCapabilityControl(ctx context.Context, data []byte) (bool, error) {
 	message, err := protocol.Decode(data)
 	if err != nil {
-		return false, nil // ordinary control path owns generic decode errors
+		return false, nil
 	}
 	if message.Type != protocol.CapabilityAdvertiseType && message.Type != protocol.CapabilityResultType {
 		return false, nil
@@ -294,7 +213,6 @@ func (s *session) handleCapabilityControl(ctx context.Context, data []byte) (boo
 			if state == nil {
 				return fmt.Errorf("device capability router unavailable")
 			}
-			watchDeviceCapabilitySession(ctx, s, state)
 			advertised := make(map[string]protocol.CapabilityDescriptor, len(payload.Capabilities))
 			for _, descriptor := range payload.Capabilities {
 				if !allowedDeviceCapability(descriptor) {
