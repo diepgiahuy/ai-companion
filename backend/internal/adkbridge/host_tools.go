@@ -74,17 +74,15 @@ func invalidToolResult(ctx context.Context, functionCallID, toolName, risk strin
 	}
 }
 
-// ToolExecutionKey is stable for an ADK function call and scoped far enough to
-// survive device reconnect/reboot turn-id reuse. FunctionCallID is supplied by
-// ADK and is the natural idempotency token for tool retries within an
-// invocation.
+// ToolExecutionKey is the durable client key supplied by the ADK adapter to the
+// domain idempotency contract. It deliberately excludes device/session/turn
+// nonces: the same ADK function call retried after reconnect or process restart
+// must address the same durable record. Authenticated actor isolation is
+// enforced separately by the ledger. Thread keeps reused call IDs from unrelated
+// conversations from sharing a key.
 func ToolExecutionKey(turn pipeline.TurnContext, functionCallID, toolName string) string {
 	return "adk:" + tupleDigest(
-		"user", strings.TrimSpace(turn.UserID),
 		"thread", strings.TrimSpace(turn.ThreadID),
-		"device", strings.TrimSpace(turn.DeviceID),
-		"session", strings.TrimSpace(turn.SessionID),
-		"turn", strings.TrimSpace(turn.TurnID),
 		"function_call", strings.TrimSpace(functionCallID),
 		"tool", strings.TrimSpace(toolName),
 	)

@@ -27,6 +27,15 @@ CASES = {
         "tool": "note.create",
         "args": {"content": "tier1 note"},
     },
+    # Same call id as the canonical note case but different canonical payload.
+    # This drives the real ADK -> ToolRegistry -> SQLite conflict path across a
+    # backend restart without inventing a test-only mutation endpoint.
+    "Tier1 note conflict": {
+        "id": "note",
+        "tool": "note.create",
+        "args": {"content": "tier1 conflicting note"},
+        "expected_error": "IDEMPOTENCY_CONFLICT",
+    },
     "Tier1 journal": {
         "id": "journal",
         "tool": "journal.create",
@@ -100,22 +109,27 @@ def tool_names(payload):
     return names
 
 
-def successful_function_output(payload, call_id):
+def function_output(payload, call_id):
     for item in walk(payload.get("input", [])):
         if not isinstance(item, dict) or item.get("type") != "function_call_output":
             continue
         if item.get("call_id") != call_id:
             continue
         output = item.get("output")
-        if not isinstance(output, str):
-            continue
-        try:
-            decoded = json.loads(output)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(decoded, dict) and decoded.get("ok") is True:
-            return True
-    return False
+        if isinstance(output, str):
+            return output
+    return None
+
+
+def successful_function_output(payload, call_id):
+    output = function_output(payload, call_id)
+    if output is None:
+        return False
+    try:
+        decoded = json.loads(output)
+    except json.JSONDecodeError:
+        return False
+    return isinstance(decoded, dict) and decoded.get("ok") is True
 
 
 def response_meta(response_id, total_tokens=8):
@@ -232,7 +246,11 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_error(409, "hidden expense.create leaked into ADK ToolRegistry")
                 return
             call_id = f"call_{case['id']}_1"
-            if successful_function_output(payload, call_id):
+            output = function_output(payload, call_id)
+            expected_error = case.get("expected_error")
+            if expected_error and isinstance(output, str) and expected_error in output:
+                events = text_events(response_id, f"Tier-1 idempotency conflict ok: {case['id']}")
+            elif successful_function_output(payload, call_id):
                 events = text_events(response_id, f"Tier-1 tool parity ok: {case['id']}")
             else:
                 events = function_call_events(response_id, case)

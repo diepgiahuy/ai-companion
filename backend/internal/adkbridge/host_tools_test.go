@@ -103,16 +103,26 @@ func TestHostToolExecutorKeepsRegistryValidation(t *testing.T) {
 }
 
 func TestSessionIdentityAndToolKeyAreReconnectSafe(t *testing.T) {
-	turnA := pipeline.TurnContext{UserID: "u", ThreadID: "t", DeviceID: "d", SessionID: "boot-a", TurnID: "1"}
+	turnA := pipeline.TurnContext{UserID: "u", ThreadID: "t", DeviceID: "d-a", SessionID: "boot-a", TurnID: "1"}
 	turnB := turnA
+	turnB.DeviceID = "d-b"
 	turnB.SessionID = "boot-b"
+	turnB.TurnID = "99"
 	ua, sa := SessionIdentity(turnA)
 	ub, sb := SessionIdentity(turnB)
 	if ua != ub || sa == sb {
 		t.Fatalf("unexpected identities: %q/%q vs %q/%q", ua, sa, ub, sb)
 	}
-	if ToolExecutionKey(turnA, "call", ToolTimerCreate) == ToolExecutionKey(turnB, "call", ToolTimerCreate) {
-		t.Fatal("idempotency key must differ across server/device session nonce")
+	if ToolExecutionKey(turnA, "call", ToolTimerCreate) != ToolExecutionKey(turnB, "call", ToolTimerCreate) {
+		t.Fatal("same function call must keep one durable key across device/session/turn changes")
+	}
+}
+
+func TestToolExecutionKeyLeavesActorScopingToDurableLedger(t *testing.T) {
+	a := pipeline.TurnContext{UserID: "user-a", ThreadID: "shared-thread", DeviceID: "device-a", SessionID: "s-a", TurnID: "1"}
+	b := pipeline.TurnContext{UserID: "user-b", ThreadID: "shared-thread", DeviceID: "device-b", SessionID: "s-b", TurnID: "2"}
+	if ToolExecutionKey(a, "same-client-call", ToolTimerCreate) != ToolExecutionKey(b, "same-client-call", ToolTimerCreate) {
+		t.Fatal("client key must not encode actor identity; actor isolation belongs to the durable ledger")
 	}
 }
 
@@ -148,14 +158,14 @@ func TestHostToolExecutorKeepsRegistryAuthorization(t *testing.T) {
 }
 
 func TestToolExecutionKeyCanonicalTupleHasNoDelimiterCollision(t *testing.T) {
-	a := pipeline.TurnContext{UserID: "a:b", ThreadID: "c", DeviceID: "d", SessionID: "s", TurnID: "t"}
-	b := pipeline.TurnContext{UserID: "a", ThreadID: "b:c", DeviceID: "d", SessionID: "s", TurnID: "t"}
-	ka := ToolExecutionKey(a, "call", ToolBudgetGet)
-	kb := ToolExecutionKey(b, "call", ToolBudgetGet)
+	a := pipeline.TurnContext{ThreadID: "a:b"}
+	b := pipeline.TurnContext{ThreadID: "a"}
+	ka := ToolExecutionKey(a, "c", ToolBudgetGet)
+	kb := ToolExecutionKey(b, "b:c", ToolBudgetGet)
 	if ka == kb {
 		t.Fatalf("canonical tuple keys collided: %q", ka)
 	}
-	if ka != ToolExecutionKey(a, "call", ToolBudgetGet) {
+	if ka != ToolExecutionKey(a, "c", ToolBudgetGet) {
 		t.Fatal("idempotency key must be deterministic")
 	}
 }

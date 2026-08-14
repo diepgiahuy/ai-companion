@@ -33,13 +33,31 @@ export COMPANION_OBSERVABILITY_FILE="$CORE_OBS_OUT"; start_server "$SERVER_LOG";
 "${SOFTWARE_DEVICE_BIN:-/usr/local/bin/companion_software_device}" --url ws://127.0.0.1:18000/v2/device --device-id "$CORE_DEVICE" --token "$CORE_CREDENTIAL" --admin-token "$COMPANION_ADMIN_TOKEN" --scenario-set core --evidence "$OUT"
 revoke_device "$CORE_DEVICE"; expect_unauthorized "$CORE_DEVICE" "$CORE_CREDENTIAL"; python3 "$ROOT/host/companion_software_device/validate_evidence.py" "$OUT"; stop_server; python3 "$ROOT/host/companion_software_device/validate_observability.py" "$CORE_OBS_OUT" core
 
+# Reuse one authoritative SQLite DB and enrolled device across server restarts.
+# The note-conflict case deliberately reuses the same ADK function-call key with
+# different canonical arguments. The fake model only emits the expected success
+# text after observing the real IDEMPOTENCY_CONFLICT tool result.
 TOOL_DEVICE="software-device-tool"; export COMPANION_DATABASE="$TMP/tool.db"; TOOL_CREDENTIAL=""
-TOOL_CASES=("expense|Tier1 expense 50k|$TOOL_OUT|expense.log" "budget|Tier1 budget weekly|${OUT%.json}-tool-budget.json|budget.set" "note|Tier1 note|${OUT%.json}-tool-note.json|note.create" "journal|Tier1 journal|${OUT%.json}-tool-journal.json|journal.create" "reminder|Tier1 reminder|${OUT%.json}-tool-reminder.json|reminder.create" "timer|Tier1 timer|${OUT%.json}-tool-timer.json|timer.create" "memory|Tier1 memory|${OUT%.json}-tool-memory.json|memory.remember")
+TOOL_CASES=(
+  "expense|Tier1 expense 50k|$TOOL_OUT|expense.log|Tier-1 tool parity ok"
+  "budget|Tier1 budget weekly|${OUT%.json}-tool-budget.json|budget.set|Tier-1 tool parity ok"
+  "note|Tier1 note|${OUT%.json}-tool-note.json|note.create|Tier-1 tool parity ok"
+  "note-conflict|Tier1 note conflict|${OUT%.json}-tool-note-conflict.json|note.create|Tier-1 idempotency conflict ok"
+  "journal|Tier1 journal|${OUT%.json}-tool-journal.json|journal.create|Tier-1 tool parity ok"
+  "reminder|Tier1 reminder|${OUT%.json}-tool-reminder.json|reminder.create|Tier-1 tool parity ok"
+  "timer|Tier1 timer|${OUT%.json}-tool-timer.json|timer.create|Tier-1 tool parity ok"
+  "memory|Tier1 memory|${OUT%.json}-tool-memory.json|memory.remember|Tier-1 tool parity ok"
+)
 for spec in "${TOOL_CASES[@]}"; do
-  IFS='|' read -r case_id transcript evidence_path expected_tool <<<"$spec"; export MOCK_TRANSCRIPT="$transcript"; COMPANION_EVIDENCE_CONFIG_SHA256="$(printf '%s\n' 'profile=test' 'allow_mock=true' 'agent=adk:fake_responses' 'auth=database_enrolled' "asr=mock:${transcript}" 'tts=mock' 'protocol=v2' "tool_case=${case_id}" | sha256sum | awk '{print $1}')"; export COMPANION_OBSERVABILITY_FILE="${evidence_path%.json}-observability.json"; start_server "$TOOL_SERVER_LOG"
+  IFS='|' read -r case_id transcript evidence_path expected_tool expected_text <<<"$spec"; export MOCK_TRANSCRIPT="$transcript"; COMPANION_EVIDENCE_CONFIG_SHA256="$(printf '%s\n' 'profile=test' 'allow_mock=true' 'agent=adk:fake_responses' 'auth=database_enrolled' "asr=mock:${transcript}" 'tts=mock' 'protocol=v2' "tool_case=${case_id}" | sha256sum | awk '{print $1}')"; export COMPANION_OBSERVABILITY_FILE="${evidence_path%.json}-observability.json"; start_server "$TOOL_SERVER_LOG"
   if [[ -z "$TOOL_CREDENTIAL" ]]; then TOOL_CREDENTIAL="$(enroll_device "$TOOL_DEVICE")"; expect_unauthorized "$TOOL_DEVICE" "wrong-tier1-credential"; fi
   if [[ "$case_id" == "memory" ]]; then set_memory_consent "default"; fi
-  "${SOFTWARE_DEVICE_BIN:-/usr/local/bin/companion_software_device}" --url ws://127.0.0.1:18000/v2/device --device-id "$TOOL_DEVICE" --token "$TOOL_CREDENTIAL" --admin-token "$COMPANION_ADMIN_TOKEN" --scenario-set tool --expected-text "Tier-1 tool parity ok" --evidence "$evidence_path"
-  python3 "$ROOT/host/companion_software_device/validate_evidence.py" "$evidence_path"; stop_server; python3 "$ROOT/host/companion_software_device/validate_observability.py" "${evidence_path%.json}-observability.json" tool "$expected_tool"
+  "${SOFTWARE_DEVICE_BIN:-/usr/local/bin/companion_software_device}" --url ws://127.0.0.1:18000/v2/device --device-id "$TOOL_DEVICE" --token "$TOOL_CREDENTIAL" --admin-token "$COMPANION_ADMIN_TOKEN" --scenario-set tool --expected-text "$expected_text" --evidence "$evidence_path"
+  python3 "$ROOT/host/companion_software_device/validate_evidence.py" "$evidence_path"; stop_server
+  if [[ "$case_id" == "note-conflict" ]]; then
+    python3 "$ROOT/host/companion_software_device/validate_observability.py" "${evidence_path%.json}-observability.json" tool
+  else
+    python3 "$ROOT/host/companion_software_device/validate_observability.py" "${evidence_path%.json}-observability.json" tool "$expected_tool"
+  fi
 done
 export MOCK_TRANSCRIPT="Tier1 memory" COMPANION_OBSERVABILITY_FILE="$TMP/final-auth-observability.json"; start_server "$TOOL_SERVER_LOG"; revoke_device "$TOOL_DEVICE"; expect_unauthorized "$TOOL_DEVICE" "$TOOL_CREDENTIAL"; stop_server; python3 "$ROOT/host/companion_software_device/verify_tool_db.py" "$TMP/tool.db" "$TOOL_DB_OUT"
