@@ -30,6 +30,7 @@ jobs:
           set -euo pipefail
           docker network create companion-pg-test
           docker run -d --rm --name companion-pg --network companion-pg-test \
+            -p 127.0.0.1:55432:5432 \
             -e POSTGRES_PASSWORD=companion \
             -e POSTGRES_USER=companion \
             -e POSTGRES_DB=companion \
@@ -107,10 +108,10 @@ jobs:
       - name: Prove full SQLite to PostgreSQL semantic parity
         run: |
           set -euo pipefail
-          docker run --rm --network companion-pg-test \
+          docker run --rm --network host \
             -v "$PWD:/src" \
             -w /src/backend \
-            -e COMPANION_POSTGRES_MIGRATION_TEST_DSN='postgres://companion:companion@companion-pg:5432/companion_migration?sslmode=disable' \
+            -e COMPANION_POSTGRES_MIGRATION_TEST_DSN='postgres://companion:companion@127.0.0.1:55432/companion_migration?sslmode=disable' \
             golang:1.26.5-bookworm \
             sh -c 'set -eu; go test ./internal/pgstore/migrate -count=1 -timeout=3m'
 
@@ -118,10 +119,10 @@ jobs:
         run: |
           set -euo pipefail
           digest() {
-            docker run --rm --network companion-pg-test \
+            docker run --rm --network host \
               -v "$PWD:/src" -w /src/backend golang:1.26.5-bookworm \
               go run ./cmd/companion-migrate digest-postgres \
-              --postgres "postgres://companion:companion@companion-pg:5432/$1?sslmode=disable"
+              --postgres "postgres://companion:companion@127.0.0.1:55432/$1?sslmode=disable"
           }
           digest companion_migration > .tmp-before-restore.json
           docker exec companion-pg pg_dump -U companion -d companion_migration -Fc -f /tmp/companion-migration.dump
