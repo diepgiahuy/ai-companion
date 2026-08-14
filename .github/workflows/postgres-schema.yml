@@ -83,6 +83,12 @@ jobs:
       - name: Re-apply is a no-op
         run: |
           set -euo pipefail
+          before_idempotency="$(docker exec companion-pg psql -v ON_ERROR_STOP=1 -At -U companion -d companion -c "SELECT count(*) FROM idempotency_records;")"
+          before_outbox="$(docker exec companion-pg psql -v ON_ERROR_STOP=1 -At -U companion -d companion -c "SELECT count(*) FROM outbox;")"
           output="$(docker run --rm --network companion-pg-test -v "$PWD/.tmp-atlas-migrations:/migrations" "$ATLAS_IMAGE" migrate apply --dir file:///migrations --url 'postgres://companion:companion@companion-pg:5432/companion?sslmode=disable')"
           printf '%s\n' "$output"
-          docker exec companion-pg psql -v ON_ERROR_STOP=1 -At -U companion -d companion -c "SELECT count(*) FROM atlas_schema_revisions;" | grep -qx '1'
+          grep -Fq 'No migration files to execute' <<<"$output"
+          after_idempotency="$(docker exec companion-pg psql -v ON_ERROR_STOP=1 -At -U companion -d companion -c "SELECT count(*) FROM idempotency_records;")"
+          after_outbox="$(docker exec companion-pg psql -v ON_ERROR_STOP=1 -At -U companion -d companion -c "SELECT count(*) FROM outbox;")"
+          test "$before_idempotency" = "$after_idempotency"
+          test "$before_outbox" = "$after_outbox"
