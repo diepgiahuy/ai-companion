@@ -22,7 +22,6 @@ import (
 	"companion-server/internal/market"
 	"companion-server/internal/memory"
 	"companion-server/internal/observability"
-	"companion-server/internal/pipeline"
 	"companion-server/internal/policy"
 	"companion-server/internal/privacy"
 	conversationprovider "companion-server/internal/providers/conversation"
@@ -60,14 +59,10 @@ func main() {
 	}
 	defer data.Close()
 
-	if !runtimeCfg.AllowMock {
-		logger.Error("real ASR/TTS providers are required when mock providers are disabled", "profile", runtimeCfg.Profile)
+	components, err := configureSpeechComponents(runtimeCfg)
+	if err != nil {
+		logger.Error("configure speech providers", "error", err, "profile", os.Getenv("COMPANION_SPEECH_PROFILE"))
 		os.Exit(1)
-	}
-	components := pipeline.Components{
-		ASR:    pipeline.MockASR{Transcript: os.Getenv("MOCK_TRANSCRIPT")},
-		TTS:    pipeline.MockTTS{},
-		Codecs: pipeline.OpusFactory{},
 	}
 	timezone := value("COMPANION_TIMEZONE", "Asia/Ho_Chi_Minh")
 	location, err := time.LoadLocation(timezone)
