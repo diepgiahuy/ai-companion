@@ -28,11 +28,11 @@ import (
 )
 
 const (
-	maximumControlQueue     = 32
-	maximumMediaQueue       = 24
-	helloTimeout             = 10 * time.Second
-	sessionWorkerJoinMax     = 3 * time.Second
-	turnCancellationJoinMax  = 2 * time.Second
+	maximumControlQueue    = 32
+	maximumMediaQueue      = 24
+	helloTimeout            = 10 * time.Second
+	sessionWorkerJoinMax    = 3 * time.Second
+	turnCancellationJoinMax = 2 * time.Second
 )
 
 type Server struct {
@@ -431,6 +431,12 @@ func (s *session) readLoop(ctx context.Context) error {
 		}
 		switch kind {
 		case websocket.MessageText:
+			if handled, capabilityErr := s.handleCapabilityControl(ctx, data); handled {
+				if capabilityErr != nil {
+					s.sendError(ctx, protocol.ErrorCode(capabilityErr), capabilityErr.Error(), "")
+				}
+				continue
+			}
 			if err := s.handleControl(ctx, data); err != nil {
 				s.sendError(ctx, protocol.ErrorCode(err), err.Error(), "")
 			}
