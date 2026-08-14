@@ -1,11 +1,13 @@
 package pgstore
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -63,7 +65,11 @@ func RunIdempotent(
 		if !idempotency.EqualHash(storedHash, request.RequestHash) {
 			return IdempotentOutcome{}, idempotency.Conflict{Operation: request.Operation, Key: request.Key}
 		}
-		return IdempotentOutcome{JSON: string(storedOutcome), Replayed: true}, nil
+		canonical, err := canonicalOutcomeJSON(storedOutcome)
+		if err != nil {
+			return IdempotentOutcome{}, fmt.Errorf("decode PostgreSQL idempotency outcome: %w", err)
+		}
+		return IdempotentOutcome{JSON: canonical, Replayed: true}, nil
 	case pgx.ErrNoRows:
 	default:
 		return IdempotentOutcome{}, fmt.Errorf("read PostgreSQL idempotency record: %w", err)
@@ -89,17 +95,46 @@ func RunIdempotent(
 	if err != nil {
 		return IdempotentOutcome{}, fmt.Errorf("encode PostgreSQL idempotency outcome: %w", err)
 	}
+	canonical, err := canonicalOutcomeJSON(encoded)
+	if err != nil {
+		return IdempotentOutcome{}, fmt.Errorf("canonicalize PostgreSQL idempotency outcome: %w", err)
+	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO idempotency_records(actor_id,operation,idempotency_key,request_hash,outcome_json,created_at)
 		VALUES($1,$2,$3,$4,$5::jsonb,$6)`,
-		request.Actor, request.Operation, request.Key, strings.ToLower(request.RequestHash), string(encoded), time.Now().UTC(),
+		request.Actor, request.Operation, request.Key, strings.ToLower(request.RequestHash), canonical, time.Now().UTC(),
 	); err != nil {
 		return IdempotentOutcome{}, fmt.Errorf("insert PostgreSQL idempotency record: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return IdempotentOutcome{}, fmt.Errorf("commit PostgreSQL idempotency transaction: %w", err)
 	}
-	return IdempotentOutcome{JSON: string(encoded)}, nil
+	return IdempotentOutcome{JSON: canonical}, nil
+}
+
+// PostgreSQL jsonb does not preserve input whitespace or object-key order.
+// Canonicalize both first-attempt and replay outcomes at the repository
+// boundary so callers receive byte-stable JSON without relying on jsonb's
+// presentation format. UseNumber avoids precision loss for integer IDs.
+func canonicalOutcomeJSON(raw []byte) (string, error) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return "", err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return "", fmt.Errorf("multiple JSON values")
+		}
+		return "", err
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return "", err
+	}
+	return string(encoded), nil
 }
 
 func advisoryKey(request idempotency.Request) int64 {
