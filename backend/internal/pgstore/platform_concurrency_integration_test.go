@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"companion-server/internal/events"
+	"companion-server/internal/memory"
+	"companion-server/internal/privacy"
 )
 
 func TestPostgresOutboxClaimIsExclusiveAndRecoverable(t *testing.T) {
@@ -195,5 +197,47 @@ func TestPostgresMarketTriggerIsAtomicUnderConcurrency(t *testing.T) {
 	}
 	if reminders != 1 {
 		t.Fatalf("atomic trigger reminders=%d", reminders)
+	}
+}
+
+func TestPostgresRetentionCascadesMemoryVectors(t *testing.T) {
+	pool := postgresTestPool(t)
+	store, err := New(pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+	prefix := fmt.Sprintf("pg-retention-cascade-%d", time.Now().UnixNano())
+	user := prefix + "-user"
+	item, err := store.UpsertMemory(ctx, memory.Item{
+		UserID: user,
+		Key: "old-vector",
+		Kind: memory.Semantic,
+		Value: "expire me",
+		ValidFrom: now.Add(-72 * time.Hour),
+		CreatedAt: now.Add(-48 * time.Hour),
+		Source: "test",
+		Confidence: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertVector(ctx, user, item.ID, []float32{1, 0}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetPrivacyPolicy(ctx, privacy.Policy{UserID: user, MemoryRetentionDays: 1, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	report, err := store.ApplyRetention(ctx, now)
+	if err != nil || report.MemoryRows != 1 {
+		t.Fatalf("retention=%+v err=%v", report, err)
+	}
+	var vectors int
+	if err := store.pool.QueryRow(ctx, `SELECT count(*) FROM memory_vectors WHERE memory_id=$1`, item.ID).Scan(&vectors); err != nil {
+		t.Fatal(err)
+	}
+	if vectors != 0 {
+		t.Fatalf("memory vector survived retention: count=%d", vectors)
 	}
 }
