@@ -4,6 +4,9 @@
 Temporary exception (issue #45): while the scanner is exactly Go 1.26.5,
 a symbol-reachable vulnerability is tolerated only when its vulnerable frame is
 stdlib and govulncheck reports the nearest fixed version as Go 1.26.6.
+
+For the stdlib, govulncheck encodes finding.fixed_version as a module version
+(`v1.26.6`) while config.go_version uses the toolchain form (`go1.26.5`).
 Everything else remains blocking.
 """
 
@@ -17,7 +20,7 @@ from typing import Any, Iterable, TextIO
 
 ALLOWED_GO_VERSION = "go1.26.5"
 ALLOWED_MODULE = "stdlib"
-ALLOWED_FIXED_VERSION = "go1.26.6"
+ALLOWED_FIXED_VERSION = "v1.26.6"
 
 
 def messages(stream: TextIO) -> Iterable[dict[str, Any]]:
