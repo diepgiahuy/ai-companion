@@ -42,21 +42,23 @@ func configureSpeechComponents(cfg runtimeconfig.Config) (pipeline.Components, e
 
 	case speechProfileReferenceLocal:
 		funASR, err := speech.NewFunASR(speech.FunASRConfig{
-			BaseURL:    strings.TrimSpace(os.Getenv("FUNASR_BASE_URL")),
-			Model:      strings.TrimSpace(os.Getenv("FUNASR_MODEL")),
-			Language:   strings.TrimSpace(os.Getenv("FUNASR_LANGUAGE")),
+			BaseURL:     strings.TrimSpace(os.Getenv("FUNASR_BASE_URL")),
+			Model:       strings.TrimSpace(os.Getenv("FUNASR_MODEL")),
+			Language:    strings.TrimSpace(os.Getenv("FUNASR_LANGUAGE")),
 			MaxPCMBytes: envInt("FUNASR_MAX_PCM_BYTES", 4*1024*1024),
 		})
 		if err != nil {
 			return pipeline.Components{}, fmt.Errorf("configure FunASR: %w", err)
 		}
 		edge, err := speech.NewEdgeTTS(speech.EdgeTTSConfig{
-			URL:             os.Getenv("EDGE_TTS_URL"),
-			Voice:           value("EDGE_TTS_VOICE", "vi-VN-HoaiMyNeural"),
-			Rate:            value("EDGE_TTS_RATE", "+0%"),
-			Volume:          value("EDGE_TTS_VOLUME", "+0%"),
-			Pitch:           value("EDGE_TTS_PITCH", "+0Hz"),
-			ChromiumVersion: os.Getenv("EDGE_TTS_CHROMIUM_VERSION"),
+			Command:       value("EDGE_TTS_COMMAND", "edge-tts"),
+			FFmpegCommand: value("EDGE_TTS_FFMPEG_COMMAND", "ffmpeg"),
+			Voice:         value("EDGE_TTS_VOICE", "vi-VN-HoaiMyNeural"),
+			Rate:          value("EDGE_TTS_RATE", "+0%"),
+			Volume:        value("EDGE_TTS_VOLUME", "+0%"),
+			Pitch:         value("EDGE_TTS_PITCH", "+0Hz"),
+			MaxMP3Bytes:   envInt("EDGE_TTS_MAX_MP3_BYTES", 16*1024*1024),
+			MaxPCMBytes:   envInt("EDGE_TTS_MAX_PCM_BYTES", 32*1024*1024),
 		})
 		if err != nil {
 			return pipeline.Components{}, fmt.Errorf("configure EdgeTTS: %w", err)
