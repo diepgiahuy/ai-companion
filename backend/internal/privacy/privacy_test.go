@@ -23,17 +23,32 @@ func (r *repoStub) SetPrivacyPolicy(_ context.Context, p Policy) error {
 func (r *repoStub) ApplyRetention(context.Context, time.Time) (RetentionReport, error) {
 	return r.report, nil
 }
-func TestPrivacyDefaultsAndExplicitDisable(t *testing.T) {
+
+func TestPrivacyDefaultsToDenyUntilExplicitConsent(t *testing.T) {
 	r := &repoStub{}
 	s := New(r)
-	p, e := s.Policy(context.Background(), "u")
-	if e != nil || !p.SaveVoiceAudio || !p.LongTermMemoryEnabled {
-		t.Fatalf("p=%+v e=%v", p, e)
+	p, err := s.Policy(context.Background(), "u")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if e := s.Set(context.Background(), Policy{UserID: "u", SaveVoiceAudio: false, LongTermMemoryEnabled: false}); e != nil {
-		t.Fatal(e)
+	if p.UserID != "u" || p.SaveVoiceAudio || p.LongTermMemoryEnabled {
+		t.Fatalf("missing policy must deny persistence: %+v", p)
 	}
-	if s.MemoryAllowed(context.Background(), "u") {
-		t.Fatal("memory should be disabled")
+	if s.MemoryAllowed(context.Background(), "u") || s.VoiceAudioAllowed(context.Background(), "u") {
+		t.Fatal("missing policy must deny memory and voice persistence")
+	}
+
+	if err := s.Set(context.Background(), Policy{UserID: "u", SaveVoiceAudio: true, LongTermMemoryEnabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if !s.MemoryAllowed(context.Background(), "u") || !s.VoiceAudioAllowed(context.Background(), "u") {
+		t.Fatal("explicit consent should enable opted-in persistence")
+	}
+
+	if err := s.Set(context.Background(), Policy{UserID: "u", SaveVoiceAudio: false, LongTermMemoryEnabled: false}); err != nil {
+		t.Fatal(err)
+	}
+	if s.MemoryAllowed(context.Background(), "u") || s.VoiceAudioAllowed(context.Background(), "u") {
+		t.Fatal("revocation must disable memory and voice persistence")
 	}
 }
