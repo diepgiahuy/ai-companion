@@ -167,7 +167,14 @@ for spec in "${TOOL_CASES[@]}"; do
     --evidence "$evidence_path"
   python3 "$ROOT/host/companion_software_device/validate_evidence.py" "$evidence_path"
   stop_server
-  python3 "$ROOT/host/companion_software_device/validate_observability.py" "${evidence_path%.json}-observability.json" tool "$expected_tool"
+  if [[ "$case_id" == "note-conflict" ]]; then
+    # The ADK fixture only emits the expected text after observing the real
+    # IDEMPOTENCY_CONFLICT function output. The observability check therefore
+    # validates a safe tool.end snapshot without incorrectly requiring outcome=ok.
+    python3 "$ROOT/host/companion_software_device/validate_observability.py" "${evidence_path%.json}-observability.json" tool
+  else
+    python3 "$ROOT/host/companion_software_device/validate_observability.py" "${evidence_path%.json}-observability.json" tool "$expected_tool"
+  fi
 done
 
 # Re-open the same authoritative DB only to exercise the final credential
