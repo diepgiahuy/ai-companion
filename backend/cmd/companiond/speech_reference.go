@@ -1,0 +1,148 @@
+package main
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"strconv"
+	"strings"
+
+	"companion-server/internal/pipeline"
+	"companion-server/internal/runtimeconfig"
+	"companion-server/internal/speech"
+)
+
+const (
+	speechProfileMock               = "mock"
+	speechProfileReferenceLocal     = "reference-local"
+	speechProfileReferenceStreaming = "reference-streaming"
+)
+
+// configureSpeechComponents is the single speech composition boundary for the
+// #48 reference stacks. It never silently falls back between real providers.
+func configureSpeechComponents(cfg runtimeconfig.Config) (pipeline.Components, error) {
+	profile := strings.ToLower(strings.TrimSpace(os.Getenv("COMPANION_SPEECH_PROFILE")))
+	if profile == "" {
+		if cfg.AllowMock {
+			profile = speechProfileMock
+		} else {
+			return pipeline.Components{}, errors.New("COMPANION_SPEECH_PROFILE is required when mock providers are disabled")
+		}
+	}
+
+	components := pipeline.Components{Codecs: pipeline.OpusFactory{}}
+	switch profile {
+	case speechProfileMock:
+		if !cfg.AllowMock {
+			return pipeline.Components{}, errors.New("mock speech profile is forbidden when COMPANION_ALLOW_MOCK_PROVIDERS=false")
+		}
+		components.ASR = pipeline.MockASR{Transcript: os.Getenv("MOCK_TRANSCRIPT")}
+		components.TTS = pipeline.MockTTS{}
+		return components, nil
+
+	case speechProfileReferenceLocal:
+		funASR, err := speech.NewFunASR(speech.FunASRConfig{
+			URL:      strings.TrimSpace(os.Getenv("FUNASR_URL")),
+			Mode:     value("FUNASR_MODE", "2pass"),
+			Hotwords: os.Getenv("FUNASR_HOTWORDS"),
+			UseITN:   envBool("FUNASR_USE_ITN", true),
+		})
+		if err != nil {
+			return pipeline.Components{}, fmt.Errorf("configure FunASR: %w", err)
+		}
+		edge, err := speech.NewEdgeTTS(speech.EdgeTTSConfig{
+			URL:             os.Getenv("EDGE_TTS_URL"),
+			Voice:           value("EDGE_TTS_VOICE", "en-US-EmmaMultilingualNeural"),
+			Rate:            value("EDGE_TTS_RATE", "+0%"),
+			Volume:          value("EDGE_TTS_VOLUME", "+0%"),
+			Pitch:           value("EDGE_TTS_PITCH", "+0Hz"),
+			ChromiumVersion: os.Getenv("EDGE_TTS_CHROMIUM_VERSION"),
+		})
+		if err != nil {
+			return pipeline.Components{}, fmt.Errorf("configure EdgeTTS: %w", err)
+		}
+		adapter := speech.PipelineAdapter{
+			ASRProvider: funASR,
+			TTSProvider: edge,
+			ASRFormat:   speech.AudioFormat{SampleRate: 16000, Channels: 1},
+			TTSFormat:   speech.AudioFormat{SampleRate: 24000, Channels: 1},
+			Locale:      value("COMPANION_SPEECH_LOCALE", "vi-VN"),
+			Voice:       value("EDGE_TTS_VOICE", "en-US-EmmaMultilingualNeural"),
+		}
+		if err := adapter.Validate(); err != nil {
+			return pipeline.Components{}, err
+		}
+		components.ASR, components.TTS = adapter, adapter
+		return components, nil
+
+	case speechProfileReferenceStreaming:
+		xunfei, err := speech.NewXunfeiStreamASR(speech.XunfeiStreamASRConfig{
+			URL:               os.Getenv("XUNFEI_ASR_URL"),
+			AppID:             os.Getenv("XUNFEI_ASR_APP_ID"),
+			APIKey:            os.Getenv("XUNFEI_ASR_API_KEY"),
+			APISecret:         os.Getenv("XUNFEI_ASR_API_SECRET"),
+			Language:          value("XUNFEI_ASR_LANGUAGE", "zh_cn"),
+			Accent:            value("XUNFEI_ASR_ACCENT", "mandarin"),
+			Domain:            value("XUNFEI_ASR_DOMAIN", "iat"),
+			VADMS:             envInt("XUNFEI_ASR_VAD_MS", 1000),
+			DynamicCorrection: envBool("XUNFEI_ASR_DYNAMIC_CORRECTION", true),
+		})
+		if err != nil {
+			return pipeline.Components{}, fmt.Errorf("configure Xunfei ASR: %w", err)
+		}
+		huoshan, err := speech.NewHuoshanDoubleStreamTTS(speech.HuoshanDoubleStreamTTSConfig{
+			URL:         os.Getenv("HUOSHAN_TTS_URL"),
+			AppID:       os.Getenv("HUOSHAN_TTS_APP_ID"),
+			AccessToken: os.Getenv("HUOSHAN_TTS_ACCESS_TOKEN"),
+			ResourceID:  os.Getenv("HUOSHAN_TTS_RESOURCE_ID"),
+			Speaker:     os.Getenv("HUOSHAN_TTS_SPEAKER"),
+			AudioParams: map[string]any{
+				"speech_rate":   envInt("HUOSHAN_TTS_SPEECH_RATE", 0),
+				"loudness_rate": envInt("HUOSHAN_TTS_LOUDNESS_RATE", 0),
+			},
+		})
+		if err != nil {
+			return pipeline.Components{}, fmt.Errorf("configure Huoshan TTS: %w", err)
+		}
+		adapter := speech.PipelineAdapter{
+			ASRProvider: xunfei,
+			TTSProvider: huoshan,
+			ASRFormat:   speech.AudioFormat{SampleRate: 16000, Channels: 1},
+			TTSFormat:   speech.AudioFormat{SampleRate: envInt("HUOSHAN_TTS_SAMPLE_RATE", 24000), Channels: 1},
+			Locale:      value("COMPANION_SPEECH_LOCALE", "vi-VN"),
+			Voice:       os.Getenv("HUOSHAN_TTS_SPEAKER"),
+		}
+		if err := adapter.Validate(); err != nil {
+			return pipeline.Components{}, err
+		}
+		components.ASR, components.TTS = adapter, adapter
+		return components, nil
+
+	default:
+		return pipeline.Components{}, fmt.Errorf("unsupported COMPANION_SPEECH_PROFILE %q", profile)
+	}
+}
+
+func envBool(name string, fallback bool) bool {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseBool(raw)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func envInt(name string, fallback int) int {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(raw)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
