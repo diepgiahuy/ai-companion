@@ -17,6 +17,7 @@ import (
 	"companion-server/internal/capability"
 	"companion-server/internal/controlplane"
 	conversationctx "companion-server/internal/conversation"
+	"companion-server/internal/devicecap"
 	"companion-server/internal/domain"
 	"companion-server/internal/events"
 	"companion-server/internal/market"
@@ -139,6 +140,11 @@ func main() {
 		logger.Error("register platform tools", "error", err)
 		os.Exit(1)
 	}
+	deviceCapabilities := devicecap.NewRouter()
+	if err := devicecap.RegisterTools(toolRegistry, deviceCapabilities); err != nil {
+		logger.Error("register authenticated device capability tools", "error", err)
+		os.Exit(1)
+	}
 	toolRegistry.SetAuthorizer(policy.Authorizer{Features: features, Entitlements: data, Privacy: privacyService})
 	mcpCloser, err := configureMCP(toolRegistry, resourceRegistry, 10*time.Second)
 	if err != nil {
@@ -174,7 +180,7 @@ func main() {
 		if mcpCloser != nil {
 			_ = closeRuntimeResourcesBounded(logger, 2*time.Second, namedCloser{name: "mcp", closer: mcpCloser})
 		}
-		logger.Error("initialize ADK runtime", "error", err, "hint", "build with -tags=adk; ADK_OPENAI_BASE_URL must expose the OpenAI Responses API")
+		logger.Error("initialize ADK runtime", "error", err, "hint", "build with -tags=adk; ADK_MODEL_PROTOCOL must be responses or chat_completions")
 		os.Exit(1)
 	}
 	components.Agent = adkAgent
@@ -186,7 +192,7 @@ func main() {
 		server.WithIdentityResolver(server.HeaderIdentityResolver{DefaultUserID: value("COMPANION_DEFAULT_USER_ID", "default")}),
 		server.WithControlPlane(control), server.WithFirmwareService(firmwareService), server.WithPrivacyService(privacyService), server.WithFeatureCatalog(featureCatalog), server.WithAdminToken(os.Getenv("COMPANION_ADMIN_TOKEN")),
 		server.WithDeviceCredentialManager(data), server.WithEntitlementManager(data), server.WithDeviceAuthenticator(data),
-		server.WithObservabilityRecorder(observer),
+		server.WithDeviceCapabilities(deviceCapabilities), server.WithObservabilityRecorder(observer),
 	}
 	service := server.New(components, logger, serverOptions...)
 	rootCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
