@@ -50,10 +50,10 @@ func TestHuoshanDoubleStreamSendsSessionTaskFinishAndStreamsPCM(t *testing.T) {
 		}
 
 		if err := conn.Write(ctx, websocket.MessageBinary, huoshanServerEventPacket(huoshanAudioOnlyResponse, huoshanEventTTSResponse, start.sessionID, []byte{1, 2, 3, 4}, false)); err != nil {
-			t.Errorf("write audio: %v"); return
+			t.Errorf("write audio: %v", err); return
 		}
 		if err := conn.Write(ctx, websocket.MessageBinary, huoshanServerEventPacket(huoshanFullServerResponse, huoshanEventSessionFinished, start.sessionID, []byte(`{"status":"ok"}`), true)); err != nil {
-			t.Errorf("write finish: %v"); return
+			t.Errorf("write finish: %v", err); return
 		}
 	}))
 	defer server.Close()
