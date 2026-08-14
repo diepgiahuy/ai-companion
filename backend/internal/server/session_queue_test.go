@@ -53,7 +53,7 @@ func TestSessionSendFailsFastWhenMediaQueueIsFull(t *testing.T) {
 
 func TestSessionSendHonorsCancellationWhenQueueIsFull(t *testing.T) {
 	s := &session{
-		id:            "queue-cancel",
+		id:            "queue-cancel-full",
 		controlWrites: make(chan outbound, 1),
 		mediaWrites:   make(chan outbound, 1),
 	}
@@ -66,5 +66,24 @@ func TestSessionSendHonorsCancellationWhenQueueIsFull(t *testing.T) {
 	}
 	if got := len(s.controlWrites); got != 1 {
 		t.Fatalf("canceled full-queue send changed queue length to %d", got)
+	}
+}
+
+func TestSessionSendHonorsCancellationWhenQueueHasCapacity(t *testing.T) {
+	for i := 0; i < 100; i++ {
+		s := &session{
+			id:            "queue-cancel-capacity",
+			controlWrites: make(chan outbound, 1),
+			mediaWrites:   make(chan outbound, 1),
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		if err := s.send(ctx, outbound{kind: websocket.MessageText, data: []byte("must-not-enqueue")}); err != context.Canceled {
+			t.Fatalf("iteration=%d error=%v; want context canceled", i, err)
+		}
+		if got := len(s.controlWrites); got != 0 {
+			t.Fatalf("iteration=%d canceled send enqueued despite spare capacity", i)
+		}
 	}
 }
