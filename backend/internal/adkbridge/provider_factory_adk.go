@@ -9,6 +9,7 @@ import (
 
 	"companion-server/internal/pipeline"
 
+	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/model/openaimodel"
 )
 
@@ -21,7 +22,7 @@ func NewProvider(cfg Config) (pipeline.Agent, error) {
 		protocol = ModelProtocolResponses
 	}
 
-	var llm interfaceModel
+	var llm model.LLM
 	var err error
 	switch protocol {
 	case ModelProtocolResponses:
@@ -38,8 +39,3 @@ func NewProvider(cfg Config) (pipeline.Agent, error) {
 	}
 	return newWithModel(cfg, withProviderToolAliases(llm))
 }
-
-// interfaceModel is the exact ADK model.LLM surface expressed locally so the
-// factory stays small. Both official openaimodel and Companion chat adapter
-// satisfy it; withProviderToolAliases accepts the same interface via assignment.
-type interfaceModel = model.LLM
