@@ -13,8 +13,11 @@ config COMPANION_TZ_RULE
     default "ICT-7"
 
 config COMPANION_SERVER_URL
-    string "Backend WebSocket URL"
-    default "ws://192.168.1.10:8000/v2/device"
+    string "Production backend WSS URL"
+    default ""
+    help
+        Flashed product firmware accepts only wss:// endpoints. Host and
+        software-device development harnesses own any plaintext ws:// testing.
 
 config COMPANION_DEVICE_CREDENTIAL
     string "Enrolled per-device bearer credential"
