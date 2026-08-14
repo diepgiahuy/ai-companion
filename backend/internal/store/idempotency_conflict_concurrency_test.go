@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -23,7 +24,7 @@ func TestIdempotentMutationConcurrentConflictsCannotBothCommit(t *testing.T) {
 	run := func(request idempotency.Request, value string) {
 		defer wg.Done()
 		<-start
-		_, err := s.runIdempotentMutation(ctx, request, func(tx sqlTx) (any, error) {
+		_, err := s.runIdempotentMutation(ctx, request, func(tx *sql.Tx) (any, error) {
 			_, err := tx.ExecContext(ctx, `INSERT INTO idem_test_values(actor,value) VALUES(?,?)`, "actor-a", value)
 			return map[string]any{"value": value}, err
 		})
@@ -60,10 +61,4 @@ func TestIdempotentMutationConcurrentConflictsCannotBothCommit(t *testing.T) {
 	if rows != 1 {
 		t.Fatalf("committed rows=%d; conflicting retries both mutated state", rows)
 	}
-}
-
-// sqlTx is the minimal transaction surface used by the concurrency fixture.
-// *sql.Tx satisfies it; keeping this local avoids widening production APIs.
-type sqlTx interface {
-	ExecContext(context.Context, string, ...any) (sql.Result, error)
 }
