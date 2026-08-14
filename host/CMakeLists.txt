@@ -21,6 +21,11 @@ target_compile_options(companion_tests PRIVATE -Wall -Wextra -Wpedantic -Werror 
 target_compile_definitions(companion_tests PRIVATE COMPANION_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 add_test(NAME companion_tests COMMAND companion_tests)
 
+add_executable(audio_frontend_tests tests/audio_frontend.cpp)
+target_link_libraries(audio_frontend_tests PRIVATE companion_app)
+target_compile_options(audio_frontend_tests PRIVATE -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
+add_test(NAME audio_frontend_tests COMMAND audio_frontend_tests)
+
 add_executable(protocol_vectors tests/protocol_vectors.cpp)
 target_link_libraries(protocol_vectors PRIVATE companion_app)
 target_compile_options(protocol_vectors PRIVATE -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
