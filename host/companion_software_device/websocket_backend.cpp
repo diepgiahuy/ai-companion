@@ -22,7 +22,7 @@
 namespace companion::software_device {
 namespace beast = boost::beast;
 namespace http = beast::http;
-namespace websocket = beast::websocket;
+namespace websocket = boost::beast::websocket;
 namespace net = boost::asio;
 using tcp = net::ip::tcp;
 using json = nlohmann::json;
@@ -441,7 +441,8 @@ bool WebSocketVoiceBackend::send_binary(std::vector<uint8_t> packet) {
 std::string WebSocketVoiceBackend::encode_control(int type_index, std::string payload_json,
                                                   std::string turn_id,
                                                   std::string correlation_id,
-                                                  bool include_session) {
+                                                  bool include_session,
+                                                  std::optional<uint64_t> generation_id) {
   const auto type = static_cast<protocol::ControlType>(type_index);
   const std::string message_id =
       "host-message-" + std::to_string(message_sequence_.fetch_add(1) + 1);
@@ -459,8 +460,8 @@ std::string WebSocketVoiceBackend::encode_control(int type_index, std::string pa
       .correlation_id = correlation_id,
       .session_id = session,
       .turn_id = turn_id,
-      .generation_id = 0,
-      .has_generation_id = false,
+      .generation_id = generation_id.value_or(0),
+      .has_generation_id = generation_id.has_value(),
       .idempotency_key = {},
       .occurred_at = {},
   };
@@ -512,6 +513,12 @@ void WebSocketVoiceBackend::handle_text(uint64_t generation, const std::string& 
     const std::string type_name = json_string(envelope, "type");
     const std::string incoming_session = json_string(envelope, "session_id");
     const std::string incoming_turn = json_string(envelope, "turn_id");
+    const std::string correlation_id = json_string(envelope, "correlation_id");
+    const bool has_generation = envelope.contains("generation_id") &&
+                                envelope.at("generation_id").is_number_unsigned();
+    const uint64_t incoming_generation = has_generation
+                                             ? envelope.at("generation_id").get<uint64_t>()
+                                             : 0;
     const json payload = envelope.value("payload", json::object());
     protocol::ControlType type{};
     if (!protocol::parse_type(type_name, type)) {
@@ -540,6 +547,16 @@ void WebSocketVoiceBackend::handle_text(uint64_t generation, const std::string& 
         }
       }
       protocol_connected_.store(true);
+      json advertise{{"capabilities", json::array({
+          {{"name", "device.volume.set"}, {"version", "1"}, {"kind", "command"}}
+      })}};
+      if (send_text(encode_control(static_cast<int>(protocol::ControlType::capability_advertise),
+                                   advertise.dump()))) {
+        std::lock_guard lock(state_mutex_);
+        ++stats_.capability_advertisements;
+      } else {
+        enqueue_event(BackendEventType::error, "CAPABILITY ADVERTISE FAILED");
+      }
       enqueue_event(BackendEventType::connected);
       return;
     }
@@ -632,6 +649,52 @@ void WebSocketVoiceBackend::handle_text(uint64_t generation, const std::string& 
       events_.push_back(event);
       break;
     }
+    case protocol::ControlType::capability_call: {
+      {
+        std::lock_guard lock(state_mutex_);
+        ++stats_.capability_calls;
+      }
+      json result;
+      const std::string name = json_string(payload, "name");
+      const std::string version = json_string(payload, "version");
+      const auto arguments = payload.find("arguments");
+      const int deadline_ms = payload.value("deadline_ms", 0);
+      if (correlation_id.empty() || !has_generation || deadline_ms < 50 || deadline_ms > 5000) {
+        result = {{"ok", false}, {"error", "invalid_argument"}};
+      } else if (name != "device.volume.set" || version != "1") {
+        result = {{"ok", false}, {"error", "unsupported"}};
+      } else if (arguments == payload.end() || !arguments->is_object() ||
+                 !arguments->contains("volume") || !arguments->at("volume").is_number_integer()) {
+        result = {{"ok", false}, {"error", "invalid_argument"}};
+      } else {
+        const int volume = arguments->at("volume").get<int>();
+        if (volume < 0 || volume > 100) {
+          result = {{"ok", false}, {"error", "invalid_argument"}};
+        } else {
+          {
+            std::lock_guard lock(state_mutex_);
+            stats_.capability_volume = volume;
+          }
+          result = {{"ok", true}, {"value", {{"volume", volume}, {"applied", true}}}};
+        }
+      }
+      const bool sent = send_text(encode_control(
+          static_cast<int>(protocol::ControlType::capability_result), result.dump(), {},
+          correlation_id, true, incoming_generation));
+      if (sent) {
+        std::lock_guard lock(state_mutex_);
+        ++stats_.capability_results;
+      } else {
+        enqueue_event(BackendEventType::error, "CAPABILITY RESULT FAILED");
+      }
+      break;
+    }
+    case protocol::ControlType::capability_cancel:
+      {
+        std::lock_guard lock(state_mutex_);
+        ++stats_.capability_cancels;
+      }
+      break;
     case protocol::ControlType::session_ping: {
       json empty = json::object();
       send_text(encode_control(static_cast<int>(protocol::ControlType::session_pong),
