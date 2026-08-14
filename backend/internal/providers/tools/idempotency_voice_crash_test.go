@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,6 +21,7 @@ func TestVoiceMemoRetryReusesDeterministicBlobAfterPrecommitDBFailure(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer data.Close()
 	registry := capability.NewToolRegistry()
 	if err := RegisterNative(registry, NativeDependencies{Store: data, RecordingsDir: recordings}); err != nil {
 		t.Fatal(err)
@@ -30,16 +32,21 @@ func TestVoiceMemoRetryReusesDeterministicBlobAfterPrecommitDBFailure(t *testing
 	}
 	ctx := pipeline.WithTurnContext(context.Background(), turn)
 
-	// Close the authoritative DB after composition so the filesystem write can
-	// succeed but the mutation cannot commit. This models the recoverable side
-	// of the file-before-DB crash window without pretending two resources share
-	// an atomic transaction.
-	if err := data.Close(); err != nil {
+	// Replay/lookup must stay healthy so the tool reaches the filesystem write.
+	// A second SQLite connection installs a trigger that aborts only the later
+	// authoritative voice_memos INSERT, modelling a pre-commit DB failure after
+	// the deterministic WAV has already been created.
+	faultDB, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer faultDB.Close()
+	if _, err := faultDB.Exec(`CREATE TRIGGER fail_voice_memo_insert BEFORE INSERT ON voice_memos BEGIN SELECT RAISE(ABORT, 'injected voice memo insert failure'); END`); err != nil {
 		t.Fatal(err)
 	}
 	failed := registry.Execute(ctx, "voice_memo.save", capability.ToolRequest{Key: "voice-crash-key", Arguments: `{}`})
-	if strings.Contains(failed.Content, `"ok":true`) {
-		t.Fatalf("save unexpectedly committed with closed DB: %s", failed.Content)
+	if strings.Contains(failed.Content, `"ok":true`) || !strings.Contains(failed.Content, "injected voice memo insert failure") {
+		t.Fatalf("save did not expose injected precommit failure: %s", failed.Content)
 	}
 	files, err := filepath.Glob(filepath.Join(recordings, "*.wav"))
 	if err != nil {
@@ -49,19 +56,13 @@ func TestVoiceMemoRetryReusesDeterministicBlobAfterPrecommitDBFailure(t *testing
 		t.Fatalf("precommit failure files=%v; want one deterministic recoverable blob", files)
 	}
 	orphanPath := files[0]
+	if _, err := faultDB.Exec(`DROP TRIGGER fail_voice_memo_insert`); err != nil {
+		t.Fatal(err)
+	}
 
-	// Reopen the same durable DB and retry the exact request. The deterministic
-	// actor+key+request-hash path is reused rather than creating another blob.
-	reopened, err := store.Open(dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer reopened.Close()
-	retryRegistry := capability.NewToolRegistry()
-	if err := RegisterNative(retryRegistry, NativeDependencies{Store: reopened, RecordingsDir: recordings}); err != nil {
-		t.Fatal(err)
-	}
-	retried := retryRegistry.Execute(ctx, "voice_memo.save", capability.ToolRequest{Key: "voice-crash-key", Arguments: `{}`})
+	// Exact retry reuses/overwrites the same deterministic path and commits one
+	// durable memo; it must not accumulate a second blob name.
+	retried := registry.Execute(ctx, "voice_memo.save", capability.ToolRequest{Key: "voice-crash-key", Arguments: `{}`})
 	id := toolResultID(t, retried)
 	if id < 1 {
 		t.Fatalf("invalid committed voice memo id=%d", id)
@@ -72,6 +73,10 @@ func TestVoiceMemoRetryReusesDeterministicBlobAfterPrecommitDBFailure(t *testing
 	}
 	if len(files) != 1 || files[0] != orphanPath {
 		t.Fatalf("retry created duplicate blob: files=%v original=%s", files, orphanPath)
+	}
+	items, err := data.ListVoiceMemos(ctx, "user-a", "device-a", 10)
+	if err != nil || len(items) != 1 || items[0].ID != id || items[0].Path != orphanPath {
+		t.Fatalf("committed voice memos=%+v err=%v", items, err)
 	}
 }
 
