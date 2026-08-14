@@ -5,7 +5,10 @@ package adkbridge
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"os"
 	"strings"
+	"time"
 
 	"companion-server/internal/pipeline"
 
@@ -19,7 +22,13 @@ import (
 func NewProvider(cfg Config) (pipeline.Agent, error) {
 	protocol := strings.ToLower(strings.TrimSpace(cfg.ModelProtocol))
 	if protocol == "" {
+		protocol = strings.ToLower(strings.TrimSpace(os.Getenv("ADK_MODEL_PROTOCOL")))
+	}
+	if protocol == "" {
 		protocol = ModelProtocolResponses
+	}
+	if cfg.HTTPClient == nil {
+		cfg.HTTPClient = &http.Client{Timeout: 60 * time.Second}
 	}
 
 	var llm model.LLM
@@ -32,7 +41,7 @@ func NewProvider(cfg Config) (pipeline.Agent, error) {
 	case ModelProtocolChatCompletions:
 		llm, err = newChatCompletionsModel(cfg)
 	default:
-		return nil, fmt.Errorf("unsupported ADK model protocol %q", cfg.ModelProtocol)
+		return nil, fmt.Errorf("unsupported ADK model protocol %q", protocol)
 	}
 	if err != nil {
 		return nil, err
