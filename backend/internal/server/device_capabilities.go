@@ -23,11 +23,12 @@ type sessionCapabilityState struct {
 	mu         sync.Mutex
 	advertised map[string]protocol.CapabilityDescriptor
 	pending    map[string]*capabilityPending
+	watchOnce  sync.Once
 	closed     bool
 }
 
 var (
-	capabilityRoutersByHub sync.Map // map[*sessionHub]*devicecap.Router
+	capabilityRoutersByHub    sync.Map // map[*sessionHub]*devicecap.Router
 	capabilityStateBySession sync.Map // map[*session]*sessionCapabilityState
 )
 
@@ -93,6 +94,18 @@ func capabilityState(s *session, create bool) *sessionCapabilityState {
 		return nil
 	}
 	return state
+}
+
+func watchDeviceCapabilitySession(ctx context.Context, s *session, state *sessionCapabilityState) {
+	if state == nil {
+		return
+	}
+	state.watchOnce.Do(func() {
+		go func() {
+			<-ctx.Done()
+			detachDeviceCapabilities(s)
+		}()
+	})
 }
 
 func detachDeviceCapabilities(s *session) {
@@ -281,6 +294,7 @@ func (s *session) handleCapabilityControl(ctx context.Context, data []byte) (boo
 			if state == nil {
 				return fmt.Errorf("device capability router unavailable")
 			}
+			watchDeviceCapabilitySession(ctx, s, state)
 			advertised := make(map[string]protocol.CapabilityDescriptor, len(payload.Capabilities))
 			for _, descriptor := range payload.Capabilities {
 				if !allowedDeviceCapability(descriptor) {
