@@ -22,7 +22,7 @@ jobs:
       ADMIN_TOKEN: ${{ secrets.PROJECT_TOKEN }}
       RULESET_ID: '20785214'
     steps:
-      - name: Migrate required check and repository hygiene settings
+      - name: Verify settings and clean exact merged-head branches
         shell: bash
         run: |
           set -euo pipefail
@@ -32,7 +32,6 @@ jobs:
           }
 
           repo="${GITHUB_REPOSITORY}"
-          owner="${repo%%/*}"
           repo_api="https://api.github.com/repos/${repo}"
           ruleset_api="${repo_api}/rulesets/${RULESET_ID}"
           headers=(
@@ -41,121 +40,48 @@ jobs:
             -H "X-GitHub-Api-Version: 2026-03-10"
           )
 
-          before="$(curl -fsSL "${headers[@]}" "$ruleset_api")"
+          ruleset="$(curl -fsSL "${headers[@]}" "$ruleset_api")"
           jq -e '
             .id == 20785214 and
             .name == "second rule" and
             .target == "branch" and
             .enforcement == "active" and
             .conditions.ref_name.include == ["refs/heads/main"] and
-            .conditions.ref_name.exclude == []
-          ' <<<"$before" >/dev/null
-
-          current_contexts="$(jq -c '
-            [.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context] | sort
-          ' <<<"$before")"
-          old_contexts='["PR Contract","PR Gate"]'
-          target_contexts='["PR Gate"]'
-          if [[ "$current_contexts" != "$old_contexts" && "$current_contexts" != "$target_contexts" ]]; then
-            echo "::error::Unexpected required-check set; refusing mutation: $current_contexts"
-            exit 1
-          fi
-
-          before_invariants="$(jq -S -c '
-            {
-              name,
-              target,
-              enforcement,
-              bypass_actors,
-              conditions,
-              rules: [.rules[] |
-                if .type == "required_status_checks"
-                then .parameters.required_status_checks = []
-                else .
-                end]
-            }
-          ' <<<"$before")"
-
-          if [[ "$current_contexts" == "$old_contexts" ]]; then
-            payload="$(jq -c '
-              {
-                name,
-                target,
-                enforcement,
-                bypass_actors,
-                conditions,
-                rules: [.rules[] |
-                  if .type == "required_status_checks"
-                  then .parameters.required_status_checks = [
-                    {"context":"PR Gate","integration_id":15368}
-                  ]
-                  else .
-                  end]
-              }
-            ' <<<"$before")"
-            curl -fsSL -X PUT "${headers[@]}" \
-              -H "Content-Type: application/json" \
-              "$ruleset_api" \
-              -d "$payload" >/tmp/ruleset-update.json
-          fi
-
-          after="$(curl -fsSL "${headers[@]}" "$ruleset_api")"
-          after_contexts="$(jq -c '
-            [.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context] | sort
-          ' <<<"$after")"
-          test "$after_contexts" = "$target_contexts"
-          jq -e '
+            .conditions.ref_name.exclude == [] and
             [.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks[]] == [
               {"context":"PR Gate","integration_id":15368}
             ] and
             (.rules[] | select(.type == "required_status_checks") | .parameters.strict_required_status_checks_policy) == true and
             (.rules[] | select(.type == "required_status_checks") | .parameters.do_not_enforce_on_create) == false
-          ' <<<"$after" >/dev/null
+          ' <<<"$ruleset" >/dev/null
 
-          after_invariants="$(jq -S -c '
-            {
-              name,
-              target,
-              enforcement,
-              bypass_actors,
-              conditions,
-              rules: [.rules[] |
-                if .type == "required_status_checks"
-                then .parameters.required_status_checks = []
-                else .
-                end]
-            }
-          ' <<<"$after")"
-          test "$before_invariants" = "$after_invariants"
+          repo_state="$(curl -fsSL "${headers[@]}" "$repo_api")"
+          jq -e '.delete_branch_on_merge == true and .allow_auto_merge == true' <<<"$repo_state" >/dev/null
 
-          curl -fsSL -X PATCH "${headers[@]}" \
-            -H "Content-Type: application/json" \
-            "$repo_api" \
-            -d '{"delete_branch_on_merge":true,"allow_auto_merge":true}' >/tmp/repo-update.json
-          repo_after="$(curl -fsSL "${headers[@]}" "$repo_api")"
-          jq -e '.delete_branch_on_merge == true and .allow_auto_merge == true' <<<"$repo_after" >/dev/null
+          work=/tmp/control-plane-cleanup
+          rm -rf "$work"
+          mkdir -p "$work/closed" "$work/branches"
+          curl -fsSL "${headers[@]}" "${repo_api}/pulls?state=open&per_page=100" > "$work/open.json"
 
-          open_prs="$(curl -fsSL "${headers[@]}" "${repo_api}/pulls?state=open&per_page=100")"
-
-          closed_prs='[]'
           page=1
           while :; do
-            batch="$(curl -fsSL "${headers[@]}" "${repo_api}/pulls?state=closed&per_page=100&page=${page}")"
-            count="$(jq 'length' <<<"$batch")"
-            closed_prs="$(jq -c --argjson batch "$batch" '. + $batch' <<<"$closed_prs")"
+            file="$work/closed/${page}.json"
+            curl -fsSL "${headers[@]}" "${repo_api}/pulls?state=closed&per_page=100&page=${page}" > "$file"
+            count="$(jq 'length' "$file")"
             [[ "$count" -lt 100 ]] && break
             page=$((page + 1))
           done
+          jq -s 'add' "$work"/closed/*.json > "$work/closed.json"
 
-          branches='[]'
           page=1
           while :; do
-            batch="$(curl -fsSL "${headers[@]}" "${repo_api}/branches?per_page=100&page=${page}")"
-            count="$(jq 'length' <<<"$batch")"
-            branches="$(jq -c --argjson batch "$batch" '. + $batch' <<<"$branches")"
+            file="$work/branches/${page}.json"
+            curl -fsSL "${headers[@]}" "${repo_api}/branches?per_page=100&page=${page}" > "$file"
+            count="$(jq 'length' "$file")"
             [[ "$count" -lt 100 ]] && break
             page=$((page + 1))
           done
+          jq -s 'add' "$work"/branches/*.json > "$work/branches.json"
 
           deleted=0
           kept=0
@@ -165,14 +91,14 @@ jobs:
               kept=$((kept + 1))
               continue
             fi
-            if jq -e --arg branch "$branch" 'any(.[]; .head.ref == $branch)' <<<"$open_prs" >/dev/null; then
+            if jq -e --arg branch "$branch" 'any(.[]; .head.ref == $branch)' "$work/open.json" >/dev/null; then
               echo "keep open-PR branch: $branch"
               kept=$((kept + 1))
               continue
             fi
             if ! jq -e --arg branch "$branch" --arg sha "$sha" \
               'any(.[]; .merged_at != null and .head.ref == $branch and .head.sha == $sha)' \
-              <<<"$closed_prs" >/dev/null; then
+              "$work/closed.json" >/dev/null; then
               echo "keep unproven branch: $branch"
               kept=$((kept + 1))
               continue
@@ -182,16 +108,14 @@ jobs:
             curl -fsSL -X DELETE "${headers[@]}" "${repo_api}/git/refs/heads/${encoded}"
             echo "deleted exact merged-head branch: $branch @ $sha"
             deleted=$((deleted + 1))
-          done < <(jq -r '.[] | [.name, .commit.sha] | @tsv' <<<"$branches")
+          done < <(jq -r '.[] | [.name, .commit.sha] | @tsv' "$work/branches.json")
 
           {
             echo "## GitHub control-plane optimization"
             echo
             echo "- ruleset: ${RULESET_ID} (second rule)"
-            echo "- required checks before: ${current_contexts}"
-            echo "- required checks after: ${after_contexts}"
+            echo "- required checks: PR Gate only"
             echo "- strict up-to-date policy: preserved"
-            echo "- non-check rules/conditions: unchanged"
             echo "- delete branch on merge: enabled"
             echo "- auto-merge capability: enabled"
             echo "- stale exact merged-head branches deleted: ${deleted}"
