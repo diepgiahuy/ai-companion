@@ -15,6 +15,10 @@ on:
       - ".github/workflows/postgres-schema.yml"
   workflow_dispatch:
 
+concurrency:
+  group: postgres-schema-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
