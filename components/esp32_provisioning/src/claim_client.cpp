@@ -26,6 +26,18 @@ bool copy_fixed(std::string_view source, char* destination, size_t capacity) {
   return true;
 }
 
+ClaimStatus classify_status(int status) {
+  if (status >= 200 && status < 300) return ClaimStatus::success;
+  if (status == 400 || status == 401 || status == 403) return ClaimStatus::setup_required;
+  if (status == 409 || status == 410) return ClaimStatus::owner_recovery_required;
+  if (status < 0 || status == 408 || status == 425 || status == 429 || status >= 500) {
+    return ClaimStatus::retryable;
+  }
+  // Redirects and unrecognized client errors are configuration/protocol failures,
+  // not safe reasons to keep transmitting a short-lived authorization forever.
+  return ClaimStatus::setup_required;
+}
+
 HttpResult post_claim(std::string_view url, std::string_view authorization,
                       std::string_view idempotency_key, std::string_view body) {
   HttpResult result;
@@ -39,6 +51,7 @@ HttpResult post_claim(std::string_view url, std::string_view authorization,
   config.crt_bundle_attach = esp_crt_bundle_attach;
   config.timeout_ms = 15'000;
   config.keep_alive_enable = false;
+  config.disable_auto_redirect = true;
   esp_http_client_handle_t client = esp_http_client_init(&config);
   if (client == nullptr) return result;
 
@@ -110,31 +123,32 @@ bool owner_claim_url(std::string_view websocket_url,
   return true;
 }
 
-bool ClaimClient::claim(const PendingConfig& pending, std::string_view device_id,
-                        ClaimResult& result) const {
+ClaimStatus ClaimClient::claim(const PendingConfig& pending, std::string_view device_id,
+                               ClaimResult& result) const {
   result = {};
-  if (device_id.empty() || device_id.size() > 128) return false;
+  if (device_id.empty() || device_id.size() > 128) return ClaimStatus::setup_required;
   std::array<char, 640> url{};
-  if (!owner_claim_url(pending.server_url.view(), url)) return false;
+  if (!owner_claim_url(pending.server_url.view(), url)) return ClaimStatus::setup_required;
 
   cJSON* request = cJSON_CreateObject();
-  if (request == nullptr) return false;
+  if (request == nullptr) return ClaimStatus::retryable;
   const std::string owned_device(device_id);
   const std::string owned_bootstrap(pending.bootstrap_id.view());
   cJSON_AddStringToObject(request, "device_id", owned_device.c_str());
   cJSON_AddStringToObject(request, "bootstrap_id", owned_bootstrap.c_str());
   char* encoded = cJSON_PrintUnformatted(request);
   cJSON_Delete(request);
-  if (encoded == nullptr) return false;
+  if (encoded == nullptr) return ClaimStatus::retryable;
   const std::string body(encoded);
   cJSON_free(encoded);
 
   const HttpResult response = post_claim(url.data(), pending.claim_authorization.view(),
                                          pending.idempotency_key.view(), body);
-  if (response.status < 200 || response.status >= 300) return false;
+  const ClaimStatus status = classify_status(response.status);
+  if (status != ClaimStatus::success) return status;
 
   cJSON* root = cJSON_ParseWithLength(response.body.data(), response.body.size());
-  if (root == nullptr) return false;
+  if (root == nullptr) return ClaimStatus::retryable;
   const cJSON* response_device = cJSON_GetObjectItemCaseSensitive(root, "device_id");
   const cJSON* credential = cJSON_GetObjectItemCaseSensitive(root, "device_credential");
   const cJSON* replayed = cJSON_GetObjectItemCaseSensitive(root, "replayed");
@@ -146,8 +160,11 @@ bool ClaimClient::claim(const PendingConfig& pending, std::string_view device_id
                   cJSON_IsBool(replayed);
   if (ok) result.replayed = cJSON_IsTrue(replayed);
   cJSON_Delete(root);
-  if (!ok) result = {};
-  return ok;
+  if (!ok) {
+    result = {};
+    return ClaimStatus::retryable;
+  }
+  return ClaimStatus::success;
 }
 
 } // namespace companion::provisioning
