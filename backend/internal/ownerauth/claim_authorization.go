@@ -63,6 +63,11 @@ func (s *Service) AuthorizeDeviceClaim(raw, bootstrapID, deviceID string) (strin
 // authorizations. It deliberately requires both IDs before any long-lived device
 // credential can be issued by the backend claim service.
 func (s *Service) HandleBoundClaimAuthorization(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	var request struct {
 		BootstrapID string `json:"bootstrap_id"`
 		DeviceID    string `json:"device_id"`
