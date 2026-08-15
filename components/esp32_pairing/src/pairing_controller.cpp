@@ -86,7 +86,9 @@ void PairingController::handle_backend_event(const PairingBackendEvent& event,
     }
     const uint64_t wall_ms = static_cast<uint64_t>(wall) * 1'000ULL;
     if (event.expires_at_unix_ms <= wall_ms) {
-      (void)fsm_.server_expired(event.session_id_view());
+      // A peer can receive this while still in discovery and therefore has no
+      // local session ID to match. Expire the active local attempt directly.
+      fsm_.tick(fsm_.deadline_ms());
       stop_radio();
       return;
     }
@@ -104,15 +106,15 @@ void PairingController::handle_backend_event(const PairingBackendEvent& event,
     break;
   }
   case PairingBackendEventType::succeeded:
-    (void)fsm_.server_success(now_ms, event.session_id_view());
+    if (!fsm_.server_success(now_ms, event.session_id_view())) fsm_.disconnected();
     stop_radio();
     break;
   case PairingBackendEventType::rejected:
-    (void)fsm_.server_rejected(event.session_id_view());
+    if (!fsm_.server_rejected(event.session_id_view())) fsm_.disconnected();
     stop_radio();
     break;
   case PairingBackendEventType::expired:
-    (void)fsm_.server_expired(event.session_id_view());
+    if (!fsm_.server_expired(event.session_id_view())) fsm_.disconnected();
     stop_radio();
     break;
   case PairingBackendEventType::disconnected:
