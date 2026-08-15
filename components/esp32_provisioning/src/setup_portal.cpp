@@ -16,7 +16,7 @@ namespace companion::provisioning {
 namespace {
 constexpr size_t kMaximumBodyBytes = 4 * 1024;
 constexpr char kNonceHeader[] = "X-Companion-Setup-Nonce";
-constexpr char kFullHtml[] = R"HTML(<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>Companion Setup</title><style>body{font-family:sans-serif;max-width:34rem;margin:2rem auto;padding:0 1rem}label{display:block;margin:.8rem 0}input{width:100%;padding:.6rem;box-sizing:border-box}button{padding:.7rem 1rem}</style><h1>Companion Setup</h1><form id=f><label>Wi-Fi SSID<input name=wifi_ssid required maxlength=32></label><label>Wi-Fi password<input name=wifi_password type=password maxlength=63></label><label>Companion WSS URL<input name=server_url required placeholder="wss://..." maxlength=512></label><label>Bootstrap ID<input name=bootstrap_id required maxlength=128></label><label>Claim authorization<input name=claim_authorization type=password required maxlength=1024></label><label>Idempotency key<input name=idempotency_key required minlength=8 maxlength=128></label><button>Save and reboot</button></form><pre id=o></pre><script>let nonce='';async function setupNonce(){const r=await fetch('/nonce',{cache:'no-store'});if(!r.ok)throw new Error('nonce');nonce=(await r.text()).trim()}setupNonce().catch(()=>o.textContent='Setup session unavailable. Reload this page.');f.onsubmit=async e=>{e.preventDefault();try{if(!nonce)await setupNonce();o.textContent='Saving...';const x=Object.fromEntries(new FormData(f));const r=await fetch('/configure',{method:'POST',headers:{'Content-Type':'application/json','X-Companion-Setup-Nonce':nonce},body:JSON.stringify(x)});o.textContent=r.ok?'Saved. Companion will reboot.':'Invalid or expired setup session.'}catch(_){o.textContent='Setup session unavailable. Reload this page.'}}</script>)HTML";
+constexpr char kFullHtml[] = R"HTML(<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>Companion Setup</title><style>body{font-family:sans-serif;max-width:34rem;margin:2rem auto;padding:0 1rem}label{display:block;margin:.8rem 0}input{width:100%;padding:.6rem;box-sizing:border-box}button{padding:.7rem 1rem}.ref{font:600 1rem monospace;word-break:break-all}.muted{color:#666}</style><h1>Companion Setup</h1><p>1. Connect Wi-Fi and choose your Companion backend. 2. Open the owner link, sign in, and create one short claim code. 3. Enter that code here.</p><div id=refs><p>Device: <span id=device class=ref>loading...</span></p><p>Bootstrap: <span id=bootstrap class=ref>loading...</span></p><p><a id=owner target=_blank rel="noopener noreferrer">Open owner claim page</a></p></div><form id=f><label>Wi-Fi SSID<input name=wifi_ssid required maxlength=32></label><label>Wi-Fi password<input name=wifi_password type=password maxlength=63></label><label>Companion WSS URL<input name=server_url required placeholder="wss://..." maxlength=512></label><label>Claim code<input name=claim_code required autocomplete=one-time-code inputmode=text pattern="[A-Za-z2-9]{5}-?[A-Za-z2-9]{5}" maxlength=11 placeholder="ABCDE-23456"></label><button>Save and claim</button></form><p class=muted>The device generates the bootstrap and idempotency values. No device credential is shown in this page.</p><pre id=o></pre><script>let nonce='',info=null;async function setupNonce(){const r=await fetch('/nonce',{cache:'no-store'});if(!r.ok)throw new Error('nonce');nonce=(await r.text()).trim()}function ownerLink(){if(!info)return;try{const raw=f.elements.server_url.value.trim();if(!raw.startsWith('wss://'))throw 0;const u=new URL('https://'+raw.slice(6));u.pathname='/v1/owner/device-claim';u.search='?bootstrap_id='+encodeURIComponent(info.bootstrap_id)+'&device_id='+encodeURIComponent(info.device_id);owner.href=u.toString();owner.removeAttribute('aria-disabled')}catch(_){owner.removeAttribute('href');owner.setAttribute('aria-disabled','true')}}async function setupInfo(){const r=await fetch('/setup-info',{cache:'no-store'});if(!r.ok)throw new Error('info');info=await r.json();device.textContent=info.device_id;bootstrap.textContent=info.bootstrap_id;ownerLink()}Promise.all([setupNonce(),setupInfo()]).catch(()=>o.textContent='Setup session unavailable. Reload this page.');f.elements.server_url.addEventListener('input',ownerLink);f.onsubmit=async e=>{e.preventDefault();try{if(!nonce)await setupNonce();if(!info)await setupInfo();o.textContent='Saving...';const x=Object.fromEntries(new FormData(f));const r=await fetch('/configure',{method:'POST',headers:{'Content-Type':'application/json','X-Companion-Setup-Nonce':nonce},body:JSON.stringify(x)});o.textContent=r.ok?'Saved. Companion will reboot and claim.':'Invalid setup data or claim code.'}catch(_){o.textContent='Setup session unavailable. Reload this page.'}}</script>)HTML";
 constexpr char kWifiHtml[] = R"HTML(<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>Companion Wi-Fi</title><style>body{font-family:sans-serif;max-width:34rem;margin:2rem auto;padding:0 1rem}label{display:block;margin:.8rem 0}input{width:100%;padding:.6rem;box-sizing:border-box}button{padding:.7rem 1rem}</style><h1>Change Companion Wi-Fi</h1><p>Backend identity and device credential will be preserved.</p><form id=f><label>Wi-Fi SSID<input name=wifi_ssid required maxlength=32></label><label>Wi-Fi password<input name=wifi_password type=password maxlength=63></label><button>Save Wi-Fi and reboot</button></form><pre id=o></pre><script>let nonce='';async function setupNonce(){const r=await fetch('/nonce',{cache:'no-store'});if(!r.ok)throw new Error('nonce');nonce=(await r.text()).trim()}setupNonce().catch(()=>o.textContent='Setup session unavailable. Reload this page.');f.onsubmit=async e=>{e.preventDefault();try{if(!nonce)await setupNonce();o.textContent='Saving...';const x=Object.fromEntries(new FormData(f));const r=await fetch('/configure',{method:'POST',headers:{'Content-Type':'application/json','X-Companion-Setup-Nonce':nonce},body:JSON.stringify(x)});o.textContent=r.ok?'Saved. Companion will reboot.':'Invalid or expired setup session.'}catch(_){o.textContent='Setup session unavailable. Reload this page.'}}</script>)HTML";
 
 template <size_t N>
@@ -25,6 +25,14 @@ bool copy_json_string(const cJSON* root, const char* name, FixedSecret<N>& outpu
   if (!cJSON_IsString(item) || item->valuestring == nullptr) return false;
   const std::string_view value(item->valuestring);
   if (value.size() >= output.value.size()) return false;
+  output.value.fill('\0');
+  std::memcpy(output.value.data(), value.data(), value.size());
+  return true;
+}
+
+template <size_t N>
+bool copy_view(std::string_view value, FixedSecret<N>& output) {
+  if (value.empty() || value.size() >= output.value.size()) return false;
   output.value.fill('\0');
   std::memcpy(output.value.data(), value.data(), value.size());
   return true;
@@ -71,16 +79,19 @@ std::string_view SetupPortal::password() const {
   return {password_.data(), std::strlen(password_.data())};
 }
 
-bool SetupPortal::start(std::string_view device_suffix) {
-  return start_impl(device_suffix, false);
+bool SetupPortal::start(std::string_view device_suffix, std::string_view device_id) {
+  return start_impl(device_suffix, device_id, false);
 }
 
 bool SetupPortal::start_wifi_only(std::string_view device_suffix) {
-  return start_impl(device_suffix, true);
+  return start_impl(device_suffix, {}, true);
 }
 
-bool SetupPortal::start_impl(std::string_view device_suffix, bool wifi_only) {
-  if (device_suffix.empty()) return false;
+bool SetupPortal::start_impl(std::string_view device_suffix, std::string_view device_id,
+                             bool wifi_only) {
+  if (device_suffix.empty() || (!wifi_only && (device_id.empty() || device_id.size() >= device_id_.size()))) {
+    return false;
+  }
   configured_.store(false);
   pending_ = {};
   wifi_ = {};
@@ -88,10 +99,18 @@ bool SetupPortal::start_impl(std::string_view device_suffix, bool wifi_only) {
   ssid_.fill('\0');
   password_.fill('\0');
   session_nonce_.fill('\0');
+  bootstrap_id_.fill('\0');
+  idempotency_key_.fill('\0');
+  device_id_.fill('\0');
   const std::string_view suffix = device_suffix.substr(device_suffix.size() > 4 ? device_suffix.size() - 4 : 0);
   std::snprintf(ssid_.data(), ssid_.size(), "Companion-%.*s", static_cast<int>(suffix.size()), suffix.data());
   random_password(password_);
   random_nonce(session_nonce_);
+  if (!wifi_only) {
+    random_nonce(bootstrap_id_);
+    random_nonce(idempotency_key_);
+    std::memcpy(device_id_.data(), device_id.data(), device_id.size());
+  }
 
   esp_err_t err = esp_netif_init();
   if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) return false;
@@ -132,14 +151,22 @@ bool SetupPortal::start_impl(std::string_view device_suffix, bool wifi_only) {
   nonce_uri.method = HTTP_GET;
   nonce_uri.handler = &SetupPortal::handle_nonce;
   nonce_uri.user_ctx = this;
+  httpd_uri_t info_uri{};
+  info_uri.uri = "/setup-info";
+  info_uri.method = HTTP_GET;
+  info_uri.handler = &SetupPortal::handle_info;
+  info_uri.user_ctx = this;
   httpd_uri_t configure_uri{};
   configure_uri.uri = "/configure";
   configure_uri.method = HTTP_POST;
   configure_uri.handler = &SetupPortal::handle_configure;
   configure_uri.user_ctx = this;
-  return httpd_register_uri_handler(server_, &index) == ESP_OK &&
-         httpd_register_uri_handler(server_, &nonce_uri) == ESP_OK &&
-         httpd_register_uri_handler(server_, &configure_uri) == ESP_OK;
+  if (httpd_register_uri_handler(server_, &index) != ESP_OK ||
+      httpd_register_uri_handler(server_, &nonce_uri) != ESP_OK ||
+      httpd_register_uri_handler(server_, &configure_uri) != ESP_OK) {
+    return false;
+  }
+  return wifi_only_ || httpd_register_uri_handler(server_, &info_uri) == ESP_OK;
 }
 
 bool SetupPortal::take_pending(PendingConfig& out) {
@@ -147,6 +174,8 @@ bool SetupPortal::take_pending(PendingConfig& out) {
   out = pending_;
   pending_ = {};
   session_nonce_.fill('\0');
+  bootstrap_id_.fill('\0');
+  idempotency_key_.fill('\0');
   return true;
 }
 
@@ -173,6 +202,30 @@ esp_err_t SetupPortal::handle_nonce(httpd_req_t* request) {
   httpd_resp_set_type(request, "text/plain; charset=utf-8");
   httpd_resp_set_hdr(request, "Cache-Control", "no-store");
   return httpd_resp_send(request, portal->session_nonce_.data(), HTTPD_RESP_USE_STRLEN);
+}
+
+esp_err_t SetupPortal::handle_info(httpd_req_t* request) {
+  if (request == nullptr || request->user_ctx == nullptr) return ESP_FAIL;
+  return static_cast<SetupPortal*>(request->user_ctx)->setup_info(request);
+}
+
+esp_err_t SetupPortal::setup_info(httpd_req_t* request) const {
+  if (wifi_only_ || bootstrap_id_[0] == '\0' || device_id_[0] == '\0') {
+    httpd_resp_send_err(request, HTTPD_404_NOT_FOUND, "setup info unavailable");
+    return ESP_OK;
+  }
+  cJSON* root = cJSON_CreateObject();
+  if (root == nullptr) return ESP_ERR_NO_MEM;
+  cJSON_AddStringToObject(root, "bootstrap_id", bootstrap_id_.data());
+  cJSON_AddStringToObject(root, "device_id", device_id_.data());
+  char* encoded = cJSON_PrintUnformatted(root);
+  cJSON_Delete(root);
+  if (encoded == nullptr) return ESP_ERR_NO_MEM;
+  httpd_resp_set_type(request, "application/json");
+  httpd_resp_set_hdr(request, "Cache-Control", "no-store");
+  const esp_err_t result = httpd_resp_sendstr(request, encoded);
+  cJSON_free(encoded);
+  return result;
 }
 
 esp_err_t SetupPortal::handle_configure(httpd_req_t* request) {
@@ -226,9 +279,10 @@ esp_err_t SetupPortal::configure(httpd_req_t* request) {
     ok = copy_json_string(root, "wifi_ssid", candidate.wifi_ssid) &&
          copy_json_string(root, "wifi_password", candidate.wifi_password) &&
          copy_json_string(root, "server_url", candidate.server_url) &&
-         copy_json_string(root, "bootstrap_id", candidate.bootstrap_id) &&
-         copy_json_string(root, "claim_authorization", candidate.claim_authorization) &&
-         copy_json_string(root, "idempotency_key", candidate.idempotency_key) &&
+         copy_json_string(root, "claim_code", candidate.claim_authorization) &&
+         valid_human_claim_code(candidate.claim_authorization.view()) &&
+         copy_view(std::string_view(bootstrap_id_.data()), candidate.bootstrap_id) &&
+         copy_view(std::string_view(idempotency_key_.data()), candidate.idempotency_key) &&
          validate_pending(candidate);
     if (ok) pending_ = candidate;
   }
