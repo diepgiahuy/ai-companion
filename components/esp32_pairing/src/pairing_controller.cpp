@@ -35,14 +35,24 @@ void PairingController::tick(uint64_t now_ms) {
     (void)fsm_.observe_candidate(now_ms, observation.id(), observation.id());
   }
 
-  if (fsm_.state() == State::discovering && now_ms >= scan_until_ms_) {
+  if (fsm_.state() == State::discovering && scan_until_ms_ != 0 &&
+      now_ms >= scan_until_ms_) {
     stop_radio();
-    const std::string_view candidate = fsm_.candidate_alias();
-    const std::string_view evidence = fsm_.proximity_evidence_id();
-    if (!fsm_.commit_candidate(now_ms)) {
-      if (fsm_.state() != State::idle) fsm_.cancel();
+    if (fsm_.ambiguous()) {
+      (void)fsm_.commit_candidate(now_ms); // records StopReason::ambiguous.
       return;
     }
+    if (fsm_.candidate_alias().empty()) {
+      return; // bounded FSM deadline will end the no-peer attempt.
+    }
+    if (!fsm_.should_initiate()) {
+      // The lexically larger rotating alias is the peer for this attempt. It
+      // waits for pairing.session_created instead of creating a reversed race.
+      return;
+    }
+    const std::string_view candidate = fsm_.candidate_alias();
+    const std::string_view evidence = fsm_.proximity_evidence_id();
+    if (!fsm_.commit_candidate(now_ms)) return;
     if (!backend_.create_pairing_session(candidate, evidence)) {
       fsm_.disconnected();
       return;
@@ -86,14 +96,10 @@ void PairingController::handle_backend_event(const PairingBackendEvent& event,
     }
     const uint64_t wall_ms = static_cast<uint64_t>(wall) * 1'000ULL;
     if (event.expires_at_unix_ms <= wall_ms) {
-      // A peer can receive this while still in discovery and therefore has no
-      // local session ID to match. Expire the active local attempt directly.
       fsm_.tick(fsm_.deadline_ms());
       stop_radio();
       return;
     }
-    // Translate server wall-clock expiry into the FSM's monotonic domain and
-    // cap it to the backend's two-minute contract.
     const uint64_t remaining = std::min<uint64_t>(
         event.expires_at_unix_ms - wall_ms, 120'000ULL);
     if (!fsm_.session_created(now_ms, event.session_id_view(),
