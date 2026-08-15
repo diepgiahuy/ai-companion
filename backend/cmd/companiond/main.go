@@ -229,7 +229,7 @@ func main() {
 	supervisor.Go("market-watcher", false, func(ctx context.Context) error { runMarketWatcher(ctx, data, marketService, logger); return nil })
 
 	httpServer := &http.Server{
-		Addr: address, Handler: deviceOriginGuard(service.Handler()), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 90 * time.Second,
+		Addr: address, Handler: ownerAuthFromEnvironment(deviceOriginGuard(service.Handler()), data), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 90 * time.Second,
 	}
 	supervisor.Go("http-server", true, func(context.Context) error {
 		logger.Info("companion server listening", "address", address)
