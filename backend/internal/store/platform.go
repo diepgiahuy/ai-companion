@@ -144,9 +144,16 @@ func (s *Store) migratePlatform() error {
             completion_tokens INTEGER NOT NULL,total_tokens INTEGER NOT NULL,created_at TEXT NOT NULL
         )`,
 		`CREATE TABLE IF NOT EXISTS privacy_policies (
-            user_id TEXT PRIMARY KEY,save_voice_audio INTEGER NOT NULL DEFAULT 1,long_term_memory_enabled INTEGER NOT NULL DEFAULT 1,
-            conversation_retention_days INTEGER NOT NULL DEFAULT 0,voice_memo_retention_days INTEGER NOT NULL DEFAULT 0,memory_retention_days INTEGER NOT NULL DEFAULT 0,updated_at TEXT NOT NULL
-        )`,
+			user_id TEXT PRIMARY KEY,save_voice_audio INTEGER NOT NULL DEFAULT 1,voice_mail_policy TEXT NOT NULL DEFAULT 'disabled',long_term_memory_enabled INTEGER NOT NULL DEFAULT 1,
+			conversation_retention_days INTEGER NOT NULL DEFAULT 0,voice_memo_retention_days INTEGER NOT NULL DEFAULT 0,memory_retention_days INTEGER NOT NULL DEFAULT 0,updated_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS voice_mail_items (
+			id TEXT PRIMARY KEY,sender_user_id TEXT NOT NULL,sender_device_id TEXT NOT NULL,recipient_user_id TEXT NOT NULL,recipient_device_id TEXT NOT NULL DEFAULT '',
+			object_key TEXT NOT NULL UNIQUE,media_format TEXT NOT NULL,duration_ms INTEGER NOT NULL,size_bytes INTEGER NOT NULL,checksum_sha256 TEXT NOT NULL,
+			policy TEXT NOT NULL,state TEXT NOT NULL,playback_id TEXT NOT NULL DEFAULT '',lease_expires_at TEXT,expires_at TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_voice_mail_unread ON voice_mail_items(recipient_user_id,recipient_device_id,state,created_at,id)`,
+		`CREATE INDEX IF NOT EXISTS idx_voice_mail_cleanup ON voice_mail_items(state,expires_at,updated_at)`,
 		`CREATE TABLE IF NOT EXISTS feature_modules (
             id TEXT PRIMARY KEY,version INTEGER NOT NULL,lifecycle TEXT NOT NULL,execution TEXT NOT NULL,manifest_json TEXT NOT NULL,updated_at TEXT NOT NULL
         )`,
@@ -159,6 +166,7 @@ func (s *Store) migratePlatform() error {
 	for _, c := range []struct{ table, column, alter string }{
 		{"device_credentials", "tenant_id", `ALTER TABLE device_credentials ADD COLUMN tenant_id TEXT NOT NULL DEFAULT ''`},
 		{"device_credentials", "plan", `ALTER TABLE device_credentials ADD COLUMN plan TEXT NOT NULL DEFAULT ''`},
+		{"privacy_policies", "voice_mail_policy", `ALTER TABLE privacy_policies ADD COLUMN voice_mail_policy TEXT NOT NULL DEFAULT 'disabled'`},
 	} {
 		if err := s.ensureColumn(c.table, c.column, c.alter); err != nil {
 			return err
@@ -698,7 +706,7 @@ func (s *Store) GetPrivacyPolicy(ctx context.Context, user string) (privacy.Poli
 	var p privacy.Policy
 	var save, mem int
 	var updated string
-	err := s.db.QueryRowContext(ctx, `SELECT user_id,save_voice_audio,long_term_memory_enabled,conversation_retention_days,voice_memo_retention_days,memory_retention_days,updated_at FROM privacy_policies WHERE user_id=?`, owner(user)).Scan(&p.UserID, &save, &mem, &p.ConversationRetentionDays, &p.VoiceMemoRetentionDays, &p.MemoryRetentionDays, &updated)
+	err := s.db.QueryRowContext(ctx, `SELECT user_id,save_voice_audio,voice_mail_policy,long_term_memory_enabled,conversation_retention_days,voice_memo_retention_days,memory_retention_days,updated_at FROM privacy_policies WHERE user_id=?`, owner(user)).Scan(&p.UserID, &save, &p.VoiceMailPolicy, &mem, &p.ConversationRetentionDays, &p.VoiceMemoRetentionDays, &p.MemoryRetentionDays, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return privacy.Policy{}, false, nil
 	}
@@ -710,7 +718,10 @@ func (s *Store) GetPrivacyPolicy(ctx context.Context, user string) (privacy.Poli
 	return p, true, nil
 }
 func (s *Store) SetPrivacyPolicy(ctx context.Context, p privacy.Policy) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO privacy_policies(user_id,save_voice_audio,long_term_memory_enabled,conversation_retention_days,voice_memo_retention_days,memory_retention_days,updated_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET save_voice_audio=excluded.save_voice_audio,long_term_memory_enabled=excluded.long_term_memory_enabled,conversation_retention_days=excluded.conversation_retention_days,voice_memo_retention_days=excluded.voice_memo_retention_days,memory_retention_days=excluded.memory_retention_days,updated_at=excluded.updated_at`, owner(p.UserID), boolInt(p.SaveVoiceAudio), boolInt(p.LongTermMemoryEnabled), p.ConversationRetentionDays, p.VoiceMemoRetentionDays, p.MemoryRetentionDays, p.UpdatedAt.UTC().Format(time.RFC3339Nano))
+	if p.VoiceMailPolicy == "" {
+		p.VoiceMailPolicy = "disabled"
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO privacy_policies(user_id,save_voice_audio,voice_mail_policy,long_term_memory_enabled,conversation_retention_days,voice_memo_retention_days,memory_retention_days,updated_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET save_voice_audio=excluded.save_voice_audio,voice_mail_policy=excluded.voice_mail_policy,long_term_memory_enabled=excluded.long_term_memory_enabled,conversation_retention_days=excluded.conversation_retention_days,voice_memo_retention_days=excluded.voice_memo_retention_days,memory_retention_days=excluded.memory_retention_days,updated_at=excluded.updated_at`, owner(p.UserID), boolInt(p.SaveVoiceAudio), p.VoiceMailPolicy, boolInt(p.LongTermMemoryEnabled), p.ConversationRetentionDays, p.VoiceMemoRetentionDays, p.MemoryRetentionDays, p.UpdatedAt.UTC().Format(time.RFC3339Nano))
 	return err
 }
 func (s *Store) ApplyRetention(ctx context.Context, now time.Time) (privacy.RetentionReport, error) {

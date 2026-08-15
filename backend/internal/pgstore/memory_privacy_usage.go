@@ -204,7 +204,7 @@ func vectorCosine(a, b []float32) float64 {
 
 func (s *Store) GetPrivacyPolicy(ctx context.Context, userID string) (privacy.Policy, bool, error) {
 	var policy privacy.Policy
-	err := s.pool.QueryRow(ctx, `SELECT user_id,save_voice_audio,long_term_memory_enabled,conversation_retention_days,voice_memo_retention_days,memory_retention_days,updated_at FROM privacy_policies WHERE user_id=$1`, owner(userID)).Scan(&policy.UserID, &policy.SaveVoiceAudio, &policy.LongTermMemoryEnabled, &policy.ConversationRetentionDays, &policy.VoiceMemoRetentionDays, &policy.MemoryRetentionDays, &policy.UpdatedAt)
+	err := s.pool.QueryRow(ctx, `SELECT user_id,save_voice_audio,voice_mail_policy,long_term_memory_enabled,conversation_retention_days,voice_memo_retention_days,memory_retention_days,updated_at FROM privacy_policies WHERE user_id=$1`, owner(userID)).Scan(&policy.UserID, &policy.SaveVoiceAudio, &policy.VoiceMailPolicy, &policy.LongTermMemoryEnabled, &policy.ConversationRetentionDays, &policy.VoiceMemoRetentionDays, &policy.MemoryRetentionDays, &policy.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		return policy, false, nil
 	}
@@ -219,7 +219,10 @@ func (s *Store) SetPrivacyPolicy(ctx context.Context, policy privacy.Policy) err
 	if policy.UpdatedAt.IsZero() {
 		policy.UpdatedAt = time.Now().UTC()
 	}
-	_, err := s.pool.Exec(ctx, `INSERT INTO privacy_policies(user_id,save_voice_audio,long_term_memory_enabled,conversation_retention_days,voice_memo_retention_days,memory_retention_days,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(user_id) DO UPDATE SET save_voice_audio=EXCLUDED.save_voice_audio,long_term_memory_enabled=EXCLUDED.long_term_memory_enabled,conversation_retention_days=EXCLUDED.conversation_retention_days,voice_memo_retention_days=EXCLUDED.voice_memo_retention_days,memory_retention_days=EXCLUDED.memory_retention_days,updated_at=EXCLUDED.updated_at`, owner(policy.UserID), policy.SaveVoiceAudio, policy.LongTermMemoryEnabled, policy.ConversationRetentionDays, policy.VoiceMemoRetentionDays, policy.MemoryRetentionDays, policy.UpdatedAt.UTC())
+	if policy.VoiceMailPolicy == "" {
+		policy.VoiceMailPolicy = "disabled"
+	}
+	_, err := s.pool.Exec(ctx, `INSERT INTO privacy_policies(user_id,save_voice_audio,voice_mail_policy,long_term_memory_enabled,conversation_retention_days,voice_memo_retention_days,memory_retention_days,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(user_id) DO UPDATE SET save_voice_audio=EXCLUDED.save_voice_audio,voice_mail_policy=EXCLUDED.voice_mail_policy,long_term_memory_enabled=EXCLUDED.long_term_memory_enabled,conversation_retention_days=EXCLUDED.conversation_retention_days,voice_memo_retention_days=EXCLUDED.voice_memo_retention_days,memory_retention_days=EXCLUDED.memory_retention_days,updated_at=EXCLUDED.updated_at`, owner(policy.UserID), policy.SaveVoiceAudio, policy.VoiceMailPolicy, policy.LongTermMemoryEnabled, policy.ConversationRetentionDays, policy.VoiceMemoRetentionDays, policy.MemoryRetentionDays, policy.UpdatedAt.UTC())
 	return err
 }
 

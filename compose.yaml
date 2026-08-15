@@ -18,6 +18,7 @@ services:
       COMPANION_DATABASE_URL: "postgres://companion_app:companion_app_dev@postgres:5432/companion?sslmode=disable"
       COMPANION_POSTGRES_ALLOW_INSECURE: "true"
       COMPANION_RECORDINGS_DIR: "/data/recordings"
+      COMPANION_VOICE_MAIL_DIR: "/data/voice-mail"
       MOCK_TRANSCRIPT: "hôm nay đi chợ 50k"
     ports: ["8000:8000"]
     volumes: ["companion-data:/data"]

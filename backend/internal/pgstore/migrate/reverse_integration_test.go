@@ -69,8 +69,8 @@ func TestPostgresToSQLiteRecoveryParityAndRuntimeShape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(reverse.Tables) != 24 {
-		t.Fatalf("reverse table coverage=%d want=24", len(reverse.Tables))
+	if len(reverse.Tables) != 25 {
+		t.Fatalf("reverse table coverage=%d want=25", len(reverse.Tables))
 	}
 	if !reflect.DeepEqual(forward.Tables, reverse.Tables) {
 		t.Fatalf("reverse recovery digest differs from authoritative PostgreSQL\nforward=%+v\nreverse=%+v", forward.Tables, reverse.Tables)

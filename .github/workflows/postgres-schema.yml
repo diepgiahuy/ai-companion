@@ -156,7 +156,7 @@ jobs:
             -w /src/backend \
             -e COMPANION_POSTGRES_APP_TEST_DSN='postgres://companion_app:companion_app_test@127.0.0.1:55432/companion?sslmode=disable' \
             golang:1.26.6-bookworm \
-            sh -c 'set -eu; go test -tags="apppge2e,compilecheck" ./internal/pgstore -run "^TestPostgresApplicationServerToolRestartNoSQLite$" -count=1 -timeout=2m'
+            sh -c 'set -eu; go test -tags="apppge2e,compilecheck" ./internal/pgstore -run "^(TestPostgresApplicationServerToolRestartNoSQLite|TestVoiceMailAuthenticatedApplicationLifecycle)$" -count=1 -timeout=2m'
 
       - name: Build fresh migration-parity database
         run: |

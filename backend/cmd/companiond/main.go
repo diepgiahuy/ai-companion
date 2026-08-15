@@ -32,6 +32,7 @@ import (
 	"companion-server/internal/server"
 	"companion-server/internal/supervision"
 	"companion-server/internal/usage"
+	"companion-server/internal/voicemail"
 	promptpkg "companion-server/prompts"
 )
 
@@ -102,13 +103,23 @@ func main() {
 	}
 	firmwareService := controlplane.NewFirmware(data, otaPublicKey, requireOTASignature)
 	privacyService := privacy.New(data)
+	voiceMailBlobs, err := voicemail.NewFileSystem(value("COMPANION_VOICE_MAIL_DIR", "data/voice-mail"))
+	if err != nil {
+		logger.Error("initialize voice mail blob store", "error", err)
+		os.Exit(1)
+	}
+	voiceMailService, err := voicemail.New(data, voiceMailBlobs)
+	if err != nil {
+		logger.Error("initialize voice mail service", "error", err)
+		os.Exit(1)
+	}
 	jobConfig, err := loadJobConfig()
 	if err != nil {
 		logger.Error("load River job configuration", "error", err)
 		os.Exit(1)
 	}
 	jobCtx, cancelJobs := context.WithTimeout(context.Background(), 15*time.Second)
-	jobRuntime, err := jobs.New(jobCtx, data.Pool(), privacyService, logger, jobConfig)
+	jobRuntime, err := jobs.New(jobCtx, data.Pool(), maintenanceService{privacy: privacyService, voiceMail: voiceMailService}, logger, jobConfig)
 	cancelJobs()
 	if err != nil {
 		logger.Error("initialize River runtime", "error", err, "hint", "run companion-river-migrate up with the migration/admin database URL")
@@ -204,6 +215,7 @@ func main() {
 		server.WithControlPlane(control), server.WithFirmwareService(firmwareService), server.WithPrivacyService(privacyService), server.WithFeatureCatalog(featureCatalog), server.WithAdminToken(os.Getenv("COMPANION_ADMIN_TOKEN")),
 		server.WithDeviceCredentialManager(data), server.WithEntitlementManager(data), server.WithDeviceAuthenticator(data),
 		server.WithDeviceCapabilities(deviceCapabilities), server.WithObservabilityRecorder(observer), server.WithJobControl(jobRuntime),
+		server.WithVoiceMail(voiceMailService),
 	}
 	service := server.New(components, logger, serverOptions...)
 	rootCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -213,7 +225,7 @@ func main() {
 	supervisor.Go("server-background", false, func(ctx context.Context) error { service.RunBackground(ctx); return nil })
 	supervisor.Go("river", true, jobRuntime.Run)
 	_ = data.RecoverOutbox(supervisor.Context())
-	supervisor.Go("outbox", false, func(ctx context.Context) error { runOutbox(ctx, data, logger); return nil })
+	supervisor.Go("outbox", false, func(ctx context.Context) error { runOutbox(ctx, data, service.HandleEvent, logger); return nil })
 	supervisor.Go("market-watcher", false, func(ctx context.Context) error { runMarketWatcher(ctx, data, marketService, logger); return nil })
 
 	httpServer := &http.Server{
@@ -301,7 +313,7 @@ func value(name, fallback string) string {
 	return fallback
 }
 
-func runOutbox(ctx context.Context, out events.Outbox, logger *slog.Logger) {
+func runOutbox(ctx context.Context, out events.Outbox, handler events.Handler, logger *slog.Logger) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
@@ -309,12 +321,29 @@ func runOutbox(ctx context.Context, out events.Outbox, logger *slog.Logger) {
 		case <-ctx.Done():
 			return
 		case now := <-ticker.C:
-			_ = events.Dispatch(ctx, out, func(_ context.Context, e events.Event) error {
+			_ = events.Dispatch(ctx, out, func(eventCtx context.Context, e events.Event) error {
 				logger.Debug("domain event", "type", e.Type, "subject", e.Subject, "event_id", e.ID)
+				if handler != nil {
+					return handler(eventCtx, e)
+				}
 				return nil
 			}, now, 50)
 		}
 	}
+}
+
+type maintenanceService struct {
+	privacy   *privacy.Service
+	voiceMail *voicemail.Service
+}
+
+func (s maintenanceService) ApplyRetention(ctx context.Context) (privacy.RetentionReport, error) {
+	report, err := s.privacy.ApplyRetention(ctx)
+	if err != nil {
+		return report, err
+	}
+	_, err = s.voiceMail.Cleanup(ctx, 100)
+	return report, err
 }
 
 type marketWatchRepo interface {

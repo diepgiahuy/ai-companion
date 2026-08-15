@@ -17,31 +17,49 @@ import (
 
 func TestSQLiteToPostgresFullParity(t *testing.T) {
 	dsn := strings.TrimSpace(os.Getenv("COMPANION_POSTGRES_MIGRATION_TEST_DSN"))
-	if dsn == "" { t.Skip("COMPANION_POSTGRES_MIGRATION_TEST_DSN not set") }
+	if dsn == "" {
+		t.Skip("COMPANION_POSTGRES_MIGRATION_TEST_DSN not set")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
 	pool, err := pgstore.Open(ctx, pgstore.PoolConfig{DSN: dsn, MaxConns: 4})
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer pool.Close()
 	resetPostgres(t, ctx, pool)
 
 	path := filepath.Join(t.TempDir(), "companion.sqlite")
 	current, err := store.Open(path)
-	if err != nil { t.Fatal(err) }
-	if err := current.Close(); err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := current.Close(); err != nil {
+		t.Fatal(err)
+	}
 
 	source, err := sql.Open("sqlite", path)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer source.Close()
 	seedSQLite(t, source)
 
 	report, err := pgmigrate.ImportSQLite(ctx, source, pool)
-	if err != nil { t.Fatal(err) }
-	if len(report.Tables) != 24 { t.Fatalf("table coverage=%d want=24", len(report.Tables)) }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Tables) != 25 {
+		t.Fatalf("table coverage=%d want=25", len(report.Tables))
+	}
 	for table, digest := range report.Tables {
-		if digest.Rows == 0 { t.Fatalf("table %s has no parity fixture rows", table) }
-		if len(digest.SHA256) != 64 { t.Fatalf("table %s invalid digest %q", table, digest.SHA256) }
+		if digest.Rows == 0 {
+			t.Fatalf("table %s has no parity fixture rows", table)
+		}
+		if len(digest.SHA256) != 64 {
+			t.Fatalf("table %s invalid digest %q", table, digest.SHA256)
+		}
 	}
 
 	if _, err := pgmigrate.ImportSQLite(ctx, source, pool); err == nil || !strings.Contains(err.Error(), "not fresh") {
@@ -53,12 +71,16 @@ func resetPostgres(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
 	// This helper is intentionally test-only. Production migration never truncates a target.
 	const truncate = `TRUNCATE TABLE
-turn_results,notes,expenses,journal_entries,reminders,conversation_messages,budgets,voice_memos,
+turn_results,notes,expenses,journal_entries,reminders,conversation_messages,budgets,voice_memos,voice_mail_items,
 idempotency_records,legacy_idempotency_reservations,memory_vectors,memories,device_twins,config_overrides,
 config_generation,feature_flags,entitlements,device_credentials,outbox,market_watches,firmware_releases,llm_usage,
 privacy_policies,feature_modules RESTART IDENTITY CASCADE`
-	if _, err := pool.Exec(ctx, truncate); err != nil { t.Fatal(err) }
-	if _, err := pool.Exec(ctx, `INSERT INTO config_generation(id,version) VALUES(1,1)`); err != nil { t.Fatal(err) }
+	if _, err := pool.Exec(ctx, truncate); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO config_generation(id,version) VALUES(1,1)`); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func seedSQLite(t *testing.T, db *sql.DB) {
@@ -73,6 +95,7 @@ func seedSQLite(t *testing.T, db *sql.DB) {
 		`INSERT INTO conversation_messages(id,turn_key,user_id,thread_id,role,content,created_at) VALUES(15,'turn-key','u1','thread-1','user','hello','2026-08-14T19:05:00+07:00')`,
 		`INSERT INTO budgets(user_id,period,limit_vnd,updated_at) VALUES('u1','weekly',1000000,'2026-08-14T19:06:00+07:00')`,
 		`INSERT INTO voice_memos(id,idempotency_key,user_id,device_id,path,transcript,duration_ms,created_at) VALUES(16,'memo-key','u1','dev1','data/recordings/memo.wav','ghi âm',1234,'2026-08-14T19:07:00+07:00')`,
+		`INSERT INTO voice_mail_items(id,sender_user_id,sender_device_id,recipient_user_id,recipient_device_id,object_key,media_format,duration_ms,size_bytes,checksum_sha256,policy,state,playback_id,lease_expires_at,expires_at,created_at,updated_at) VALUES('mail-1','u1','dev1','u2','dev2','opaque-1','ogg_opus',1234,4096,'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','retained','unread','',NULL,'2026-09-14T19:07:00+07:00','2026-08-14T19:07:01+07:00','2026-08-14T19:07:01+07:00')`,
 		`INSERT INTO idempotency_records(actor_id,operation,idempotency_key,request_hash,outcome_json,created_at) VALUES('u1','note.create','idem-1','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','{"z":2, "a":1}','2026-08-14T19:08:00+07:00')`,
 		`INSERT INTO legacy_idempotency_reservations(operation,idempotency_key,source_table,created_at) VALUES('expense.log','legacy-1','expenses','2026-08-14T19:09:00+07:00')`,
 		`INSERT INTO memories(id,user_id,memory_key,kind,value,valid_from,valid_to,source,confidence,embedding,created_at,deleted_at) VALUES(17,'u1','language','semantic','Vietnamese','2026-08-14T19:10:00+07:00',NULL,'voice',0.9,'[0.1, 0.2]','2026-08-14T19:10:01+07:00',NULL)`,
@@ -87,13 +110,19 @@ func seedSQLite(t *testing.T, db *sql.DB) {
 		`INSERT INTO market_watches(id,idempotency_key,user_id,device_id,provider,symbol,currency,operator,threshold,enabled,last_state,created_at) VALUES(18,'watch-key','u1','dev1','provider','GOLD','VND','>=',123.45,1,0,'2026-08-14T19:16:00+07:00')`,
 		`INSERT INTO firmware_releases(metadata_version,version,channel,board,protocol_min,security_version,url,sha256,size,expires_at,signature,manifest_json,created_at) VALUES(3,'1.2.3','stable','esp32-s3',2,4,'https://example.invalid/fw.bin','cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',4096,'2026-09-14T19:17:00+07:00','sig','{"board":"esp32-s3","version":"1.2.3"}','2026-08-14T19:17:00+07:00')`,
 		`INSERT INTO llm_usage(id,user_id,device_id,provider,model,prompt_version,prompt_tokens,completion_tokens,total_tokens,created_at) VALUES(19,'u1','dev1','local','model','p1',10,5,15,'2026-08-14T19:18:00+07:00')`,
-		`INSERT INTO privacy_policies(user_id,save_voice_audio,long_term_memory_enabled,conversation_retention_days,voice_memo_retention_days,memory_retention_days,updated_at) VALUES('u1',0,1,30,7,90,'2026-08-14T19:19:00+07:00')`,
+		`INSERT INTO privacy_policies(user_id,save_voice_audio,voice_mail_policy,long_term_memory_enabled,conversation_retention_days,voice_memo_retention_days,memory_retention_days,updated_at) VALUES('u1',0,'retained',1,30,7,90,'2026-08-14T19:19:00+07:00')`,
 		`INSERT INTO feature_modules(id,version,lifecycle,execution,manifest_json,updated_at) VALUES('module.x',2,'released','backend','{"permissions":["read"]}','2026-08-14T19:20:00+07:00')`,
 	}
 	for _, statement := range statements {
-		if _, err := db.ExecContext(ctx, statement); err != nil { t.Fatalf("seed SQLite statement failed: %v\n%s", err, statement) }
+		if _, err := db.ExecContext(ctx, statement); err != nil {
+			t.Fatalf("seed SQLite statement failed: %v\n%s", err, statement)
+		}
 	}
 	var outboxCount int
-	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM outbox`).Scan(&outboxCount); err != nil { t.Fatal(err) }
-	if outboxCount == 0 { t.Fatal("fixture produced no outbox rows") }
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM outbox`).Scan(&outboxCount); err != nil {
+		t.Fatal(err)
+	}
+	if outboxCount == 0 {
+		t.Fatal("fixture produced no outbox rows")
+	}
 }

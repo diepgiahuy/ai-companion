@@ -17,7 +17,7 @@ The current baseline is materially ahead of the last immutable checkpoint tag.
 - **There is no SQLite product fallback, runtime selector, shadow read, or dual write.** SQLite remains only in explicit migration/recovery tooling and isolated tests.
 - **Atlas owns production schema migration.** Runtime startup verifies the exact expected schema revision and rejects incompatible/newer schema state and over-privileged runtime roles.
 - **Application-level PostgreSQL restart/idempotency/conflict behavior, migration parity, backup/restore, PostgreSQL → SQLite recovery, and Tier-1 PostgreSQL orchestration were exercised before PR #90 merged.** The exact PR #90 head passed production E2E, software-device E2E, PostgreSQL schema/integration, quality/security, module-lock, protocol-v2, CodeQL, and Wokwi workflow checks.
-- **Issue #20 remains open only until Phase D River PR #93 merges.** Direct and hosted pinned-PostgreSQL 18.4 evidence proves transactional enqueue/uniqueness/retry/crash rescue/cancellation/shutdown, least privilege, operational state, restore and rollback on exact head `f4ae44c67dfc679dd7bbdebc47ffd0b817a15844`.
+- **Issue #20 is closed after Phase D River PR #93 merged.** Direct and hosted pinned-PostgreSQL 18.4 evidence proves transactional enqueue/uniqueness/retry/crash rescue/cancellation/shutdown, least privilege, operational state, restore and rollback on exact head `f4ae44c67dfc679dd7bbdebc47ffd0b817a15844`; all post-merge workflows passed on `ed6885acaf2c71b92c3a6ea581a781b415f8322b`.
 - **Real ASR/TTS/model selection remains unproven.** Provider-neutral speech contracts and reference adapters exist, and the model benchmark harness exists, but there is no promoted real VN/EN provider/model result yet.
 - **Physical production proof remains unproven.** Software/host/Wokwi-style evidence does not replace ESP32-S3 acoustic, display/power/RF, capability, or soak evidence.
 
@@ -32,7 +32,7 @@ The current baseline is materially ahead of the last immutable checkpoint tag.
 | Dependency vulnerability reachability | ✅ passed | Plain symbol-reachability `govulncheck` remains blocking |
 | CodeQL | ✅ passed | Keep traced Go build green |
 | PostgreSQL schema + Atlas migration | ✅ merged + hosted proof | Preserve exact artifact pins, integrity checks and least-privilege runtime role |
-| SQLite → PostgreSQL semantic parity | ✅ merged + hosted proof | Keep canonical 24-table normalization/parity regression |
+| SQLite → PostgreSQL semantic parity | ✅ merged + hosted proof | Keep canonical 25-table normalization/parity regression, including voice-mail metadata |
 | PostgreSQL app restart + durable conflict semantics | ✅ merged + hosted proof | Keep restart/reconnect/idempotency regression blocking |
 | Backup / restore + reverse recovery rehearsal | ✅ merged + hosted proof | Keep pg_dump restore and PostgreSQL → SQLite → PostgreSQL round-trip regression |
 | PostgreSQL authoritative hard cut | ✅ merged in #90 | No product SQLite fallback/selector may return |

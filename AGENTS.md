@@ -70,6 +70,12 @@ dependency, CI gate, or hardware setup exists.
 Use the cheapest layer that can detect the failure, then add broader coverage where
 the behavior crosses a real boundary.
 
+`ai_development_workflow.md` defines the required implementation flow, risk levels,
+checkpoints, no-duplicate rule, review boundary, and human-readable status format.
+Normal PRs do not need release-checkpoint artifacts. Use L3 proof only for the
+migration, recovery, concurrency, credential/security, and release risks it can
+actually detect.
+
 - `make test`: repository checks and host/backend tests.
 - `make e2e-offline`: deterministic offline end-to-end path.
 - `make e2e`: local end-to-end path when its dependencies are available.
@@ -97,6 +103,11 @@ Use one accountable lead per issue. Parallelize only workstreams with stable
 contracts and non-overlapping ownership. Separate worktrees or branches are
 preferred; an integrator owns shared contracts, migrations, and merge order. PR size
 is governed by reviewability and risk, not an arbitrary line count.
+
+An agent report is not proof. Delegate only when the worker can access the required
+repository and runner and can return the tested SHA, command, exit status, and
+artifact where relevant. After two repeats of the same unexplained failure, stop
+retrying and return root-cause evidence to the lead.
 
 When research is needed, compare maintained options against repository fit,
 security, resource limits, migration cost, and measured performance. "Newest" is not
