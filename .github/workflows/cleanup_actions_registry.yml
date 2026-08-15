@@ -43,12 +43,21 @@ jobs:
           total="$(jq '.total_count' <<<"$workflows")"
           disabled=0
           kept=0
+          managed=0
 
           while IFS=$'\t' read -r id path state; do
             [[ -n "$id" ]] || continue
             if [[ "$state" != "active" ]]; then
               continue
             fi
+            case "$path" in
+              .github/workflows/*) ;;
+              *)
+                managed=$((managed + 1))
+                echo "IGNORE GitHub-managed workflow record: $path"
+                continue
+                ;;
+            esac
             if [[ "$path" == "$SELF_PATH" ]]; then
               continue
             fi
@@ -74,7 +83,8 @@ jobs:
             echo "## Actions registry cleanup"
             echo
             echo "- registry records observed: $total"
-            echo "- stale active records disabled: $disabled"
-            echo "- live active workflow files kept: $kept"
+            echo "- stale repository workflow records disabled this run: $disabled"
+            echo "- live repository workflow files kept: $kept"
+            echo "- GitHub-managed dynamic records ignored: $managed"
             echo "- cleanup workflow disabled itself: yes"
           } >> "$GITHUB_STEP_SUMMARY"
