@@ -11,5 +11,8 @@ SELECT format('GRANT CONNECT ON DATABASE %I TO %I', current_database(), :'runtim
 GRANT USAGE ON SCHEMA public TO :"runtime_user";
 GRANT USAGE ON SCHEMA atlas_schema_revisions TO :"runtime_user";
 GRANT SELECT ON atlas_schema_revisions.atlas_schema_revisions TO :"runtime_user";
+GRANT USAGE ON SCHEMA river TO :"runtime_user";
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA river TO :"runtime_user";
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA river TO :"runtime_user";
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO :"runtime_user";
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO :"runtime_user";

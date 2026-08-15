@@ -15,6 +15,16 @@ Atlas owns this schema and `companiond` verifies revision `20260814070000` befor
 
 After every Atlas apply, the migration owner runs `ops/postgres/configure_runtime_role.psql` to refresh the non-DDL application's grants for newly created tables/sequences. Migration-owner credentials are not valid `companiond` runtime credentials.
 
+River owns the separate `river` schema. Bootstrap it after Atlas and before runtime-role grants:
+
+```bash
+cd backend
+go run ./cmd/companion-river-migrate up --database-url "$MIGRATION_DATABASE_URL"
+go run ./cmd/companion-river-migrate validate --database-url "$MIGRATION_DATABASE_URL"
+```
+
+The `up` action creates the schema only through the migration role and rejects an existing schema owned by another role. `validate` and `companiond` are read-only with respect to schema structure. Run the role-grant script after both Atlas and River migrations.
+
 The baseline maps stored RFC3339 text times to `timestamptz`, JSON documents to `jsonb`, integer flags to `boolean`, and keeps the post-#27 actor+operation+client-key idempotency primary key. Transactional outbox triggers are reproduced in PostgreSQL so later repository work cannot accidentally drop event atomicity.
 
 The CI job creates a disposable PostgreSQL instance, generates the Atlas directory hash in a temporary copy, validates and applies the migration, checks default-deny privacy/idempotency/outbox invariants, and proves a second apply is a no-op. Once the first CI run prints the generated `atlas.sum`, commit that exact file so later edits are integrity-checked rather than regenerated silently.

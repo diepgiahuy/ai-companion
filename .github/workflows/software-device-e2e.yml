@@ -69,6 +69,10 @@ jobs:
             "$ATLAS_IMAGE" migrate apply \
             --dir file:///migrations \
             --url 'postgres://companion:companion@127.0.0.1:55432/companion?sslmode=disable'
+          docker run --rm --network host \
+            -v "$PWD:/src" -w /src/backend golang:1.26.6-bookworm \
+            go run ./cmd/companion-river-migrate up \
+            --database-url 'postgres://companion:companion@127.0.0.1:55432/companion?sslmode=disable'
           docker exec -i companion-tier1-pg psql -v ON_ERROR_STOP=1 -U companion -d companion \
             --set=runtime_user=companion_app \
             --set=runtime_password=companion_app_test \

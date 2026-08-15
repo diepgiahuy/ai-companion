@@ -105,7 +105,7 @@ At minimum later real-provider evidence should derive:
 - queue-full/drop counts;
 - tool duration/outcome by bounded registered name/risk.
 
-#20 can add PostgreSQL/River pool/transaction/queue metrics to this naming/cardinality policy. #3 can add HIL resource snapshots (heap/PSRAM/reset/watchdog) while keeping physical evidence classification separate.
+River retention exposes bounded aggregate enqueue, unique-skip, completion, retry, failure, cancellation, queue-wait and run-duration metrics through the admin-token endpoint. Job IDs, user data, paths and raw errors are excluded. #3 can add HIL resource snapshots (heap/PSRAM/reset/watchdog) while keeping physical evidence classification separate.
 
 ## Retention
 

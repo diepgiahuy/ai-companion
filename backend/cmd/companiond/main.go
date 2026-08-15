@@ -20,6 +20,7 @@ import (
 	"companion-server/internal/devicecap"
 	"companion-server/internal/domain"
 	"companion-server/internal/events"
+	"companion-server/internal/jobs"
 	"companion-server/internal/market"
 	"companion-server/internal/memory"
 	"companion-server/internal/observability"
@@ -101,6 +102,18 @@ func main() {
 	}
 	firmwareService := controlplane.NewFirmware(data, otaPublicKey, requireOTASignature)
 	privacyService := privacy.New(data)
+	jobConfig, err := loadJobConfig()
+	if err != nil {
+		logger.Error("load River job configuration", "error", err)
+		os.Exit(1)
+	}
+	jobCtx, cancelJobs := context.WithTimeout(context.Background(), 15*time.Second)
+	jobRuntime, err := jobs.New(jobCtx, data.Pool(), privacyService, logger, jobConfig)
+	cancelJobs()
+	if err != nil {
+		logger.Error("initialize River runtime", "error", err, "hint", "run companion-river-migrate up with the migration/admin database URL")
+		os.Exit(1)
+	}
 	featureCatalog := controlplane.NewFeatureCatalog(data)
 	seedFeatureCatalog(context.Background(), featureCatalog, logger)
 	var embedding memory.EmbeddingProvider = memory.HashEmbedding{Dimensions: 96}
@@ -161,7 +174,7 @@ func main() {
 	adkPrompt, err := promptBundle.Render(promptpkg.RenderInput{
 		Locale: "vi-VN", CurrentTime: time.Now().In(location), Timezone: timezone,
 		Persona: runtimeCfg.LLM.Persona,
-		Packs: []string{"finance", "schedule", "memory", "personal-data", "voice", "context", "external-data"},
+		Packs:   []string{"finance", "schedule", "memory", "personal-data", "voice", "context", "external-data"},
 	})
 	if err != nil {
 		logger.Error("render ADK prompt", "error", err)
@@ -171,7 +184,7 @@ func main() {
 		AppName: "companion", ModelName: adkModel, BaseURL: adkBaseURL,
 		APIKey: os.Getenv("ADK_OPENAI_API_KEY"), Instruction: adkPrompt.Text,
 		PromptVersion: adkPrompt.ID + "@" + adkPrompt.Version + "#" + adkPrompt.Fingerprint,
-		HTTPClient: &http.Client{Timeout: runtimeCfg.LLM.HTTPTimeout}, Tools: toolRegistry,
+		HTTPClient:    &http.Client{Timeout: runtimeCfg.LLM.HTTPTimeout}, Tools: toolRegistry,
 		Conversation: conversationService, HistoryLimit: 12, UsageGuard: usageGuard, UsageMeter: data,
 	})
 	if err != nil {
@@ -190,7 +203,7 @@ func main() {
 		server.WithIdentityResolver(server.HeaderIdentityResolver{DefaultUserID: value("COMPANION_DEFAULT_USER_ID", "default")}),
 		server.WithControlPlane(control), server.WithFirmwareService(firmwareService), server.WithPrivacyService(privacyService), server.WithFeatureCatalog(featureCatalog), server.WithAdminToken(os.Getenv("COMPANION_ADMIN_TOKEN")),
 		server.WithDeviceCredentialManager(data), server.WithEntitlementManager(data), server.WithDeviceAuthenticator(data),
-		server.WithDeviceCapabilities(deviceCapabilities), server.WithObservabilityRecorder(observer),
+		server.WithDeviceCapabilities(deviceCapabilities), server.WithObservabilityRecorder(observer), server.WithJobControl(jobRuntime),
 	}
 	service := server.New(components, logger, serverOptions...)
 	rootCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -198,31 +211,42 @@ func main() {
 	supervisor := supervision.New(rootCtx, logger)
 
 	supervisor.Go("server-background", false, func(ctx context.Context) error { service.RunBackground(ctx); return nil })
+	supervisor.Go("river", true, jobRuntime.Run)
 	_ = data.RecoverOutbox(supervisor.Context())
 	supervisor.Go("outbox", false, func(ctx context.Context) error { runOutbox(ctx, data, logger); return nil })
 	supervisor.Go("market-watcher", false, func(ctx context.Context) error { runMarketWatcher(ctx, data, marketService, logger); return nil })
-	supervisor.Go("retention", false, func(ctx context.Context) error { runRetention(ctx, privacyService, logger); return nil })
 
 	httpServer := &http.Server{
 		Addr: address, Handler: deviceOriginGuard(service.Handler()), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 90 * time.Second,
 	}
 	supervisor.Go("http-server", true, func(context.Context) error {
 		logger.Info("companion server listening", "address", address)
-		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed { return err }
+		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			return err
+		}
 		return nil
 	})
 
 	select {
 	case <-rootCtx.Done():
 	case <-supervisor.Done():
-		if cause := supervisor.Cause(); cause != nil { logger.Error("runtime supervisor requested shutdown", "error", cause) }
+		if cause := supervisor.Cause(); cause != nil {
+			logger.Error("runtime supervisor requested shutdown", "error", cause)
+		}
 	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := httpServer.Shutdown(shutdownCtx); err != nil { logger.Error("graceful HTTP shutdown failed", "error", err) }
+	if err := httpServer.Shutdown(shutdownCtx); err != nil {
+		logger.Error("graceful HTTP shutdown failed", "error", err)
+	}
+	if err := jobRuntime.Stop(shutdownCtx); err != nil {
+		logger.Error("graceful River shutdown failed", "error", err)
+	}
 	supervisor.Stop(context.Canceled)
-	if err := supervisor.Wait(shutdownCtx); err != nil { logger.Error("graceful runtime shutdown failed", "error", err) }
+	if err := supervisor.Wait(shutdownCtx); err != nil {
+		logger.Error("graceful runtime shutdown failed", "error", err)
+	}
 	resources := append([]namedCloser{}, providerClosers...)
 	resources = append(resources, namedCloser{name: "mcp", closer: mcpCloser})
 	if err := closeRuntimeResourcesBounded(logger, 2*time.Second, resources...); err != nil {
@@ -232,31 +256,48 @@ func main() {
 
 func configureObservability(logger *slog.Logger) (observability.Recorder, func()) {
 	path := strings.TrimSpace(os.Getenv("COMPANION_OBSERVABILITY_FILE"))
-	if path == "" { return observability.Nop(), func() {} }
+	if path == "" {
+		return observability.Nop(), func() {}
+	}
 	capacity := 4096
 	if raw := strings.TrimSpace(os.Getenv("COMPANION_OBSERVABILITY_CAPACITY")); raw != "" {
-		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 { capacity = parsed }
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			capacity = parsed
+		}
 	}
 	recorder := observability.NewRingRecorder(capacity)
 	flush := func() {
 		snapshot := recorder.Snapshot()
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil { logger.Error("create observability snapshot directory", "error", err); return }
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			logger.Error("create observability snapshot directory", "error", err)
+			return
+		}
 		file, err := os.Create(path)
-		if err != nil { logger.Error("create observability snapshot", "error", err); return }
+		if err != nil {
+			logger.Error("create observability snapshot", "error", err)
+			return
+		}
 		defer file.Close()
-		if err := observability.WriteSnapshot(file, snapshot); err != nil { logger.Error("write observability snapshot", "error", err); return }
+		if err := observability.WriteSnapshot(file, snapshot); err != nil {
+			logger.Error("write observability snapshot", "error", err)
+			return
+		}
 		logger.Info("observability snapshot written", "events", len(snapshot.Events), "dropped", snapshot.Dropped)
 	}
 	return recorder, flush
 }
 
 func loadPromptBundle(cfg runtimeconfig.Config) (*promptpkg.Bundle, error) {
-	if cfg.LLM.PromptDir != "" { return promptpkg.LoadDirectory(cfg.LLM.PromptDir) }
+	if cfg.LLM.PromptDir != "" {
+		return promptpkg.LoadDirectory(cfg.LLM.PromptDir)
+	}
 	return promptpkg.LoadDefault()
 }
 
 func value(name, fallback string) string {
-	if current := os.Getenv(name); current != "" { return current }
+	if current := os.Getenv(name); current != "" {
+		return current
+	}
 	return fallback
 }
 
@@ -265,7 +306,8 @@ func runOutbox(ctx context.Context, out events.Outbox, logger *slog.Logger) {
 	defer ticker.Stop()
 	for {
 		select {
-		case <-ctx.Done(): return
+		case <-ctx.Done():
+			return
 		case now := <-ticker.C:
 			_ = events.Dispatch(ctx, out, func(_ context.Context, e events.Event) error {
 				logger.Debug("domain event", "type", e.Type, "subject", e.Subject, "event_id", e.ID)
@@ -275,50 +317,56 @@ func runOutbox(ctx context.Context, out events.Outbox, logger *slog.Logger) {
 	}
 }
 
-type marketWatchRepo interface { market.WatchRepository; domain.ScheduleRepository }
+type marketWatchRepo interface {
+	market.WatchRepository
+	domain.ScheduleRepository
+}
 
 func runMarketWatcher(ctx context.Context, repo marketWatchRepo, quotes *market.Service, logger *slog.Logger) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 	check := func(now time.Time) {
 		watches, e := repo.EnabledMarketWatches(ctx, 200)
-		if e != nil { logger.Warn("market watches load failed", "error", e); return }
+		if e != nil {
+			logger.Warn("market watches load failed", "error", e)
+			return
+		}
 		for _, w := range watches {
 			q, e := quotes.Quote(ctx, w.Provider, w.Symbol, w.Currency)
-			if e != nil { logger.Warn("market watch quote failed", "watch_id", w.ID, "error", e); continue }
+			if e != nil {
+				logger.Warn("market watch quote failed", "watch_id", w.ID, "error", e)
+				continue
+			}
 			state := market.Matches(w, q.Price)
 			if state && !w.LastState {
 				title := fmt.Sprintf("%s %.4f %s %s %.4f", w.Symbol, q.Price, q.Currency, w.Operator, w.Threshold)
-				if atomicRepo, ok := repo.(interface { TriggerMarketWatch(context.Context, market.Watch, string, time.Time) (bool, error) }); ok {
-					if _, e := atomicRepo.TriggerMarketWatch(ctx, w, title, now); e != nil { logger.Warn("market alert transaction failed", "watch_id", w.ID, "error", e) }
+				if atomicRepo, ok := repo.(interface {
+					TriggerMarketWatch(context.Context, market.Watch, string, time.Time) (bool, error)
+				}); ok {
+					if _, e := atomicRepo.TriggerMarketWatch(ctx, w, title, now); e != nil {
+						logger.Warn("market alert transaction failed", "watch_id", w.ID, "error", e)
+					}
 				} else {
 					key := fmt.Sprintf("market-watch:%d:%d", w.ID, now.Unix())
-					if e := repo.CreateReminderForDevice(ctx, w.UserID, key, w.DeviceID, title, now); e != nil { logger.Warn("market alert schedule failed", "watch_id", w.ID, "error", e); continue }
+					if e := repo.CreateReminderForDevice(ctx, w.UserID, key, w.DeviceID, title, now); e != nil {
+						logger.Warn("market alert schedule failed", "watch_id", w.ID, "error", e)
+						continue
+					}
 					_ = repo.SetMarketWatchState(ctx, w.ID, true)
 				}
-			} else if state != w.LastState { _ = repo.SetMarketWatchState(ctx, w.ID, state) }
+			} else if state != w.LastState {
+				_ = repo.SetMarketWatchState(ctx, w.ID, state)
+			}
 		}
 	}
 	for {
-		select { case <-ctx.Done(): return; case now := <-ticker.C: check(now) }
-	}
-}
-
-func runRetention(ctx context.Context, svc *privacy.Service, logger *slog.Logger) {
-	ticker := time.NewTicker(6 * time.Hour)
-	defer ticker.Stop()
-	apply := func() {
-		report, err := svc.ApplyRetention(ctx)
-		if err != nil { logger.Warn("retention failed", "error", err); return }
-		for _, path := range report.OrphanPaths {
-			if err := os.Remove(path); err != nil && !os.IsNotExist(err) { logger.Warn("retained voice file cleanup failed", "path", path, "error", err) }
-		}
-		if report.ConversationRows+report.MemoryRows+report.VoiceMemoRows > 0 {
-			logger.Info("retention applied", "conversation_rows", report.ConversationRows, "memory_rows", report.MemoryRows, "voice_memo_rows", report.VoiceMemoRows)
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			check(now)
 		}
 	}
-	apply()
-	for { select { case <-ctx.Done(): return; case <-ticker.C: apply() } }
 }
 
 func seedFeatureCatalog(ctx context.Context, c *controlplane.FeatureCatalog, logger *slog.Logger) {
@@ -329,6 +377,8 @@ func seedFeatureCatalog(ctx context.Context, c *controlplane.FeatureCatalog, log
 		{ID: "market.live", Version: 1, Lifecycle: "beta", Execution: "native", MinProtocol: 1, Tools: []string{"market.*"}, UICards: []string{"market_price"}, Implementation: "native.market"},
 	}
 	for _, m := range modules {
-		if err := c.Put(ctx, m); err != nil { logger.Warn("feature catalog seed failed", "feature", m.ID, "error", err) }
+		if err := c.Put(ctx, m); err != nil {
+			logger.Warn("feature catalog seed failed", "feature", m.ID, "error", err)
+		}
 	}
 }

@@ -41,7 +41,7 @@ Enrollment-owned user/device/tenant/plan claims are trusted; client headers cann
 ```mermaid
 flowchart TD
     Turn["ASR transcript + user/device/thread/turn identity"] --> Conversation["Conversation service"]
-    Conversation --> History["SQLite conversation store"]
+    Conversation --> History["PostgreSQL conversation store"]
     Turn --> Agent["Google ADK v2"]
     History --> Agent
     Agent --> Tools["ToolRegistry - canonical schemas/auth/execution"]
@@ -49,7 +49,7 @@ flowchart TD
     Tools --> MCPTools["Optional external MCP tools"]
     NativeTools --> Resources["ResourceRegistry"]
     Agent --> Resources
-    Resources --> Domain["SQLite domain repositories"]
+    Resources --> Domain["PostgreSQL domain repositories"]
     NativeTools --> Domain
 ```
 
@@ -72,7 +72,7 @@ This avoids introducing a second ADK-owned product database while preserving res
 
 ## Persistence rule
 
-PostgreSQL/pgx is the sole product database implementation and Atlas owns schema migrations. `companiond` has no SQLite fallback, selector, shadow read or dual write. SQLite remains only in explicit cutover/recovery tooling and isolated tests. River is introduced only after the PostgreSQL transaction boundary is proven.
+PostgreSQL/pgx is the sole product database implementation and Atlas owns Companion schema migrations. `companiond` has no SQLite fallback, selector, shadow read or dual write. SQLite remains only in explicit cutover/recovery tooling and isolated tests. River owns a separate schema and executes durable retention cleanup through the same PostgreSQL pool; schema migration stays an explicit admin operation.
 
 ## Display migration rule
 
