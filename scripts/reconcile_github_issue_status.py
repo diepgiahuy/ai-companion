@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Keep compatibility status labels aligned with live native GitHub relationships.
+"""Keep compatibility execution labels aligned with native GitHub issue state.
 
-No issue-number allowlists are used. Closed issues and parent issues carry no
-execution label. Open native blockers deterministically own `status:blocked`.
-When a previously blocked leaf becomes unblocked, it is promoted to
-`status:ready`; otherwise human-selected ready/in-progress state is preserved.
+Normal issue events reconcile only the changed issue and issues it directly blocks.
+`--all` is a drift-repair mode for scheduled/manual recovery. Native issue
+relationships remain graph truth; this script never owns dependency metadata.
 """
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import subprocess
@@ -53,6 +53,10 @@ def labels(item: dict[str, Any]) -> set[str]:
     return {label["name"] for label in item.get("labels", [])}
 
 
+def issue_info(number: int) -> dict[str, Any]:
+    return api(f"repos/{REPO}/issues/{number}")
+
+
 def remove_label(number: int, label: str) -> None:
     api(f"repos/{REPO}/issues/{number}/labels/{label}", method="DELETE")
 
@@ -69,9 +73,19 @@ def set_status(number: int, current: set[str], desired: str | None) -> None:
         add_label(number, desired)
 
 
+def dependency_numbers(number: int, relation: str) -> list[int]:
+    items = api(f"repos/{REPO}/issues/{number}/dependencies/{relation}?per_page=100") or []
+    return [int(item["number"]) for item in items]
+
+
 def open_blockers(number: int) -> list[int]:
-    blockers = api(f"repos/{REPO}/issues/{number}/dependencies/blocked_by?per_page=100") or []
-    return [int(item["number"]) for item in blockers if item.get("state") != "closed"]
+    items = api(f"repos/{REPO}/issues/{number}/dependencies/blocked_by?per_page=100") or []
+    return [int(item["number"]) for item in items if item.get("state") != "closed"]
+
+
+def affected_numbers(number: int) -> set[int]:
+    # A changed blocker can change the status of each issue it directly blocks.
+    return {number, *dependency_numbers(number, "blocking")}
 
 
 def reconcile(item: dict[str, Any]) -> None:
@@ -105,7 +119,11 @@ def reconcile(item: dict[str, Any]) -> None:
         set_status(number, current, "status:ready")
 
 
-def main() -> None:
+def reconcile_number(number: int) -> None:
+    reconcile(issue_info(number))
+
+
+def reconcile_all() -> None:
     page = 1
     while True:
         batch = api(f"repos/{REPO}/issues?state=all&per_page=100&page={page}") or []
@@ -116,7 +134,23 @@ def main() -> None:
         if len(batch) < 100:
             break
         page += 1
-    print("Compatibility execution labels now derive from live issue state and native relationships.")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--issue", type=int, help="Reconcile this issue and direct dependents")
+    group.add_argument("--all", action="store_true", help="Full drift-repair reconciliation")
+    args = parser.parse_args()
+
+    if args.issue is not None:
+        targets = sorted(affected_numbers(args.issue))
+        for number in targets:
+            reconcile_number(number)
+        print(f"Reconciled issue-event targets: {targets}")
+    else:
+        reconcile_all()
+        print("Full compatibility execution-label reconciliation complete.")
 
 
 if __name__ == "__main__":
