@@ -76,7 +76,13 @@ bool WifiStation::connect(std::string_view ssid, std::string_view password,
   if (esp_netif_create_default_wifi_sta() == nullptr) return false;
 
   wifi_init_config_t init = WIFI_INIT_CONFIG_DEFAULT();
-  if (esp_wifi_init(&init) != ESP_OK) return false;
+  if (esp_wifi_init(&init) != ESP_OK ||
+      // Companion's provisioning namespace is the canonical secret store.
+      // Keep the Wi-Fi driver's configuration in RAM so SSID/password are not
+      // silently duplicated into the driver's own flash-backed NVS records.
+      esp_wifi_set_storage(WIFI_STORAGE_RAM) != ESP_OK) {
+    return false;
+  }
   event_group = xEventGroupCreate();
   if (event_group == nullptr) return false;
 
