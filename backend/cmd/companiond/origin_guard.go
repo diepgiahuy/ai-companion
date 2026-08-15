@@ -29,6 +29,7 @@ func deviceOriginGuard(next http.Handler) http.Handler {
 					http.Error(w, "forbidden origin", http.StatusForbidden)
 					return
 				}
+			}
 		}
 		next.ServeHTTP(w, r)
 	})
@@ -38,9 +39,14 @@ func allowedDeviceOrigins(raw string) map[string]struct{} {
 	allowed := make(map[string]struct{})
 	for _, item := range strings.Split(raw, ",") {
 		origin := strings.TrimSpace(item)
-		if origin == "" { continue }
+		if origin == "" {
+			continue
+		}
 		u, err := url.Parse(origin)
-		if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") { continue }
+		if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil ||
+			u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
+			continue
+		}
 		u.Path = ""
 		allowed[u.String()] = struct{}{}
 	}
