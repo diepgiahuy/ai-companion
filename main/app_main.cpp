@@ -156,11 +156,19 @@ extern "C" void app_main() {
   }
 
   // Product identity now lives in NVS. Never auto-erase an initialized product
-  // identity merely because NVS reports a version/space problem; fail closed and
-  // require the explicit boot-held reset path instead.
+  // identity merely because NVS reports a version/space problem. If NVS cannot
+  // mount, only an explicit boot-held factory-reset gesture may erase the full
+  // partition so recovery stays possible without silently losing identity.
   const esp_err_t nvs_result = nvs_flash_init();
   if (nvs_result != ESP_OK) {
     ESP_LOGE(kTag, "NVS initialization failed: %s", esp_err_to_name(nvs_result));
+    if (factory_reset_requested(button, display)) {
+      if (nvs_flash_erase() != ESP_OK) {
+        display.show(UiState::error, "RESET ERROR");
+        return;
+      }
+      restart_after_message(display, "LOCAL RESET");
+    }
     display.show(UiState::error, "STORAGE ERROR");
     return;
   }
