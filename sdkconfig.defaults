@@ -12,6 +12,18 @@ CONFIG_SPIRAM_SPEED_80M=y
 CONFIG_SPIRAM_USE_MALLOC=y
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
 
+# Pairing discovery is BLE-only and non-connectable: advertise a rotating
+# pseudonym while passively observing the same bounded product namespace.
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_CONTROLLER_ENABLED=y
+CONFIG_BT_NIMBLE_ROLE_BROADCASTER=y
+CONFIG_BT_NIMBLE_ROLE_OBSERVER=y
+CONFIG_BT_NIMBLE_ROLE_CENTRAL=n
+CONFIG_BT_NIMBLE_ROLE_PERIPHERAL=n
+CONFIG_BT_NIMBLE_GATT_CLIENT=n
+CONFIG_BT_NIMBLE_GATT_SERVER=n
+
 # ESP-SR POC baseline. This is a reproducible development wake phrase, not the
 # final product phrase/threshold decision.
 CONFIG_MODEL_IN_FLASH=y
