@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -37,6 +38,11 @@ type exchangeWindow struct {
 	Attempts int
 }
 
+type loginReturn struct {
+	Path      string
+	ExpiresAt time.Time
+}
+
 // Handoff adds the consumer-facing one-code browser handoff without changing
 // the authoritative claim-authorization or device-claim protocols. A human
 // code can only be exchanged for the already-existing short-lived bound claim
@@ -48,6 +54,7 @@ type Handoff struct {
 	mu       sync.Mutex
 	codes    map[string]humanClaimCodeRecord
 	attempts map[string]exchangeWindow
+	returns  map[string]loginReturn
 }
 
 func NewHandoff(auth *Service) (*Handoff, error) {
@@ -59,6 +66,7 @@ func NewHandoff(auth *Service) (*Handoff, error) {
 		now:      func() time.Time { return time.Now().UTC() },
 		codes:    make(map[string]humanClaimCodeRecord),
 		attempts: make(map[string]exchangeWindow),
+		returns:  make(map[string]loginReturn),
 	}, nil
 }
 
@@ -120,6 +128,73 @@ func (h *Handoff) Exchange(clientKey, code, bootstrapID, deviceID string) (strin
 	return record.Authorization, record.ExpiresAt, nil
 }
 
+// HandleLogin composes the existing OIDC/PKCE login with a server-side return
+// target. The return path is never accepted from a free-form URL; it is rebuilt
+// from the bounded bootstrap/device references and keyed by the random OAuth
+// state, preventing an open redirect.
+func (h *Handoff) HandleLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	returnPath, err := ownerReturnPath(r.URL.Query().Get("bootstrap_id"), r.URL.Query().Get("device_id"))
+	if err != nil {
+		http.Error(w, "invalid claim reference", http.StatusBadRequest)
+		return
+	}
+	target, err := h.auth.BeginLogin()
+	if err != nil {
+		http.Error(w, "owner login unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if returnPath != "" {
+		parsed, parseErr := url.Parse(target)
+		if parseErr != nil || strings.TrimSpace(parsed.Query().Get("state")) == "" {
+			http.Error(w, "owner login unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		state := parsed.Query().Get("state")
+		now := h.now()
+		h.mu.Lock()
+		h.pruneLocked(now)
+		h.returns[state] = loginReturn{Path: returnPath, ExpiresAt: now.Add(h.auth.cfg.LoginTTL)}
+		h.mu.Unlock()
+	}
+	http.Redirect(w, r, target, http.StatusFound)
+}
+
+func (h *Handoff) HandleCallback(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	state := strings.TrimSpace(r.URL.Query().Get("state"))
+	now := h.now()
+	h.mu.Lock()
+	h.pruneLocked(now)
+	ret := h.returns[state]
+	delete(h.returns, state)
+	h.mu.Unlock()
+
+	raw, csrf, session, err := h.auth.CompleteLogin(r.Context(), state, r.URL.Query().Get("code"))
+	if err != nil {
+		http.Error(w, "owner login failed", http.StatusUnauthorized)
+		return
+	}
+	setSessionCookies(w, raw, csrf, session.ExpiresAt)
+	if ret.Path != "" && ret.ExpiresAt.After(now) {
+		http.Redirect(w, r, ret.Path, http.StatusSeeOther)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"user_id":    session.UserID,
+		"expires_at": session.ExpiresAt,
+	})
+}
+
 func (h *Handoff) HandleOwnerPage(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.Header().Set("Allow", http.MethodGet)
@@ -127,7 +202,16 @@ func (h *Handoff) HandleOwnerPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := h.auth.Authenticate(sessionCookie(r)); err != nil {
-		http.Error(w, "owner login required", http.StatusUnauthorized)
+		bootstrapID := strings.TrimSpace(r.URL.Query().Get("bootstrap_id"))
+		deviceID := strings.TrimSpace(r.URL.Query().Get("device_id"))
+		login := "/v1/owner/auth/login"
+		if target, targetErr := ownerReturnPath(bootstrapID, deviceID); targetErr == nil && target != "" {
+			query := url.Values{}
+			query.Set("bootstrap_id", bootstrapID)
+			query.Set("device_id", deviceID)
+			login += "?" + query.Encode()
+		}
+		http.Redirect(w, r, login, http.StatusFound)
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
@@ -225,6 +309,26 @@ func (h *Handoff) pruneLocked(now time.Time) {
 			delete(h.attempts, key)
 		}
 	}
+	for key, ret := range h.returns {
+		if !ret.ExpiresAt.After(now) {
+			delete(h.returns, key)
+		}
+	}
+}
+
+func ownerReturnPath(bootstrapID, deviceID string) (string, error) {
+	bootstrapID = strings.TrimSpace(bootstrapID)
+	deviceID = strings.TrimSpace(deviceID)
+	if bootstrapID == "" && deviceID == "" {
+		return "", nil
+	}
+	if bootstrapID == "" || deviceID == "" || len(bootstrapID) > 128 || len(deviceID) > 128 {
+		return "", fmt.Errorf("invalid claim reference")
+	}
+	query := url.Values{}
+	query.Set("bootstrap_id", bootstrapID)
+	query.Set("device_id", deviceID)
+	return "/v1/owner/device-claim?" + query.Encode(), nil
 }
 
 func randomHumanClaimCode() (string, error) {
@@ -267,4 +371,4 @@ func remoteClientKey(r *http.Request) string {
 	return "unknown"
 }
 
-const ownerHandoffHTML = `<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>Claim Companion</title><style>body{font-family:sans-serif;max-width:34rem;margin:2rem auto;padding:0 1rem}label{display:block;margin:.8rem 0}input{width:100%;padding:.6rem;box-sizing:border-box}button{padding:.7rem 1rem}#code{font:700 2rem monospace;letter-spacing:.08em}</style><h1>Claim Companion</h1><p>Enter the bootstrap and device reference shown by your Companion. The only value you copy back to the setup page is the short claim code.</p><form id=f><label>Bootstrap reference<input name=bootstrap_id required maxlength=128 autocomplete=off></label><label>Device reference<input name=device_id required maxlength=128 autocomplete=off></label><button>Create claim code</button></form><p id=code></p><pre id=o></pre><script>const q=new URLSearchParams(location.search);for(const k of ['bootstrap_id','device_id'])if(q.get(k))f.elements[k].value=q.get(k);function cookie(n){return document.cookie.split(';').map(x=>x.trim()).find(x=>x.startsWith(n+'='))?.slice(n.length+1)||''}f.onsubmit=async e=>{e.preventDefault();code.textContent='';o.textContent='Creating...';const x=Object.fromEntries(new FormData(f));const r=await fetch('/v1/owner/claim-codes',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRF-Token':decodeURIComponent(cookie('__Host-companion_csrf'))},body:JSON.stringify(x)});if(!r.ok){o.textContent='Could not create claim code. Sign in again and retry.';return}const v=await r.json();code.textContent=v.claim_code;o.textContent='Enter this code on the Companion setup page. It expires shortly.'}</script>`
+const ownerHandoffHTML = `<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>Claim Companion</title><style>body{font-family:sans-serif;max-width:34rem;margin:2rem auto;padding:0 1rem}label{display:block;margin:.8rem 0}input{width:100%;padding:.6rem;box-sizing:border-box}button{padding:.7rem 1rem}#code{font:700 2rem monospace;letter-spacing:.08em}</style><h1>Claim Companion</h1><p>Confirm the bootstrap and device reference from your Companion. The only value you copy back to the local setup page is the short claim code.</p><form id=f><label>Bootstrap reference<input name=bootstrap_id required maxlength=128 autocomplete=off></label><label>Device reference<input name=device_id required maxlength=128 autocomplete=off></label><button>Create claim code</button></form><p id=code></p><pre id=o></pre><script>const q=new URLSearchParams(location.search);for(const k of ['bootstrap_id','device_id'])if(q.get(k))f.elements[k].value=q.get(k);function cookie(n){return document.cookie.split(';').map(x=>x.trim()).find(x=>x.startsWith(n+'='))?.slice(n.length+1)||''}f.onsubmit=async e=>{e.preventDefault();code.textContent='';o.textContent='Creating...';const x=Object.fromEntries(new FormData(f));const r=await fetch('/v1/owner/claim-codes',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRF-Token':decodeURIComponent(cookie('__Host-companion_csrf'))},body:JSON.stringify(x)});if(!r.ok){o.textContent='Could not create claim code. Sign in again and retry.';return}const v=await r.json();code.textContent=v.claim_code;o.textContent='Enter this code on the Companion setup page. It expires shortly.'}</script>`
