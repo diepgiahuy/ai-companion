@@ -82,9 +82,9 @@ func New(cfg Config) (*Service, error) {
 	}
 	for name, raw := range map[string]string{
 		"authorization_url": cfg.AuthorizationURL,
-		"token_url": cfg.TokenURL,
-		"userinfo_url": cfg.UserInfoURL,
-		"redirect_url": cfg.RedirectURL,
+		"token_url":         cfg.TokenURL,
+		"userinfo_url":      cfg.UserInfoURL,
+		"redirect_url":      cfg.RedirectURL,
 	} {
 		if err := requireSecureURL(raw); err != nil {
 			return nil, fmt.Errorf("%s: %w", name, err)
@@ -102,14 +102,27 @@ func New(cfg Config) (*Service, error) {
 	if cfg.ClaimTTL <= 0 {
 		cfg.ClaimTTL = 5 * time.Minute
 	}
-	client := cfg.HTTPClient
-	if client == nil {
-		client = &http.Client{Timeout: 10 * time.Second}
+
+	client := http.Client{Timeout: 10 * time.Second}
+	if cfg.HTTPClient != nil {
+		client = *cfg.HTTPClient
+		if client.Timeout <= 0 {
+			client.Timeout = 10 * time.Second
+		}
 	}
+	// Token and UserInfo redirects are rejected rather than followed. This avoids
+	// forwarding bearer/client credentials to an unexpected redirect target.
+	client.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+
 	return &Service{
-		cfg: cfg, client: client, now: func() time.Time { return time.Now().UTC() },
-		logins: make(map[string]loginTransaction), sessions: make(map[string]sessionRecord),
-		claims: make(map[string]ClaimAuthorization),
+		cfg:      cfg,
+		client:   &client,
+		now:      func() time.Time { return time.Now().UTC() },
+		logins:   make(map[string]loginTransaction),
+		sessions: make(map[string]sessionRecord),
+		claims:   make(map[string]ClaimAuthorization),
 	}, nil
 }
 
@@ -122,9 +135,14 @@ func (s *Service) BeginLogin() (string, error) {
 	if err != nil {
 		return "", err
 	}
+
+	now := s.now()
 	s.mu.Lock()
-	s.pruneLocked(s.now())
-	s.logins[state] = loginTransaction{Verifier: verifier, ExpiresAt: s.now().Add(s.cfg.LoginTTL)}
+	s.pruneLocked(now)
+	s.logins[state] = loginTransaction{
+		Verifier:  verifier,
+		ExpiresAt: now.Add(s.cfg.LoginTTL),
+	}
 	s.mu.Unlock()
 
 	parsed, _ := url.Parse(s.cfg.AuthorizationURL)
@@ -146,10 +164,11 @@ func (s *Service) CompleteLogin(ctx context.Context, state, code string) (string
 	if state == "" || code == "" {
 		return "", "", Session{}, ErrInvalidState
 	}
+
 	now := s.now()
 	s.mu.Lock()
 	txn, ok := s.logins[state]
-	delete(s.logins, state) // state is one-time even when the provider exchange fails.
+	delete(s.logins, state) // OAuth state is one-time even when provider exchange fails.
 	s.mu.Unlock()
 	if !ok || !txn.ExpiresAt.After(now) {
 		return "", "", Session{}, ErrInvalidState
@@ -171,10 +190,14 @@ func (s *Service) CompleteLogin(ctx context.Context, state, code string) (string
 	if err != nil {
 		return "", "", Session{}, err
 	}
+
 	session := Session{UserID: userID, ExpiresAt: now.Add(s.cfg.SessionTTL)}
 	s.mu.Lock()
 	s.pruneLocked(now)
-	s.sessions[tokenKey(rawSession)] = sessionRecord{Session: session, CSRFHash: sha256.Sum256([]byte(csrf))}
+	s.sessions[tokenKey(rawSession)] = sessionRecord{
+		Session:  session,
+		CSRFHash: sha256.Sum256([]byte(csrf)),
+	}
 	s.mu.Unlock()
 	return rawSession, csrf, session, nil
 }
@@ -206,11 +229,16 @@ func (s *Service) MintClaimAuthorization(rawSession, csrf, bootstrapID string) (
 	if bootstrapID == "" || len(bootstrapID) > 128 {
 		return "", ClaimAuthorization{}, fmt.Errorf("bootstrap_id required and must be <=128 bytes")
 	}
+
 	raw, err := randomToken(32)
 	if err != nil {
 		return "", ClaimAuthorization{}, err
 	}
-	claim := ClaimAuthorization{UserID: session.UserID, BootstrapID: bootstrapID, ExpiresAt: s.now().Add(s.cfg.ClaimTTL)}
+	claim := ClaimAuthorization{
+		UserID:      session.UserID,
+		BootstrapID: bootstrapID,
+		ExpiresAt:   s.now().Add(s.cfg.ClaimTTL),
+	}
 	s.mu.Lock()
 	s.pruneLocked(s.now())
 	s.claims[tokenKey(raw)] = claim
@@ -219,13 +247,14 @@ func (s *Service) MintClaimAuthorization(rawSession, csrf, bootstrapID string) (
 }
 
 func (s *Service) ConsumeClaimAuthorization(raw string) (ClaimAuthorization, error) {
-	key := tokenKey(strings.TrimSpace(raw))
-	if key == tokenKey("") {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
 		return ClaimAuthorization{}, ErrInvalidClaim
 	}
+	key := tokenKey(raw)
 	s.mu.Lock()
 	claim, ok := s.claims[key]
-	delete(s.claims, key) // consume once even if caller later fails its own transaction.
+	delete(s.claims, key) // Consume once even if the caller's later transaction fails.
 	s.mu.Unlock()
 	if !ok || !claim.ExpiresAt.After(s.now()) {
 		return ClaimAuthorization{}, ErrInvalidClaim
@@ -243,24 +272,31 @@ func (s *Service) Handler() http.Handler {
 	return mux
 }
 
-func (s *Service) handleLogin(w http.ResponseWriter, _ *http.Request) {
+func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
 	target, err := s.BeginLogin()
 	if err != nil {
 		http.Error(w, "owner login unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	http.Redirect(w, &http.Request{}, target, http.StatusFound)
+	http.Redirect(w, r, target, http.StatusFound)
 }
 
 func (s *Service) handleCallback(w http.ResponseWriter, r *http.Request) {
-	raw, csrf, session, err := s.CompleteLogin(r.Context(), r.URL.Query().Get("state"), r.URL.Query().Get("code"))
+	raw, csrf, session, err := s.CompleteLogin(
+		r.Context(),
+		r.URL.Query().Get("state"),
+		r.URL.Query().Get("code"),
+	)
 	if err != nil {
 		http.Error(w, "owner login failed", http.StatusUnauthorized)
 		return
 	}
 	setSessionCookies(w, raw, csrf, session.ExpiresAt)
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"user_id": session.UserID, "expires_at": session.ExpiresAt})
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"user_id":    session.UserID,
+		"expires_at": session.ExpiresAt,
+	})
 }
 
 func (s *Service) handleSession(w http.ResponseWriter, r *http.Request) {
@@ -270,7 +306,10 @@ func (s *Service) handleSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"user_id": session.UserID, "expires_at": session.ExpiresAt})
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"user_id":    session.UserID,
+		"expires_at": session.ExpiresAt,
+	})
 }
 
 func (s *Service) handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -283,21 +322,31 @@ func (s *Service) handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) handleClaimAuthorization(w http.ResponseWriter, r *http.Request) {
-	var request struct{ BootstrapID string `json:"bootstrap_id"` }
+	var request struct {
+		BootstrapID string `json:"bootstrap_id"`
+	}
 	decoder := json.NewDecoder(io.LimitReader(r.Body, 4<<10))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
-	raw, claim, err := s.MintClaimAuthorization(sessionCookie(r), r.Header.Get("X-CSRF-Token"), request.BootstrapID)
+
+	raw, claim, err := s.MintClaimAuthorization(
+		sessionCookie(r),
+		r.Header.Get("X-CSRF-Token"),
+		request.BootstrapID,
+	)
 	if err != nil {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"claim_authorization": raw, "expires_at": claim.ExpiresAt})
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"claim_authorization": raw,
+		"expires_at":          claim.ExpiresAt,
+	})
 }
 
 func (s *Service) exchangeCode(ctx context.Context, code, verifier string) (string, error) {
@@ -311,7 +360,13 @@ func (s *Service) exchangeCode(ctx context.Context, code, verifier string) (stri
 	if s.cfg.ClientSecret != "" {
 		values.Set("client_secret", s.cfg.ClientSecret)
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, s.cfg.TokenURL, strings.NewReader(values.Encode()))
+
+	request, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		s.cfg.TokenURL,
+		strings.NewReader(values.Encode()),
+	)
 	if err != nil {
 		return "", err
 	}
@@ -324,6 +379,7 @@ func (s *Service) exchangeCode(ctx context.Context, code, verifier string) (stri
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return "", fmt.Errorf("oauth token exchange status %d", response.StatusCode)
 	}
+
 	var payload struct {
 		AccessToken string `json:"access_token"`
 		TokenType   string `json:"token_type"`
@@ -352,7 +408,10 @@ func (s *Service) fetchSubject(ctx context.Context, accessToken string) (string,
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return "", fmt.Errorf("oidc userinfo status %d", response.StatusCode)
 	}
-	var payload struct{ Subject string `json:"sub"` }
+
+	var payload struct {
+		Subject string `json:"sub"`
+	}
 	if err := json.NewDecoder(io.LimitReader(response.Body, maximumProviderResponseBytes)).Decode(&payload); err != nil {
 		return "", fmt.Errorf("decode oidc userinfo: %w", err)
 	}
@@ -364,23 +423,31 @@ func (s *Service) fetchSubject(ctx context.Context, accessToken string) (string,
 }
 
 func (s *Service) authenticate(rawSession, csrf string, mutation bool) (Session, error) {
-	if strings.TrimSpace(rawSession) == "" {
+	rawSession = strings.TrimSpace(rawSession)
+	if rawSession == "" {
 		return Session{}, ErrUnauthorized
 	}
+
 	now := s.now()
+	key := tokenKey(rawSession)
 	s.mu.Lock()
-	record, ok := s.sessions[tokenKey(rawSession)]
+	record, ok := s.sessions[key]
 	if ok && !record.ExpiresAt.After(now) {
-		delete(s.sessions, tokenKey(rawSession))
+		delete(s.sessions, key)
 		ok = false
 	}
 	s.mu.Unlock()
 	if !ok {
 		return Session{}, ErrUnauthorized
 	}
+
 	if mutation {
-		provided := sha256.Sum256([]byte(strings.TrimSpace(csrf)))
-		if strings.TrimSpace(csrf) == "" || subtle.ConstantTimeCompare(provided[:], record.CSRFHash[:]) != 1 {
+		csrf = strings.TrimSpace(csrf)
+		if csrf == "" {
+			return Session{}, ErrUnauthorized
+		}
+		provided := sha256.Sum256([]byte(csrf))
+		if subtle.ConstantTimeCompare(provided[:], record.CSRFHash[:]) != 1 {
 			return Session{}, ErrUnauthorized
 		}
 	}
@@ -389,30 +456,69 @@ func (s *Service) authenticate(rawSession, csrf string, mutation bool) (Session,
 
 func (s *Service) pruneLocked(now time.Time) {
 	for key, txn := range s.logins {
-		if !txn.ExpiresAt.After(now) { delete(s.logins, key) }
+		if !txn.ExpiresAt.After(now) {
+			delete(s.logins, key)
+		}
 	}
 	for key, session := range s.sessions {
-		if !session.ExpiresAt.After(now) { delete(s.sessions, key) }
+		if !session.ExpiresAt.After(now) {
+			delete(s.sessions, key)
+		}
 	}
 	for key, claim := range s.claims {
-		if !claim.ExpiresAt.After(now) { delete(s.claims, key) }
+		if !claim.ExpiresAt.After(now) {
+			delete(s.claims, key)
+		}
 	}
 }
 
 func setSessionCookies(w http.ResponseWriter, session, csrf string, expires time.Time) {
-	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: session, Path: "/", Expires: expires, Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode})
-	http.SetCookie(w, &http.Cookie{Name: csrfCookieName, Value: csrf, Path: "/", Expires: expires, Secure: true, HttpOnly: false, SameSite: http.SameSiteStrictMode})
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookieName,
+		Value:    session,
+		Path:     "/",
+		Expires:  expires,
+		Secure:   true,
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+	})
+	http.SetCookie(w, &http.Cookie{
+		Name:     csrfCookieName,
+		Value:    csrf,
+		Path:     "/",
+		Expires:  expires,
+		Secure:   true,
+		HttpOnly: false,
+		SameSite: http.SameSiteStrictMode,
+	})
 }
 
 func clearSessionCookies(w http.ResponseWriter) {
-	for _, name := range []string{sessionCookieName, csrfCookieName} {
-		http.SetCookie(w, &http.Cookie{Name: name, Value: "", Path: "/", MaxAge: -1, Secure: true, SameSite: http.SameSiteStrictMode})
-	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookieName,
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		Secure:   true,
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+	})
+	http.SetCookie(w, &http.Cookie{
+		Name:     csrfCookieName,
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		Secure:   true,
+		HttpOnly: false,
+		SameSite: http.SameSiteStrictMode,
+	})
 }
 
 func sessionCookie(r *http.Request) string {
 	cookie, err := r.Cookie(sessionCookieName)
-	if err != nil { return "" }
+	if err != nil {
+		return ""
+	}
 	return cookie.Value
 }
 
@@ -421,11 +527,15 @@ func requireSecureURL(raw string) error {
 	if err != nil || parsed.Host == "" {
 		return fmt.Errorf("valid absolute URL required")
 	}
+	if parsed.User != nil || parsed.Fragment != "" {
+		return fmt.Errorf("URL userinfo and fragments are not allowed")
+	}
 	if parsed.Scheme == "https" {
 		return nil
 	}
 	host := parsed.Hostname()
-	if parsed.Scheme == "http" && (strings.EqualFold(host, "localhost") || net.ParseIP(host) != nil && net.ParseIP(host).IsLoopback()) {
+	ip := net.ParseIP(host)
+	if parsed.Scheme == "http" && (strings.EqualFold(host, "localhost") || (ip != nil && ip.IsLoopback())) {
 		return nil
 	}
 	return fmt.Errorf("https required outside loopback")
@@ -433,7 +543,9 @@ func requireSecureURL(raw string) error {
 
 func randomToken(bytes int) (string, error) {
 	buffer := make([]byte, bytes)
-	if _, err := rand.Read(buffer); err != nil { return "", err }
+	if _, err := rand.Read(buffer); err != nil {
+		return "", err
+	}
 	return base64.RawURLEncoding.EncodeToString(buffer), nil
 }
 
@@ -449,7 +561,9 @@ func pkceChallenge(verifier string) string {
 
 func contains(values []string, target string) bool {
 	for _, value := range values {
-		if value == target { return true }
+		if value == target {
+			return true
+		}
 	}
 	return false
 }
