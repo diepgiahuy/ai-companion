@@ -6,14 +6,14 @@ import (
 	"strings"
 )
 
-const RequiredSchemaRevision = "20260815093000"
+const RequiredSchemaRevision = "20260815160000"
 
 var requiredProductTables = []string{
 	"turn_results", "notes", "expenses", "journal_entries", "reminders",
 	"conversation_messages", "budgets", "voice_memos", "idempotency_records",
 	"legacy_idempotency_reservations", "memories", "memory_vectors", "device_twins",
 	"config_overrides", "config_generation", "feature_flags", "entitlements",
-	"device_credentials", "outbox", "market_watches", "firmware_releases",
+	"device_credentials", "device_claim_deliveries", "outbox", "market_watches", "firmware_releases",
 	"llm_usage", "privacy_policies", "feature_modules",
 	"voice_mail_items",
 }
