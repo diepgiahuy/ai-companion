@@ -65,7 +65,7 @@ func TestPairingControlRejectsSpoofedAuthenticatedParticipant(t *testing.T) {
 	data := pairingInteraction(t, s.id, "msg-create-1", "idem-create-1", protocol.PairingSessionCreateType,
 		protocol.PairingSessionCreate{
 			Initiator: protocol.PairingParticipant{OwnerUserID:"spoofed-user", DeviceID:s.deviceID},
-			CandidateDeviceID:"session-b", ProximityEvidenceID:"rf-1",
+			CandidateDeviceID:"CP-ABCDEFGHIJKLMNOP", ProximityEvidenceID:"rf-1",
 		})
 	handled, err := s.handlePairingControl(context.Background(), data)
 	if !handled || !errors.Is(err, pairing.ErrUnauthorized) {
@@ -73,7 +73,7 @@ func TestPairingControlRejectsSpoofedAuthenticatedParticipant(t *testing.T) {
 	}
 }
 
-func TestPairingControlResolvesOnlyActiveSessionDiscoveryAlias(t *testing.T) {
+func TestPairingControlResolvesOnlyActiveRotatingDiscoveryAlias(t *testing.T) {
 	hub := newSessionHub()
 	repo := pairingControlRepository{create: func(m pairing.CreateMutation) (pairing.Session, bool, error) {
 		if m.Peer.DeviceID != "device-b" {
@@ -90,9 +90,7 @@ func TestPairingControlResolvesOnlyActiveSessionDiscoveryAlias(t *testing.T) {
 	hub.register(initiator.deviceID, initiator)
 	hub.register(peer.deviceID, peer)
 
-	// A stable device ID is intentionally NOT a valid BLE discovery value even
-	// though that device is connected. Only its opaque active WebSocket session
-	// ID may cross the discovery boundary.
+	// Stable identity never resolves at the radio boundary.
 	stableIDAttempt := pairingInteraction(t, initiator.id, "msg-create-stable", "idem-create-stable", protocol.PairingSessionCreateType,
 		protocol.PairingSessionCreate{
 			Initiator: protocol.PairingParticipant{OwnerUserID:initiator.userID, DeviceID:initiator.deviceID},
@@ -103,10 +101,15 @@ func TestPairingControlResolvesOnlyActiveSessionDiscoveryAlias(t *testing.T) {
 		t.Fatalf("stable device id discovery handled=%v err=%v, want unavailable", handled, err)
 	}
 
+	alias, err := pairingDiscoveryID(peer.id, time.Now().UTC())
+	if err != nil { t.Fatal(err) }
+	if !validPairingDiscoveryID(alias) || alias == peer.id || alias == peer.deviceID {
+		t.Fatalf("rotating alias=%q session=%q device=%q", alias, peer.id, peer.deviceID)
+	}
 	aliasAttempt := pairingInteraction(t, initiator.id, "msg-create-alias", "idem-create-alias", protocol.PairingSessionCreateType,
 		protocol.PairingSessionCreate{
 			Initiator: protocol.PairingParticipant{OwnerUserID:initiator.userID, DeviceID:initiator.deviceID},
-			CandidateDeviceID:peer.id, ProximityEvidenceID:"rf-alias",
+			CandidateDeviceID:alias, ProximityEvidenceID:alias,
 		})
 	handled, err = initiator.handlePairingControl(context.Background(), aliasAttempt)
 	if err != nil || !handled { t.Fatalf("alias handled=%v err=%v", handled, err) }
@@ -117,11 +120,24 @@ func TestPairingControlResolvesOnlyActiveSessionDiscoveryAlias(t *testing.T) {
 	staleAlias := pairingInteraction(t, initiator.id, "msg-create-stale", "idem-create-stale", protocol.PairingSessionCreateType,
 		protocol.PairingSessionCreate{
 			Initiator: protocol.PairingParticipant{OwnerUserID:initiator.userID, DeviceID:initiator.deviceID},
-			CandidateDeviceID:peer.id, ProximityEvidenceID:"rf-stale",
+			CandidateDeviceID:alias, ProximityEvidenceID:alias,
 		})
 	handled, err = initiator.handlePairingControl(context.Background(), staleAlias)
 	if !handled || !errors.Is(err, pairing.ErrDeviceUnavailable) {
 		t.Fatalf("stale alias handled=%v err=%v, want unavailable", handled, err)
+	}
+}
+
+func TestPairingDiscoveryIDRotatesBySlot(t *testing.T) {
+	at := time.Unix(1_800_000_000, 0).UTC()
+	first, err := pairingDiscoveryID("session-opaque-123456", at)
+	if err != nil { t.Fatal(err) }
+	same, err := pairingDiscoveryID("session-opaque-123456", at.Add(10*time.Second))
+	if err != nil { t.Fatal(err) }
+	next, err := pairingDiscoveryID("session-opaque-123456", at.Add(pairingDiscoverySlotDuration))
+	if err != nil { t.Fatal(err) }
+	if first != same || first == next || !validPairingDiscoveryID(first) || !validPairingDiscoveryID(next) {
+		t.Fatalf("rotation first=%q same=%q next=%q", first, same, next)
 	}
 }
 
@@ -138,11 +154,13 @@ func TestPairingControlDeliversParticipantSpecificNonceAsMessageID(t *testing.T)
 	peer := pairingTestSession(hub, "session-b-opaque-5678", "user-b", "device-b")
 	hub.register(initiator.deviceID, initiator)
 	hub.register(peer.deviceID, peer)
+	alias, err := pairingDiscoveryID(peer.id, time.Now().UTC())
+	if err != nil { t.Fatal(err) }
 
 	data := pairingInteraction(t, initiator.id, "msg-create-2", "idem-create-2", protocol.PairingSessionCreateType,
 		protocol.PairingSessionCreate{
 			Initiator: protocol.PairingParticipant{OwnerUserID:initiator.userID, DeviceID:initiator.deviceID},
-			CandidateDeviceID:peer.id, ProximityEvidenceID:"rf-2",
+			CandidateDeviceID:alias, ProximityEvidenceID:alias,
 		})
 	handled, err := initiator.handlePairingControl(context.Background(), data)
 	if err != nil || !handled { t.Fatalf("handled=%v err=%v", handled, err) }
