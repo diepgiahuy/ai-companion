@@ -124,11 +124,18 @@ jobs:
           import json
           from pathlib import Path
           data = json.loads(Path('artifacts/software-device/evidence-tool-db.json').read_text())
+          migration_versions = sorted(
+              path.name.split('_', 1)[0]
+              for path in Path('db/postgres').glob('*.sql')
+              if path.name.split('_', 1)[0].isdigit()
+          )
+          assert migration_versions, 'no PostgreSQL migrations found'
+          expected_schema_revision = migration_versions[-1]
           assert data.get('schema_version') == 2
           assert data.get('result') == 'passed'
           assert data.get('promotion') == 'orchestration_only'
           assert data.get('authoritative_store') == 'postgresql'
-          assert data.get('schema_revision') == '20260815093000'
+          assert data.get('schema_revision') == expected_schema_revision
           assert data.get('runtime_role') == 'companion_app'
           assert data.get('schema_create_allowed') is False
           mutation = data.get('mutation', {})
