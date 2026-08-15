@@ -9,6 +9,7 @@ import (
 type Policy struct {
 	UserID                    string    `json:"user_id"`
 	SaveVoiceAudio            bool      `json:"save_voice_audio"`
+	VoiceMailPolicy           string    `json:"voice_mail_policy"`
 	LongTermMemoryEnabled     bool      `json:"long_term_memory_enabled"`
 	ConversationRetentionDays int       `json:"conversation_retention_days"`
 	VoiceMemoRetentionDays    int       `json:"voice_memo_retention_days"`
@@ -54,11 +55,17 @@ func (s *Service) Policy(ctx context.Context, user string) (Policy, error) {
 	if ok {
 		return p, nil
 	}
-	return Policy{UserID: user, SaveVoiceAudio: false, LongTermMemoryEnabled: false}, nil
+	return Policy{UserID: user, SaveVoiceAudio: false, VoiceMailPolicy: "disabled", LongTermMemoryEnabled: false}, nil
 }
 func (s *Service) Set(ctx context.Context, p Policy) error {
 	if p.UserID == "" {
 		return fmt.Errorf("user_id required")
+	}
+	if p.VoiceMailPolicy == "" {
+		p.VoiceMailPolicy = "disabled"
+	}
+	if p.VoiceMailPolicy != "disabled" && p.VoiceMailPolicy != "ephemeral" && p.VoiceMailPolicy != "retained" {
+		return fmt.Errorf("voice_mail_policy must be disabled, ephemeral, or retained")
 	}
 	for name, days := range map[string]int{"conversation_retention_days": p.ConversationRetentionDays, "voice_memo_retention_days": p.VoiceMemoRetentionDays, "memory_retention_days": p.MemoryRetentionDays} {
 		if days < 0 || days > 3650 {

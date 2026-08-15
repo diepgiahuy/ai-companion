@@ -1,116 +1,164 @@
-# AI-assisted development workflow
+# AI development workflow
 
-This workflow keeps human ownership while allowing coding agents to execute bounded
-work independently. It applies to humans and agents equally.
+This is the human-readable execution contract for AI-assisted changes in this
+repository. It optimizes for reliable outcomes, short feedback loops, and evidence
+that another person can reproduce. Product test capabilities remain documented in
+`docs/TEST_EVIDENCE_LADDER.md`.
 
-## 1. Intake and repository check
+## Core rule
 
-Before implementation:
+Use the cheapest objective check that can catch the failure. Broaden verification
+only when the change crosses a real boundary or reaches its final review state.
 
-1. Restate the requested outcome.
-2. Inspect the current implementation, tests, configuration, and recent changes.
-3. Identify security, privacy, hardware, migration, and external-write risks.
-4. Classify statements as current fact, fixed requirement, or hypothesis.
-5. Create or refine an issue when the work is large, delegated, or has dependencies.
+More commands, agents, artifacts, or narration are not stronger evidence by
+themselves. A claim is proven only by a relevant pass/fail oracle executed against
+the code being reviewed.
 
-Small, local, low-risk fixes do not require a new issue.
+## Flow
 
-## 2. Issue readiness
+```text
+issue truth
+  -> acceptance matrix
+  -> narrow implementation loop
+  -> risk-matched local gate
+  -> final diff review
+  -> exact-SHA hosted CI
+  -> merge
+  -> human-only gate, if any
+```
 
-An issue is ready when it defines:
+### Checkpoint 1: Ready to implement
 
-- the outcome and observable acceptance criteria;
-- verified current-state references;
-- scope and non-goals;
-- fixed decisions and open questions;
-- relevant test layers;
-- security/privacy/data-lifecycle requirements;
-- dependencies, ownership, and merge order;
-- rollout and rollback expectations.
+Record in the task or PR:
 
-An issue is not a binding architecture document. If implementation discovery
-invalidates an assumption, update the issue and explain the decision.
+- intended outcome and explicit non-goals;
+- live issue dependencies and whether they are closed;
+- owned files/contracts and likely test commands;
+- acceptance items classified as software-testable or human-only;
+- risk level from the table below.
 
-## 3. Decomposition and coordination
+Stop discovery when these facts are known. Do not audit the whole repository unless
+the issue changes a cross-cutting contract or explicitly requests a repository audit.
 
-Use one accountable lead per issue. Split an issue when it combines separately
-reviewable domains such as schema, backend lifecycle, firmware behavior, and
-hardware selection.
+### Checkpoint 2: Behavior implemented
 
-Parallel work is appropriate only when:
+During implementation, repeat only this narrow loop:
 
-- contracts and ownership are stable;
-- agents use separate branches or worktrees;
-- shared files and migrations have one integrator;
-- each branch declares its base and dependency;
-- results can be validated independently.
+1. Add or update one observable test/oracle.
+2. Make the smallest coherent code change.
+3. Run formatter/static checks for touched files and the nearest package or host test.
+4. Fix the first useful failure; do not rerun unrelated green suites.
 
-Do not force all work into architectural layers or stacked PRs. Use a stack only
-when one change genuinely depends on another.
+After the same unexplained failure occurs twice, stop repeating it. Inspect the root
+cause directly or escalate the exact blocker with the command and output.
 
-## 4. Implementation loop
+### Checkpoint 3: Locally verified
 
-1. Make the smallest coherent change that advances an acceptance criterion.
-2. Run the narrowest relevant check.
-3. Read actual output and fix root causes. Do not mask failures.
-4. Add broader integration, simulation, or HIL coverage when the behavior crosses
-   those boundaries.
-5. Review the diff for unrelated changes, unsafe defaults, missing failure handling,
-   privacy regressions, and rollback gaps.
-6. Record commands actually run and any validation that could not run.
+Run the risk-matched gate once on the final local diff. Save command, result, and
+tested commit. A rerun is required only when subsequent edits can affect that gate.
 
-Safe local inspection, editing, and tests do not require repeated approval.
-Production writes, destructive actions, external side effects, purchases,
-irreversible hardware operations, and material scope expansion do.
+### Checkpoint 4: Review complete
 
-## 5. Validation tiers
+Review the complete final diff once, prioritizing correctness, security/privacy,
+concurrency/lifecycle, rollback, and missing acceptance tests. Fix findings and rerun
+only affected checks. A second independent review is required only for high-risk or
+release-checkpoint changes.
 
-These tiers describe evidence types, not CI jobs that are guaranteed to exist.
+### Checkpoint 5: Hosted proof and merge
 
-- **L0 Static:** formatting, compilation, schema checks, lint, dependency review.
-- **L1 Unit/host:** pure logic, state machines, error paths, fakes at ports.
-- **L2 Integration:** implemented database, filesystem/blob, protocol, and provider
-  contracts.
-- **L3 Simulation:** Wokwi or equivalent where simulated peripherals are meaningful.
-- **L4 Physical HIL:** trusted firmware on real boards and peripherals.
-- **L5 Release:** security provisioning, OTA rollback, soak, fault, backup/restore,
-  and artifact provenance as applicable.
+GitHub required checks on the PR's exact head SHA are the authoritative hosted proof.
+Do not duplicate the same full suite locally and in multiple ad-hoc workflows unless
+the duplicate has a distinct failure oracle. After merge, watch push CI only for
+high-risk changes or when branch and push workflows materially differ.
 
-Use the lowest tier that proves the claim. A physical test does not replace missing
-deterministic tests, and a mock does not prove physical behavior.
+### Checkpoint 6: Human-only completion
 
-## 6. CI and HIL safety
+Hardware, credentials, purchases, production access, irreversible device operations,
+and subjective product decisions are reported separately. Software work may be
+`software-proven` while the issue remains open for a named human gate. Include a
+step-by-step command/UI runbook, expected result, evidence to capture, and rollback.
 
-The repository is public. Pull requests must not automatically execute arbitrary
-code on a personal self-hosted runner.
+## Risk-matched gates
 
-- Pull-request checks use GitHub-hosted or otherwise isolated ephemeral runners.
-- Physical HIL uses manual authorization and a trusted repository ref.
-- The checked-out commit SHA is recorded with the result.
-- Build and test failures fail the job.
-- HIL reports identify the board/port, firmware artifact, test set, and toolchain.
-- Feature-specific HIL is added only after the firmware exposes real behavior or a
-  documented test-control interface.
+| Risk | Typical change | Local implementation loop | Final local gate | Extra proof |
+|---|---|---|---|---|
+| L0 | Docs, comments, metadata | syntax/link check | relevant document validator | none |
+| L1 | Pure logic or isolated UI | nearest unit/host test | touched package tests | PR CI |
+| L2 | API, protocol, auth, persistence, firmware FSM | unit + focused integration | affected packages plus one boundary E2E | exact-SHA CI and final diff review |
+| L3 | migration, destructive data path, concurrency runtime, credential/security boundary, release | focused failure/recovery tests | full relevant race/integration/recovery gate | independent review, immutable artifact when it proves a distinct property, post-merge CI |
 
-## 7. Review and merge
+Risk can increase during implementation when evidence reveals a broader boundary.
+Do not classify an entire issue as L3 merely because the repository contains L3 code.
 
-A PR should explain outcome, scope, tests, risk, and rollback. Human review is
-required for architecture changes, privacy/security policy, migrations, hardware
-changes, production rollout, or other high-impact work. Branch protection and
-repository permissions, not prose alone, enforce merge policy.
+## Test and evidence rules
 
-An agent may prepare a PR and address feedback. Merge only when the repository's
-configured checks and required approvals are satisfied.
+- Prefer deterministic assertions over logs and agent-written summaries.
+- Test behavior at the lowest layer that owns it, then add one boundary test for
+  wiring. Do not reproduce the same scenario at every tier.
+- Mocks prove orchestration and failure handling, not provider, radio, acoustic, or
+  hardware quality. Follow `docs/TEST_EVIDENCE_LADDER.md` for promotion language.
+- Local tests are fast diagnostics. Required exact-SHA CI is the hosted merge oracle.
+- Record artifacts and digests only when artifact identity matters, such as migration,
+  restore, firmware image, benchmark corpus, or physical evidence.
+- Never mark `passed` from source inspection, expected output, a different SHA, or an
+  agent report that cannot expose the executed command and result.
 
-## 8. Evidence vocabulary
+## Review rules
 
-Use precise status terms:
+Normal PR review is one final-diff pass. `docs/STATIC_REVIEW_GATE.md` applies to an
+immutable release checkpoint, not every implementation commit or normal PR.
 
-- **Implemented:** code exists.
-- **Tested:** named checks ran and passed in a stated environment.
-- **HIL-tested:** named physical scenario ran on identified hardware.
-- **Production-proven:** defined release/SLO criteria passed in production-like use.
-- **Planned:** accepted direction with no implementation claim.
+Findings come first and include severity, file/line, user impact, and the missing or
+failing oracle. Avoid style findings unless they cause ambiguity or maintenance risk.
+If there are no findings, state the residual test or environment gaps.
 
-Do not create a global evidence file unless a concrete release process consumes and
-validates it.
+## Agent delegation
+
+One lead owns the issue and final proof. Delegate only bounded lanes with stable
+inputs, non-overlapping outputs, and a verifiable return contract.
+
+Good delegated lanes:
+
+- read-only dependency or issue triage returned as structured data;
+- an isolated package with a stable interface;
+- running a named test suite and returning command, SHA, exit code, and artifact;
+- independent final-diff review.
+
+Do not delegate implementation when the worker cannot access the required repository,
+sandbox, dependency, service, or test runner. Do not use multiple agents to review the
+same surface without a measured reason. The lead re-runs or checks critical evidence;
+an agent's prose is not proof.
+
+## No-duplicate rule
+
+Before running a costly gate, ask:
+
+1. What specific failure can this catch?
+2. Was that property already tested on the same code?
+3. Did the code or environment change since that proof?
+4. Will the result change the merge decision?
+
+Skip the gate if no answer identifies new decision value. Prefer one parameterized
+command or CI matrix over repeated commands that test the same property.
+
+## Human-readable status template
+
+Use this compact format in task updates and PR descriptions:
+
+```text
+Checkpoint: <ready | implementing | locally-verified | reviewed | hosted-proven | merged>
+Scope: <one sentence>
+Risk: <L0-L3 and reason>
+Changed: <observable behavior, not a file inventory>
+Proof: <command/workflow + SHA + result>
+Remaining: <next software step or named human-only gate>
+Blocker: <none, or exact blocker and owner>
+```
+
+## Definition of done
+
+A software change is done when acceptance behavior is implemented, relevant tests pass,
+the final diff has no unresolved release-blocking finding, exact-SHA required CI passes,
+rollback is understood, and documentation states any unproven higher-tier claim. Release
+tags, checkpoint reports, artifact digests, post-merge watchers, and physical evidence
+are added only when the risk table or release process requires them.

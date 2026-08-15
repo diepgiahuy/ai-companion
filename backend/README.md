@@ -30,6 +30,12 @@ There is no SQLite/PostgreSQL selector, fallback, shadow read, or dual write. SQ
 
 Run `companion-river-migrate up` with the migration owner after Atlas, then run `ops/postgres/configure_runtime_role.psql` to create/refresh the non-DDL application role. `companiond` rejects superusers and roles that can create databases, roles, or objects in `public`; River reindexing is disabled because the application role owns no DDL.
 
+## Voice mail
+
+Voice mail is separate from personal `voice_memos`. PostgreSQL stores mailbox metadata, policy, durable idempotency, leases, lifecycle and outbox state. Ogg Opus bytes are stored through the local filesystem `BlobStore` rooted at `COMPANION_VOICE_MAIL_DIR` (default `data/voice-mail`); production deployment must mount and back up this path.
+
+Authenticated device operations use the enrolled `Device-Id` + Bearer credential on `/v1/voice-mail`. The flow is create metadata, `PUT /v1/voice-mail/{id}/media`, complete, recipient list/claim, authenticated media stream, then playback result or explicit delete. Protocol-v2 devices may send `voice_mail.claim` and `voice_mail.playback_result` over `/v2/device`; durable `idempotency_key` remains distinct from live-session `message_id` suppression. Media references never contain credentials, and voice mail never auto-plays.
+
 ## Capability boundary
 
 `ToolRegistry` is the canonical source for product tool definitions, JSON schemas, authorization and execution. Native tools and optional external MCP tools register through that boundary. Agent frameworks adapt to it instead of maintaining their own product semantics.

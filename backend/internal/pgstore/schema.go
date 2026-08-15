@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-const RequiredSchemaRevision = "20260814070000"
+const RequiredSchemaRevision = "20260815093000"
 
 var requiredProductTables = []string{
 	"turn_results", "notes", "expenses", "journal_entries", "reminders",
@@ -15,6 +15,7 @@ var requiredProductTables = []string{
 	"config_overrides", "config_generation", "feature_flags", "entitlements",
 	"device_credentials", "outbox", "market_watches", "firmware_releases",
 	"llm_usage", "privacy_policies", "feature_modules",
+	"voice_mail_items",
 }
 
 var requiredProductTriggers = map[string]string{

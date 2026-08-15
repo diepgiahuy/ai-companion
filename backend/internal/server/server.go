@@ -24,6 +24,7 @@ import (
 	"companion-server/internal/pipeline"
 	"companion-server/internal/privacy"
 	"companion-server/internal/protocol"
+	"companion-server/internal/voicemail"
 
 	"github.com/coder/websocket"
 )
@@ -54,6 +55,9 @@ type Server struct {
 	featureCatalog    *controlplane.FeatureCatalog
 	observer          observability.Recorder
 	jobControl        JobControl
+	voiceMail         *voicemail.Service
+	voiceMailRateMu   sync.Mutex
+	voiceMailRates    map[string]voiceMailRateWindow
 }
 
 type Option func(*Server)
@@ -92,6 +96,9 @@ type JobControl interface {
 }
 
 func WithJobControl(control JobControl) Option { return func(s *Server) { s.jobControl = control } }
+func WithVoiceMail(service *voicemail.Service) Option {
+	return func(s *Server) { s.voiceMail = service }
+}
 
 type DeviceAuthenticator interface {
 	AuthenticateDevice(context.Context, string, string) (domain.Identity, bool, error)
@@ -139,6 +146,7 @@ func New(components pipeline.Components, logger *slog.Logger, options ...Option)
 	service := &Server{
 		components: components, logger: logger, observer: observability.Nop(),
 		hub: newSessionHub(), schedulerInterval: 2 * time.Second, location: time.Local, identityResolver: HeaderIdentityResolver{DefaultUserID: "default"},
+		voiceMailRates: make(map[string]voiceMailRateWindow),
 	}
 	for _, option := range options {
 		option(service)
@@ -195,6 +203,16 @@ func (s *Server) Handler() http.Handler {
 	if s.jobControl != nil && s.adminToken != "" {
 		mux.HandleFunc("POST /v1/admin/jobs/retention", s.handleRetentionEnqueue)
 		mux.HandleFunc("GET /v1/admin/jobs/metrics", s.handleJobMetrics)
+	}
+	if s.voiceMail != nil && s.deviceAuth != nil {
+		mux.HandleFunc("POST /v1/voice-mail", s.handleVoiceMailCreate)
+		mux.HandleFunc("GET /v1/voice-mail", s.handleVoiceMailList)
+		mux.HandleFunc("PUT /v1/voice-mail/{id}/media", s.handleVoiceMailMediaPut)
+		mux.HandleFunc("GET /v1/voice-mail/{id}/media", s.handleVoiceMailMediaGet)
+		mux.HandleFunc("POST /v1/voice-mail/{id}/complete", s.handleVoiceMailComplete)
+		mux.HandleFunc("POST /v1/voice-mail/{id}/claim", s.handleVoiceMailClaim)
+		mux.HandleFunc("POST /v1/voice-mail/{id}/playback", s.handleVoiceMailPlayback)
+		mux.HandleFunc("DELETE /v1/voice-mail/{id}", s.handleVoiceMailDelete)
 	}
 	return mux
 }
@@ -265,7 +283,7 @@ func (s *Server) handleDevice(writer http.ResponseWriter, request *http.Request)
 		}
 		return s.data.AcknowledgeReminder(ctx, identity.UserID, identity.DeviceID, id)
 	}
-	session, err := newSession(connection, s.components, s.hub, identity.DeviceID, identity.UserID, identity.ThreadID, identity.TenantID, identity.Plan, ack, s.controlPlane, s.observer, s.logger)
+	session, err := newSession(connection, s.components, s.hub, identity.DeviceID, identity.UserID, identity.ThreadID, identity.TenantID, identity.Plan, ack, s.controlPlane, s.voiceMail, s.observer, s.logger)
 	if err != nil {
 		connection.Close(websocket.StatusInternalError, "codec unavailable")
 		s.logger.Error("initialize Opus session", "error", err)
@@ -319,6 +337,7 @@ type session struct {
 	generation    uint64
 	codec         pipeline.AudioCodec
 	controlPlane  *controlplane.Service
+	voiceMail     *voicemail.Service
 	messageSeq    atomic.Uint64
 	seenInbound   map[string]inboundRecord
 	seenOrder     []string
@@ -329,7 +348,7 @@ type inboundRecord struct {
 	outcome error
 }
 
-func newSession(connection *websocket.Conn, components pipeline.Components, hub *sessionHub, deviceID, userID, threadID, tenantID, plan string, ack func(context.Context, int64) error, control *controlplane.Service, observer observability.Recorder, logger *slog.Logger) (*session, error) {
+func newSession(connection *websocket.Conn, components pipeline.Components, hub *sessionHub, deviceID, userID, threadID, tenantID, plan string, ack func(context.Context, int64) error, control *controlplane.Service, voiceMail *voicemail.Service, observer observability.Recorder, logger *slog.Logger) (*session, error) {
 	if components.Codecs == nil {
 		return nil, fmt.Errorf("codec factory is required")
 	}
@@ -370,6 +389,7 @@ func newSession(connection *websocket.Conn, components pipeline.Components, hub 
 		mediaWrites:   make(chan outbound, maximumMediaQueue),
 		codec:         codec,
 		controlPlane:  control,
+		voiceMail:     voiceMail,
 		seenInbound:   make(map[string]inboundRecord),
 	}, nil
 }
@@ -595,6 +615,47 @@ func (s *session) handleControl(ctx context.Context, data []byte) error {
 			return err
 		}
 		return s.sendJSONMeta(ctx, protocol.SessionPongType, protocol.Metadata{CorrelationID: message.MessageID}, protocol.EmptyPayload{})
+	case protocol.VoiceMailClaimType:
+		if s.voiceMail == nil {
+			return fmt.Errorf("voice mail is unavailable")
+		}
+		payload, err := protocol.DecodePayload[protocol.VoiceMailClaim](message)
+		if err != nil {
+			return err
+		}
+		request, err := voiceMailRequest(s.userID, "voice_mail.claim", message.IdempotencyKey, payload)
+		if err != nil {
+			return err
+		}
+		return s.processInbound(message.MessageID, data, func() error {
+			item, err := s.voiceMail.Claim(ctx, request, s.userID, s.deviceID, payload.VoiceMailID, payload.PlaybackID)
+			if err != nil {
+				return err
+			}
+			return s.sendJSONMeta(ctx, protocol.VoiceMailClaimedType, protocol.Metadata{CorrelationID: message.MessageID, IdempotencyKey: message.IdempotencyKey, OccurredAt: time.Now().UTC().Format(time.RFC3339Nano)}, protocol.VoiceMailClaimed{VoiceMailID: item.ID, PlaybackID: item.PlaybackID, MediaRef: "/v1/voice-mail/" + item.ID + "/media", LeaseExpiresAt: *item.LeaseExpiresAt})
+		})
+	case protocol.VoiceMailPlaybackResultType:
+		if s.voiceMail == nil {
+			return fmt.Errorf("voice mail is unavailable")
+		}
+		payload, err := protocol.DecodePayload[protocol.VoiceMailPlaybackResult](message)
+		if err != nil {
+			return err
+		}
+		request, err := voiceMailRequest(s.userID, "voice_mail.playback", message.IdempotencyKey, payload)
+		if err != nil {
+			return err
+		}
+		return s.processInbound(message.MessageID, data, func() error {
+			item, err := s.voiceMail.Playback(ctx, request, s.userID, payload.VoiceMailID, payload.PlaybackID, payload.Result == protocol.PlaybackSucceeded)
+			if err != nil {
+				return err
+			}
+			if payload.Result == protocol.PlaybackSucceeded {
+				return s.sendJSONMeta(ctx, protocol.VoiceMailConsumedType, protocol.Metadata{CorrelationID: message.MessageID, IdempotencyKey: message.IdempotencyKey, OccurredAt: time.Now().UTC().Format(time.RFC3339Nano)}, protocol.VoiceMailConsumed{VoiceMailID: item.ID, PlaybackID: payload.PlaybackID})
+			}
+			return nil
+		})
 	default:
 		return &protocol.ProtocolError{Code: protocol.InvalidEnvelopeCode, Detail: fmt.Sprintf("message type %q is invalid in this direction", message.Type)}
 	}

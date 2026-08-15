@@ -1,5 +1,11 @@
 # Independent static review gate
 
+This gate applies to immutable production/release checkpoints and L3 changes that
+alter migration, destructive recovery, concurrency runtime, credential/security, or
+release boundaries. Normal L0-L2 pull requests use the final-diff review defined in
+`../ai_development_workflow.md`; they do not require a checkpoint tag and separate
+review artifact.
+
 Every implementation checkpoint must receive a static review **after the implementation diff is complete and before the checkpoint is tagged or snapshotted**. The review is intentionally separate from implementation reasoning to reduce confirmation bias.
 
 A checkpoint may be tagged only when its checkpoint note contains `## Independent static review` and `Static review status: PASS`, and a matching independent review report at `docs/reviews/<checkpoint-tag>-static-review.md` also records `Static review status: PASS`.

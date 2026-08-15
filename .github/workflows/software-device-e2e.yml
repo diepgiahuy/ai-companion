@@ -127,7 +127,7 @@ jobs:
           assert data.get('result') == 'passed'
           assert data.get('promotion') == 'orchestration_only'
           assert data.get('authoritative_store') == 'postgresql'
-          assert data.get('schema_revision') == '20260814070000'
+          assert data.get('schema_revision') == '20260815093000'
           assert data.get('runtime_role') == 'companion_app'
           assert data.get('schema_create_allowed') is False
           mutation = data.get('mutation', {})
