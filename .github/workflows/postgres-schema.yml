@@ -25,6 +25,7 @@ jobs:
     env:
       POSTGRES_IMAGE: postgres:18.4-bookworm@sha256:1961f96e6029a02c3812d7cb329a3b03a3ac2bb067058dec17b0f5596aca9296
       ATLAS_IMAGE: arigaio/atlas:1.2.0-community-distroless@sha256:0527e6aaaf8078ca3398cac75209f8f43a13e96bc15b3dfdeffe7cef5451c96e
+      SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -141,8 +142,8 @@ jobs:
           river_versions="$(docker exec companion-pg psql -v ON_ERROR_STOP=1 -At -U companion -d companion -c 'SELECT string_agg(version::text,'"'"','"'"' ORDER BY version) FROM river.river_migration WHERE line='"'"'main'"'"';')"
           role_flags="$(docker exec companion-pg psql -v ON_ERROR_STOP=1 -At -U companion -d companion -c "SELECT rolsuper::int || ':' || rolcreatedb::int || ':' || rolcreaterole::int || ':' || has_schema_privilege('companion_app','river','CREATE')::int FROM pg_roles WHERE rolname='companion_app';")"
           job_states="$(docker exec companion-pg psql -v ON_ERROR_STOP=1 -At -U companion -d companion -c "SELECT COALESCE(json_object_agg(state,total),'{}') FROM (SELECT state,count(*) AS total FROM river.river_job GROUP BY state ORDER BY state) states;")"
-          printf '{"schema_version":1,"source_head":"%s","postgres":"%s","database_bytes":%s,"river_migrations":"%s","runtime_role":"companion_app","role_flags":"%s","job_states":%s}\n' \
-            "$GITHUB_SHA" "$postgres_version" "$database_bytes" "$river_versions" "$role_flags" "$job_states" \
+          printf '{"schema_version":1,"source_head":"%s","tested_merge_commit":"%s","postgres":"%s","database_bytes":%s,"river_migrations":"%s","runtime_role":"companion_app","role_flags":"%s","job_states":%s}\n' \
+            "$SOURCE_HEAD" "$GITHUB_SHA" "$postgres_version" "$database_bytes" "$river_versions" "$role_flags" "$job_states" \
             | tee artifacts/postgres-river/operations.json
           test "$role_flags" = "0:0:0:0"
           test "$river_versions" = "1,2,3,4,5,6,7"
@@ -249,14 +250,14 @@ jobs:
         if: always()
         run: |
           mkdir -p artifacts/postgres-river
-          cp .tmp-postgres-restore-evidence.json artifacts/postgres-river/ 2>/dev/null || true
-          cp .tmp-postgres-rollback-evidence.json artifacts/postgres-river/ 2>/dev/null || true
+          cp .tmp-postgres-restore-evidence.json artifacts/postgres-river/restore-evidence.json
+          cp .tmp-postgres-rollback-evidence.json artifacts/postgres-river/rollback-evidence.json
 
       - name: Upload PostgreSQL and River evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: postgres-river-${{ github.sha }}
+          name: postgres-river-${{ github.event.pull_request.head.sha || github.sha }}
           path: artifacts/postgres-river/
           if-no-files-found: error
           retention-days: 14
