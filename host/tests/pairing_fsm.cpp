@@ -12,6 +12,7 @@ int main() {
   assert(fsm.state() == State::discovering);
   assert(!fsm.observe_candidate(1'100, "CP-AAAAAAAAAAAAAAAA", "evidence-self"));
   assert(fsm.observe_candidate(1'200, "CP-BBBBBBBBBBBBBBBB", "evidence-1"));
+  assert(fsm.should_initiate());
   assert(fsm.state() == State::discovering);
   assert(fsm.commit_candidate(1'300));
   assert(fsm.state() == State::session_pending);
@@ -33,6 +34,17 @@ int main() {
   assert(fsm.server_success(2'400, "session-2"));
   assert(fsm.state() == State::idle);
   assert(fsm.last_stop_reason() == StopReason::success);
+
+  // Both devices compute the same lexical ordering from the two rotating aliases,
+  // so exactly one side initiates and the other waits for the backend session.
+  PairingFsm elected_a;
+  PairingFsm elected_b;
+  assert(elected_a.begin(2'450, "CP-AAAAAAAAAAAAAAAA"));
+  assert(elected_b.begin(2'450, "CP-BBBBBBBBBBBBBBBB"));
+  assert(elected_a.observe_candidate(2'460, "CP-BBBBBBBBBBBBBBBB", "evidence-ab"));
+  assert(elected_b.observe_candidate(2'460, "CP-AAAAAAAAAAAAAAAA", "evidence-ba"));
+  assert(elected_a.should_initiate());
+  assert(!elected_b.should_initiate());
 
   // The peer receives pairing.session_created while it is still advertising
   // and scanning. It must converge directly from discovery to confirmation.
