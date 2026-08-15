@@ -22,6 +22,26 @@
 
 namespace companion {
 
+enum class PairingBackendEventType : uint8_t {
+  session_created,
+  succeeded,
+  rejected,
+  expired,
+  disconnected,
+};
+
+struct PairingBackendEvent {
+  PairingBackendEventType type{PairingBackendEventType::expired};
+  std::array<char, 129> pairing_session_id{};
+  std::array<char, 257> confirmation_nonce{};
+  std::array<char, 65> reason{};
+  uint64_t expires_at_unix_ms{};
+
+  std::string_view session_id_view() const;
+  std::string_view confirmation_nonce_view() const;
+  std::string_view reason_view() const;
+};
+
 class WebSocketVoiceBackend final : public VoiceBackend {
 public:
   WebSocketVoiceBackend();
@@ -52,10 +72,24 @@ public:
     return playback_sample_rate_hz_.load();
   }
 
+  // Pairing reuses this exact authenticated Protocol-v2 client. Enabling it
+  // before start() swaps in a composite event handler that intercepts only
+  // pairing server events and delegates all existing control/media traffic to
+  // the canonical implementation. It never creates a second WebSocket.
+  bool enable_pairing_protocol();
+  bool pairing_discovery_alias(std::array<char, 20>& output);
+  bool create_pairing_session(std::string_view candidate_discovery_id,
+                              std::string_view proximity_evidence_id);
+  bool confirm_pairing_session(std::string_view pairing_session_id,
+                               std::string_view confirmation_nonce);
+  bool reject_pairing_session(std::string_view pairing_session_id);
+  bool poll_pairing_event(PairingBackendEvent& event);
+
 private:
   static constexpr size_t kOutboundQueueCapacity = 16;
   static constexpr size_t kPlaybackQueueCapacity = 24;
   static constexpr size_t kEventQueueCapacity = 12;
+  static constexpr size_t kPairingEventQueueCapacity = 8;
   static constexpr size_t kMediaQueueCapacity = 2;
   static constexpr size_t kWriterStackDepth = 5'120;
   static constexpr size_t kMediaStackDepth = 6'144;
@@ -116,6 +150,7 @@ private:
   std::atomic<bool> client_started_{false};
   std::atomic<bool> socket_connected_{false};
   std::atomic<bool> protocol_connected_{false};
+  std::atomic<bool> pairing_protocol_enabled_{false};
   std::atomic<bool> turn_active_{false};
   std::atomic<bool> tts_active_{false};
   std::atomic<uint32_t> playback_sample_rate_hz_{24'000};
@@ -155,14 +190,17 @@ private:
   StaticQueue_t outbound_queue_storage_{};
   StaticQueue_t playback_queue_storage_{};
   StaticQueue_t event_queue_storage_{};
+  StaticQueue_t pairing_event_queue_storage_{};
   StaticQueue_t media_queue_storage_{};
   alignas(portBYTE_ALIGNMENT) std::array<uint8_t, kOutboundQueueCapacity * sizeof(Outbound)> outbound_queue_buffer_{};
   alignas(portBYTE_ALIGNMENT) std::array<uint8_t, kPlaybackQueueCapacity * sizeof(AudioFrame)> playback_queue_buffer_{};
   alignas(portBYTE_ALIGNMENT) std::array<uint8_t, kEventQueueCapacity * sizeof(BackendEvent)> event_queue_buffer_{};
+  alignas(portBYTE_ALIGNMENT) std::array<uint8_t, kPairingEventQueueCapacity * sizeof(PairingBackendEvent)> pairing_event_queue_buffer_{};
   alignas(portBYTE_ALIGNMENT) std::array<uint8_t, kMediaQueueCapacity * sizeof(MediaJob)> media_queue_buffer_{};
   QueueHandle_t outbound_queue_{};
   QueueHandle_t playback_queue_{};
   QueueHandle_t event_queue_{};
+  QueueHandle_t pairing_event_queue_{};
   QueueHandle_t media_queue_{};
 
   StaticTask_t writer_task_storage_{};
@@ -174,12 +212,16 @@ private:
 
   static void event_handler(void* context, esp_event_base_t base,
                             int32_t event_id, void* event_data);
+  static void pairing_event_handler(void* context, esp_event_base_t base,
+                                    int32_t event_id, void* event_data);
   static void writer_entry(void* context);
   static void media_entry(void* context);
   void on_event(int32_t event_id, esp_websocket_event_data_t* data);
+  void on_pairing_event(int32_t event_id, esp_websocket_event_data_t* data);
   void writer_loop();
   void media_loop();
   void handle_text(std::string_view json);
+  bool handle_pairing_text(std::string_view json);
   void handle_binary(const esp_websocket_event_data_t& data);
   bool enqueue_command(CommandType type, std::string_view turn = {}, ListenMode mode = ListenMode::manual);
   bool enqueue_pong(std::string_view correlation_id);
@@ -194,6 +236,8 @@ private:
   bool enqueue_voice_mail_event(BackendEventType type,
                                 const VoiceMailMetadata& item,
                                 std::string_view text = {});
+  bool enqueue_pairing_event(const PairingBackendEvent& event);
+  bool send_pairing_control(protocol::ControlType type, std::string_view payload_json);
   bool send_text(std::string_view text);
   bool set_session_id(std::string_view session_id);
   void clear_session_id();
