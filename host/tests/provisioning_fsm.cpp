@@ -45,6 +45,18 @@ int main() {
       .server_url = "wss://user@evil.example/v2/device",
       .device_credential = "device-token",
   }));
+  assert(!valid_runtime_config(RuntimeConfigView{
+      .wifi_ssid = "home",
+      .wifi_password = "secret123",
+      .server_url = "wss://companion.example/v2/device?token=secret",
+      .device_credential = "device-token",
+  }));
+  assert(!valid_runtime_config(RuntimeConfigView{
+      .wifi_ssid = "home",
+      .wifi_password = "secret123",
+      .server_url = "wss://companion.example/v2/device#fragment",
+      .device_credential = "device-token",
+  }));
 
   assert(valid_pending_claim(PendingClaimView{
       .bootstrap_id = "boot-123",
