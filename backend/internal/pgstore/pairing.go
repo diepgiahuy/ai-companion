@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"companion-server/internal/idempotency"
 	"companion-server/internal/pairing"
