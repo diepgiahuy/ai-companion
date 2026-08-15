@@ -1,4 +1,4 @@
-FROM golang:1.26.6-bookworm
+FROM golang:1.26.6-bookworm AS base
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential cmake ninja-build pkg-config libopus-dev libopusfile-dev python3 \
@@ -14,4 +14,12 @@ RUN cd backend && go mod download
 COPY . .
 RUN test "$(go env GOVERSION)" = "go1.26.6"
 
+# Full quality mode owns the vulnerability scanner. Draft-fast and host E2E do
+# not pay this install cost.
+FROM base AS quality
+ARG GOVULNCHECK_VERSION=v1.6.0
+RUN GOBIN=/usr/local/bin go install golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}
+
+# Keep the default target lightweight for host E2E and release builds.
+FROM base AS test
 CMD ["bash", "scripts/e2e.sh"]

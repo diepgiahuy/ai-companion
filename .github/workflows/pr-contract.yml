@@ -2,7 +2,7 @@ name: PR Contract Publisher
 
 on:
   pull_request_target:
-    types: [opened, edited, synchronize, reopened, ready_for_review]
+    types: [opened, edited, synchronize, reopened]
 
 concurrency:
   group: pr-contract-${{ github.event.pull_request.number }}
