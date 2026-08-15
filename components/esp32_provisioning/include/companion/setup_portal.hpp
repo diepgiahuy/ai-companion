@@ -3,6 +3,7 @@
 #include "companion/provisioning_store.hpp"
 
 #include "esp_http_server.h"
+#include "esp_netif.h"
 
 #include <array>
 #include <atomic>
