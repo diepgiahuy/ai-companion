@@ -24,6 +24,11 @@ struct FixedSecret {
   }
 };
 
+struct WifiConfig {
+  FixedSecret<33> ssid;
+  FixedSecret<64> password;
+};
+
 struct PendingConfig {
   FixedSecret<33> wifi_ssid;
   FixedSecret<64> wifi_password;
@@ -52,6 +57,12 @@ public:
   bool save_pending(const PendingConfig& pending) const;
   bool commit_runtime(const PendingConfig& pending,
                       std::string_view device_credential) const;
+
+  // update_wifi changes only SSID/password while preserving the already-enrolled
+  // backend origin and device credential. This is deliberately distinct from a
+  // factory reset so changing networks cannot duplicate or transfer ownership.
+  bool update_wifi(const WifiConfig& wifi) const;
+
   bool mark_ready() const;
   bool clear() const;
 };
