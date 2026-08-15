@@ -1,0 +1,19 @@
+menu "Companion OTA"
+
+config COMPANION_OTA_BOARD
+    string "Immutable Companion board identity for OTA targeting"
+    default ""
+    help
+        Exact board/revision identity expected in signed firmware manifests. Empty
+        disables OTA checks fail-safe until a product board identity is configured.
+
+config COMPANION_OTA_CHANNEL
+    string "Firmware release channel"
+    default "stable"
+
+config COMPANION_OTA_HEALTH_TIMEOUT_MS
+    int "Pending-image health timeout (ms)"
+    range 30000 300000
+    default 120000
+
+endmenu

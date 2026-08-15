@@ -2,6 +2,7 @@
 #include "companion/esp32_audio.hpp"
 #include "companion/esp_sr_audio_frontend.hpp"
 #include "companion/gpio_button.hpp"
+#include "companion/ota_manager.hpp"
 #include "companion/ssd1306_display.hpp"
 #include "companion/transport_policy.hpp"
 #include "companion/websocket_voice_backend.hpp"
@@ -31,6 +32,7 @@ extern "C" void app_main() {
   static GpioButton button;
   static WifiStation wifi;
   static WebSocketVoiceBackend backend;
+  static OtaManager ota(wifi);
 
   if (!display.initialize()) {
     ESP_LOGE(kTag, "SSD1306 initialization failed");
@@ -68,8 +70,6 @@ extern "C" void app_main() {
   const bool initially_connected =
       wifi.connect(CONFIG_COMPANION_WIFI_SSID, CONFIG_COMPANION_WIFI_PASSWORD);
   if (!initially_connected) {
-    // This is no longer terminal: WifiStation keeps reconnecting with bounded
-    // exponential backoff + jitter after the initial wait expires.
     ESP_LOGW(kTag, "Wi-Fi not connected yet; continuing in reconnecting state");
     display.show(UiState::connecting, "WIFI RETRY");
   }
@@ -77,9 +77,6 @@ extern "C" void app_main() {
   if (!wifi.start_time_sync(CONFIG_COMPANION_TZ_RULE)) {
     ESP_LOGW(kTag, "SNTP initialization failed; wall clock remains invalid");
   } else if (initially_connected && !wifi.wait_for_valid_time()) {
-    // Starting SNTP is not evidence that wall clock is valid. The WebSocket client
-    // keeps its own reconnect lifecycle; once Wi-Fi/SNTP converge a fresh session
-    // hello causes the server to replay current config/schedule state.
     ESP_LOGW(kTag, "wall clock not valid yet; secure backend may retry until SNTP converges");
   }
 
@@ -88,11 +85,21 @@ extern "C" void app_main() {
   std::array<char, 32> device_id{};
   std::snprintf(device_id.data(), device_id.size(), "%02x:%02x:%02x:%02x:%02x:%02x",
                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+
+  ota.initialize(CONFIG_COMPANION_SERVER_URL,
+                 CONFIG_COMPANION_DEVICE_CREDENTIAL,
+                 device_id.data(), CONFIG_COMPANION_OTA_BOARD,
+                 CONFIG_COMPANION_OTA_CHANNEL,
+                 CONFIG_COMPANION_OTA_HEALTH_TIMEOUT_MS);
+  // OTA is checked only during boot before interactive turns start. Network/time
+  // unavailability is non-terminal; a malformed/incompatible target is rejected.
+  if (!ota.check_and_apply()) {
+    ESP_LOGE(kTag, "OTA target/image rejected; continuing current valid firmware");
+  }
+
   if (!backend.initialize(CONFIG_COMPANION_SERVER_URL,
                           CONFIG_COMPANION_DEVICE_CREDENTIAL,
                           device_id.data(), device_id.data())) {
-    // initialize() validates/allocates the backend. Network loss itself is handled
-    // by the WebSocket client's auto-reconnect and is not a reason to recreate it.
     ESP_LOGE(kTag, "WebSocket backend initialization failed");
     display.show(UiState::error, "BACKEND INIT ERROR");
     return;
@@ -117,7 +124,9 @@ extern "C" void app_main() {
   ESP_LOGI(kTag, "hardware POC using ESP-SR AEC/WakeNet/VAD + secure WebSocket protocol v2");
 
   while (true) {
-    app.tick(now_ms());
+    const uint64_t now = now_ms();
+    app.tick(now);
+    ota.tick(now);
     vTaskDelay(pdMS_TO_TICKS(5));
   }
 }
