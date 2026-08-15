@@ -1,30 +1,8 @@
 name: software-device-e2e
 
 on:
-  pull_request:
-    paths:
-      - "host/companion_software_device/**"
-      - "components/companion_app/**"
-      - "backend/**"
-      - "db/postgres/**"
-      - "ops/postgres/**"
-      - "testdata/scenarios/**"
-      - ".github/workflows/software-device-e2e.yml"
-  push:
-    branches: [main]
-    paths:
-      - "host/companion_software_device/**"
-      - "components/companion_app/**"
-      - "backend/**"
-      - "db/postgres/**"
-      - "ops/postgres/**"
-      - "testdata/scenarios/**"
-      - ".github/workflows/software-device-e2e.yml"
+  workflow_call:
   workflow_dispatch:
-
-concurrency:
-  group: software-device-e2e-${{ github.ref }}
-  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -40,6 +18,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Build Atlas-migrated PostgreSQL 18.4 data plane
         run: |
           set -euo pipefail

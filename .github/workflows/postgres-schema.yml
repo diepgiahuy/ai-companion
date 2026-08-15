@@ -1,22 +1,11 @@
 name: postgres-schema
 
 on:
-  pull_request:
-    paths:
-      - "db/postgres/**"
-      - "ops/postgres/**"
-      - "backend/internal/pgstore/**"
-      - "backend/internal/jobs/**"
-      - "backend/cmd/companiond/**"
-      - "backend/cmd/companion-river-migrate/**"
-      - "backend/cmd/companion-migrate/**"
-      - "backend/go.mod"
-      - "backend/go.sum"
-      - ".github/workflows/postgres-schema.yml"
+  workflow_call:
   workflow_dispatch:
 
 concurrency:
-  group: postgres-schema-${{ github.event.pull_request.number || github.run_id }}
+  group: postgres-schema-${{ github.event.pull_request.number || github.ref || github.run_id }}
   cancel-in-progress: true
 
 permissions:
@@ -32,7 +21,7 @@ jobs:
       SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -169,12 +158,14 @@ jobs:
         id: recovery
         env:
           EVENT_NAME: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           recovery=false
           if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            recovery=true
+          elif [[ -z "${BASE_SHA:-}" || "$BASE_SHA" =~ ^0+$ ]]; then
             recovery=true
           else
             git diff --name-only "$BASE_SHA" "$HEAD_SHA" > /tmp/postgres-recovery-files.txt
