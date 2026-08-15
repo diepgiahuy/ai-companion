@@ -183,6 +183,12 @@ func capabilityRemoteError(code string) error {
 }
 
 func (s *session) handleCapabilityControl(ctx context.Context, data []byte) (bool, error) {
+	// Pairing is another authenticated session extension. Dispatch it from the
+	// same pre-generic control seam so the core turn/control switch remains small;
+	// pairing itself lives in pairing_control.go and is not a device capability.
+	if handled, err := s.handlePairingControl(ctx, data); handled {
+		return true, err
+	}
 	message, err := protocol.Decode(data)
 	if err != nil {
 		return false, nil
