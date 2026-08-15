@@ -15,10 +15,6 @@ const deviceWebSocketPath = "/v2/device"
 // callers with Origin are denied by default and require an exact HTTPS origin
 // in COMPANION_ALLOWED_DEVICE_ORIGINS.
 func deviceOriginGuard(next http.Handler) http.Handler {
-	// Owner browser authentication is an independent HTTP surface. It is inserted
-	// at the composition edge and is enabled only by explicit OIDC configuration;
-	// it never changes the enrolled-device credential path below.
-	next = ownerAuthFromEnvironment(next)
 	allowed := allowedDeviceOrigins(os.Getenv("COMPANION_ALLOWED_DEVICE_ORIGINS"))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == deviceWebSocketPath {
