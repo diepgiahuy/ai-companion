@@ -80,7 +80,7 @@ jobs:
             cat /tmp/ci-changed-files.txt
             while IFS= read -r file; do
               case "$file" in
-                components/*|host/*|testdata/*|CMakeLists.txt|partitions.csv|scripts/e2e.sh|scripts/budget_check.py|Dockerfile.test|.github/workflows/ci.yml)
+                components/*|host/*|testdata/*|CMakeLists.txt|partitions.csv|scripts/e2e.sh|scripts/budget_check.py|.github/workflows/ci.yml)
                   e2e=true
                   ;;
               esac
@@ -126,7 +126,7 @@ jobs:
             echo "## CI scope"
             echo
             echo "- mode: $([[ "$full" == "true" ]] && echo full || echo draft-fast)"
-            echo "- host e2e: $e2e"
+            echo "- host tests: $e2e"
             echo "- backend quality: $backend"
             echo "- CodeQL Go: $codeql"
             echo "- PostgreSQL/River: $postgres"
@@ -143,14 +143,14 @@ jobs:
         run: python3 scripts/check_single_path.py
 
   e2e:
-    name: e2e
+    name: Host component tests
     needs: prepare
     if: >-
       github.event_name != 'schedule' &&
       always() &&
       (needs.prepare.result != 'success' || needs.prepare.outputs.e2e == 'true')
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     steps:
       - name: Fail closed if classification failed
         if: needs.prepare.result != 'success'
@@ -162,35 +162,15 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install draft-fast host dependencies
-        if: needs.prepare.result == 'success' && needs.prepare.outputs.full != 'true'
+      - name: Install host dependencies
+        if: needs.prepare.result == 'success'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ninja-build pkg-config libopus-dev libopusfile-dev
 
-      - name: Draft-fast host/software integration E2E
-        if: needs.prepare.result == 'success' && needs.prepare.outputs.full != 'true'
+      - name: Run host component and integration tests
+        if: needs.prepare.result == 'success'
         run: bash scripts/e2e.sh
-
-      - name: Set up Docker Buildx for full mode
-        if: needs.prepare.result == 'success' && needs.prepare.outputs.full == 'true'
-        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
-
-      - name: Build cached full host E2E image
-        if: needs.prepare.result == 'success' && needs.prepare.outputs.full == 'true'
-        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
-        with:
-          context: .
-          file: Dockerfile.test
-          load: true
-          pull: true
-          tags: companion-test:e2e
-          cache-from: type=gha,scope=companion-e2e
-          cache-to: type=gha,mode=max,scope=companion-e2e
-
-      - name: Full host/software integration E2E
-        if: needs.prepare.result == 'success' && needs.prepare.outputs.full == 'true'
-        run: docker run --rm companion-test:e2e bash scripts/e2e.sh
 
   backend-quality:
     name: Go reproducibility, vet, race, vulnerabilities
@@ -378,7 +358,7 @@ jobs:
           require_success "prepare/evidence" "$PREPARE_RESULT"
 
           if [[ "$E2E_REQUIRED" == "true" ]]; then
-            require_success "e2e" "$E2E_RESULT"
+            require_success "host component tests" "$E2E_RESULT"
           fi
           if [[ "$BACKEND_REQUIRED" == "true" ]]; then
             require_success "backend quality" "$BACKEND_RESULT"
@@ -401,7 +381,7 @@ jobs:
             echo
             echo "- mode: $([[ "$FULL_MODE" == "true" ]] && echo full || echo draft-fast)"
             echo "- evidence: $PREPARE_RESULT"
-            echo "- e2e: $E2E_RESULT"
+            echo "- host tests: $E2E_RESULT"
             echo "- backend: $BACKEND_RESULT"
             echo "- CodeQL: $CODEQL_RESULT"
             echo "- PostgreSQL/River: $POSTGRES_RESULT"
