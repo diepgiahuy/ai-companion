@@ -1,118 +1,82 @@
-# Audio front-end roadmap: Smart VAD, WakeNet and AEC
+# Audio front end — ESP-SR software path and physical qualification
 
-This document is the contract for the next hands-free audio milestone. It exists
-so `README.md` can list AEC/wake-word honestly without treating them as a flag
-that is already working.
+This document describes the merged audio-front-end architecture and the remaining **physical acoustic evidence boundary**. It is not a roadmap claiming that unrun hardware tests passed.
 
-## Current audio mode
+## Merged software architecture
 
-- The button still starts a turn. This is the reliable fallback and remains supported.
-- A basic local energy VAD now detects speech and automatically stops capture after
-  configurable trailing silence (`vad_mean_abs_threshold`, `vad_silence_ms`,
-  `vad_min_speech_ms`).
-- TTS playback is half-duplex from the microphone point of view. Button barge-in
-  cancels TTS; hands-free voice barge-in is not yet accepted.
-
-## Why AEC needs a different input topology
-
-ESP-SR's Audio Front-End (AFE) combines AEC, noise suppression, VAD and WakeNet.
-For AEC, the front-end must receive both microphone samples (`M`) and a playback
-reference (`R`) that represents what is being sent to the speaker. The channels
-are interleaved PCM. AEC therefore cannot be made real by enabling a boolean in
-`CompanionApp` while only the INMP441 signal is available.
-
-The current POC has:
-
-- microphone path: 16 kHz mono PCM -> uplink Opus;
-- TTS path: 24 kHz mono Opus -> PCM -> MAX98357A.
-
-A future AEC path must therefore also feed a time-aligned speaker reference to the
-AFE at its required sample format. With the current 24 kHz downlink, either add a
-bounded 24 -> 16 kHz reference resampler or negotiate a compatible playback
-reference rate. Keep that conversion outside the application/business state
-machine.
-
-## Target component boundary
+The firmware has one portable audio-front-end boundary used by `CompanionApp`, with the ESP32-S3 concrete path implemented using ESP-SR AFE/WakeNet/VAD/AEC integration.
 
 ```text
-INMP441 16 kHz -----> AudioFrontend -----> CompanionApp microphone port
-                           ^   |
-                           |   +--> VAD state / WakeNet state
-                           |
-TTS playback reference ---+   (AEC reference, time aligned)
+microphone PCM ----------> AudioFrontend ----------> CompanionApp turn path
+                                ^   |
+                                |   +--> speech / end-of-speech / wake events
+                                |
+real speaker PCM reference ----+        (AEC reference)
 
-CompanionApp -----> Speaker port -----> MAX98357A
+CompanionApp ----------> speaker port ----------> physical output
 ```
 
-Recommended firmware API shape:
+Important invariants:
 
-```cpp
-struct AudioFrontendResult {
-  size_t samples;
-  bool speech_started;
-  bool speech_ended;
-  bool wake_word_detected;
-};
+- ESP-SR/vendor types remain outside application/business state logic.
+- Wake starts the same canonical turn/session path as button input; there is no second WebSocket/audio runtime.
+- Hands-free barge-in cancels through the same generation-scoped backend/session path used by deterministic button interruption.
+- Playback-reference samples come from the real speaker PCM path, not from a boolean/config claim.
+- Queues/buffers remain bounded and cancellation/reset drains stale generation state.
+- The physical button remains a deterministic user/recovery input even when hands-free behavior is enabled.
 
-class AudioFrontend {
-public:
-  virtual ~AudioFrontend() = default;
-  virtual bool start() = 0;
-  virtual AudioFrontendResult process(
-      std::span<const int16_t> mic,
-      std::span<const int16_t> playback_reference,
-      std::span<int16_t> cleaned_output) = 0;
-  virtual void reset() = 0;
-};
-```
+The current device audio profile keeps the existing Companion Opus/runtime boundaries; format/rate conversion needed by the AFE/reference path remains in the audio adapter rather than the application FSM.
 
-Do not leak ESP-SR types into `companion_app`; put the concrete adapter in
-`esp32_board` (or a new `esp32_audio_frontend` component) and inject the portable
-interface.
+## What software tests can prove
 
-## Wake word flow
+Host/component/Tier-1 tests may prove:
 
-1. In `ready/idle`, keep only the low-cost audio front-end/wake detector active.
-2. WakeNet detects the configured local wake phrase.
-3. Cancel idle animation, start a normal backend turn through the same
-   `VoiceBackend::begin_turn(...)` API, and transition to `listening`.
-4. Use AFE VAD to decide end-of-speech.
-5. Keep the physical button as a deterministic fallback and provisioning/recovery
-   control.
+- application state transitions for wake/listen/end/cancel;
+- bounded buffering and reset behavior;
+- playback-reference under/overrun handling;
+- generation cancellation/stale-output suppression;
+- reuse of the canonical turn/session path;
+- compilation/integration against the selected ESP-SR/ESP-IDF configuration.
 
-Do **not** implement wake word by opening a second independent WebSocket/audio
-pipeline; that would duplicate cancellation, queues and turn IDs.
+They do **not** prove acoustic echo cancellation quality, false-wake rate, microphone/speaker geometry, enclosure coupling, real RF coexistence or sustained physical resource behavior.
 
-## Hands-free barge-in acceptance gate
+## Physical qualification gate
 
-Voice barge-in while TTS is playing is only considered complete when all of the
-following pass on the actual enclosure:
+Issue #17 owns physical qualification of the already-merged software path. Promotion requires trusted Tier-3 evidence on the intended board/enclosure.
 
-- playback reference is fed to AEC;
-- the device does not self-trigger on its own TTS at normal speaker volume;
-- user speech while TTS plays is detected reliably;
-- false interruption rate is measured in a quiet room and with common background noise;
-- interruption stops queued TTS and begins the new turn without stale audio;
-- heap/PSRAM and CPU remain within budget for at least a 30-minute soak test.
+At minimum measure and record:
 
-Physical design still matters: keep mic and speaker mechanically separated and
-use foam/silicone isolation where practical. Software AEC should reduce echo; it
-should not be used to excuse a poor acoustic enclosure.
+- wake-to-listen latency;
+- false wakes in quiet/common background conditions;
+- false interruptions while normal TTS plays;
+- end-of-speech behavior;
+- user speech detection during TTS and resulting barge-in latency;
+- proof that stale queued TTS does not continue after interruption;
+- CPU, internal heap/PSRAM and watchdog behavior;
+- at least a representative sustained audio + Wi-Fi coexistence soak;
+- tested firmware/backend SHA, board/enclosure, speaker volume, ESP-SR/model/config and test setup.
 
-## Status
+Normal TTS must not repeatedly self-trigger the microphone/wake path at supported volume/enclosure settings.
 
-| Item | Status |
-|---|---:|
-| Button-started capture | ✅ |
-| Basic energy Smart VAD / auto end | ✅ host-tested, 🟡 hardware tuning |
-| ESP-SR AFE adapter | 🔴 |
-| Noise suppression through AFE | 🔴 |
-| WakeNet | 🔴 |
-| Playback-reference resampler/routing | 🔴 |
-| AEC | 🔴 ⚠️ hardware validation |
-| Hands-free voice barge-in | 🔴 ⚠️ depends on AEC + VAD/WakeNet |
+Physical layout still matters: microphone/speaker placement, mechanical isolation and enclosure acoustics are part of the measured system. Software AEC is not a substitute for poor acoustic design.
+
+## Evidence status
+
+| Item | Durable state |
+|---|---|
+| Button-started canonical turn path | implemented/tested software path |
+| AudioFrontend application boundary | implemented |
+| ESP-SR AFE integration | implemented |
+| WakeNet/VAD integration | implemented software path |
+| Real playback-reference routing for AEC | implemented software path |
+| Generation-scoped hands-free barge-in orchestration | implemented software/Tier-1 path |
+| Physical wake false-accept/reject quality | **unproven until #17 HIL** |
+| Physical AEC/self-trigger quality | **unproven until #17 HIL** |
+| Final enclosure/resource/coexistence soak | **unproven until #17 / selected hardware evidence** |
+
+Do not regress the wording back to “ESP-SR not implemented” merely because physical quality remains unproven; implementation evidence and physical evidence are separate facts.
 
 ## Primary references
 
-- Espressif ESP-SR AEC: https://docs.espressif.com/projects/esp-sr/en/latest/esp32s3/acoustic_echo_cancellation/README.html
-- Espressif ESP-SR AFE: https://docs.espressif.com/projects/esp-sr/en/latest/esp32s3/audio_front_end/README.html
+- Espressif ESP-SR AEC: <https://docs.espressif.com/projects/esp-sr/en/latest/esp32s3/acoustic_echo_cancellation/README.html>
+- Espressif ESP-SR AFE: <https://docs.espressif.com/projects/esp-sr/en/latest/esp32s3/audio_front_end/README.html>
