@@ -2,157 +2,55 @@ name: project-management
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '23 3 * * *'
+  pull_request:
+    paths:
+      - scripts/bootstrap_github_project.py
+      - scripts/reconcile_github_issue_status.py
+      - .github/workflows/project-management.yml
   issues:
     types:
       - opened
+      - edited
       - reopened
       - closed
       - labeled
       - unlabeled
-      - assigned
-      - unassigned
   push:
     branches:
       - main
     paths:
       - scripts/bootstrap_github_project.py
-      - scripts/reconcile_github_issue_graph.py
       - scripts/reconcile_github_issue_status.py
       - .github/workflows/project-management.yml
 
 permissions:
   contents: read
-  issues: write
 
 concurrency:
-  group: ai-companion-project-management
-  cancel-in-progress: false
+  group: project-management-${{ github.event_name }}-${{ github.event.pull_request.number || github.event.issue.number || github.ref || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
-  bootstrap:
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    env:
-      PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}
-      REPO_TOKEN: ${{ github.token }}
-      PROJECT_OWNER: diepgiahuy
-      PROJECT_REPOSITORY: diepgiahuy/ai-companion
-      PROJECT_TITLE: AI Companion — Production v1
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-
-      - name: Fail closed if PROJECT_TOKEN is unavailable
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -n "${PROJECT_TOKEN:-}" || { echo "::error::PROJECT_TOKEN is not configured"; exit 1; }
-
-      - name: Ensure canonical Project fields exist
-        id: project
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
-        run: |
-          set -euo pipefail
-          project_json="$(gh project list --owner "${PROJECT_OWNER}" --limit 100 --format json)"
-          project_number="$(jq -r --arg title "${PROJECT_TITLE}" '[(.projects // .)[] | select(.title == $title) | .number][0] // empty' <<<"${project_json}")"
-          if [[ -z "${project_number}" ]]; then
-            project_number="$(gh project create --owner "${PROJECT_OWNER}" --title "${PROJECT_TITLE}" --format json --jq '.number')"
-          fi
-          echo "number=${project_number}" >> "${GITHUB_OUTPUT}"
-
-          field_json="$(gh project field-list "${project_number}" --owner "${PROJECT_OWNER}" --limit 100 --format json)"
-          has_field() {
-            jq -e --arg name "$1" 'any((.fields // .)[]; .name == $name)' <<<"${field_json}" >/dev/null
-          }
-          create_select() {
-            local name="$1" options="$2"
-            if ! has_field "${name}"; then
-              gh project field-create "${project_number}" --owner "${PROJECT_OWNER}" \
-                --name "${name}" --data-type SINGLE_SELECT --single-select-options "${options}" >/dev/null
-              field_json="$(gh project field-list "${project_number}" --owner "${PROJECT_OWNER}" --limit 100 --format json)"
-            fi
-          }
-          create_date() {
-            local name="$1"
-            if ! has_field "${name}"; then
-              gh project field-create "${project_number}" --owner "${PROJECT_OWNER}" \
-                --name "${name}" --data-type DATE >/dev/null
-              field_json="$(gh project field-list "${project_number}" --owner "${PROJECT_OWNER}" --limit 100 --format json)"
-            fi
-          }
-
-          create_select "Priority" "P0,P1,P2"
-          create_select "Wave" "W0 Foundation,W1 Core,W2 Product,W3 Social,Future"
-          create_select "Size" "XS,S,M,L"
-          create_select "Risk" "L1,L2,L3"
-          create_select "Required Evidence" "T0 Contract,T1 Software Device,T2 Wokwi,T3 Physical HIL"
-          create_date "Start Date"
-          create_date "Target Date"
-          echo "Canonical Project fields exist on Project #${project_number}."
-
-      - name: Ensure canonical Project views exist
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
-          PROJECT_NUMBER: ${{ steps.project.outputs.number }}
-        run: |
-          set -euo pipefail
-          view_names="$(gh api graphql \
-            -f query='query($login:String!,$number:Int!){user(login:$login){projectV2(number:$number){views(first:100){nodes{name}}}}}' \
-            -f login="${PROJECT_OWNER}" -F number="${PROJECT_NUMBER}" \
-            --jq '.data.user.projectV2.views.nodes[].name')"
-
-          create_view() {
-            local name="$1" layout="$2" filter="$3"
-            if grep -Fxq "${name}" <<<"${view_names}"; then
-              return 0
-            fi
-            jq -cn --arg name "${name}" --arg layout "${layout}" --arg filter "${filter}" \
-              '{name:$name,layout:$layout,filter:$filter}' | \
-              gh api --method POST \
-                -H 'Accept: application/vnd.github+json' \
-                -H 'X-GitHub-Api-Version: 2026-03-10' \
-                "users/${PROJECT_OWNER}/projectsV2/${PROJECT_NUMBER}/views" --input - >/dev/null
-            echo "Created Project view: ${name}"
-            view_names="${view_names}"$'\n'"${name}"
-          }
-
-          create_view "01 — Command Center" table 'is:issue -status:Done'
-          create_view "02 — Execution" board 'is:issue -status:Backlog -status:Done'
-          create_view "03 — Critical Path" table 'is:issue priority:P0 -status:Done'
-          create_view "04 — Physical / Evidence" table 'is:issue required-evidence:"T3 Physical HIL" -status:Done'
-          create_view "05 — Product Roadmap" roadmap 'is:issue no:parent-issue'
-
-      - name: Reconcile native sub-issues and dependencies
-        run: python3 scripts/reconcile_github_issue_graph.py
-
-      - name: Reconcile execution labels from native dependencies
-        run: python3 scripts/reconcile_github_issue_status.py
-
-      - name: Reconcile Project items and metadata
-        shell: bash
-        run: |
-          set -euo pipefail
-          # Field/view creation and native issue graph reconciliation are owned by
-          # dedicated workflow steps using their supported API surfaces.
-          python3 - <<'PY'
-          from pathlib import Path
-          path = Path("scripts/bootstrap_github_project.py")
-          text = path.read_text()
-          text = text.replace("    ensure_views(project, snapshot)\n", "    pass  # views reconciled by workflow\n")
-          text = text.replace("    reconcile_relationships()\n", "    pass  # native issue graph reconciled separately\n")
-          path.write_text(text)
-          PY
-          python3 scripts/bootstrap_github_project.py --bootstrap
-
-  sync-issue:
-    if: github.event_name == 'issues'
+  validate:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Compile Project control-plane scripts
+        run: python3 -m py_compile scripts/bootstrap_github_project.py scripts/reconcile_github_issue_status.py
+
+  sync:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
     env:
       PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}
       REPO_TOKEN: ${{ github.token }}
@@ -160,13 +58,26 @@ jobs:
       PROJECT_REPOSITORY: diepgiahuy/ai-companion
       PROJECT_TITLE: AI Companion — Production v1
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
 
-      - name: Reconcile dependent execution state
-        if: github.event.action == 'closed' || github.event.action == 'reopened'
-        run: python3 scripts/reconcile_github_issue_status.py
+      - name: Validate required credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${REPO_TOKEN:-}" || { echo "::error::REPO_TOKEN is unavailable"; exit 1; }
+          test -n "${PROJECT_TOKEN:-}" || { echo "::error::PROJECT_TOKEN is not configured"; exit 1; }
 
-      - name: Sync changed issue into GitHub Project
-        run: python3 scripts/bootstrap_github_project.py --sync-issue "${{ github.event.issue.number }}"
+      - name: Reconcile execution labels and Project status
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "issues" ]]; then
+            issue="${{ github.event.issue.number }}"
+            python3 scripts/reconcile_github_issue_status.py --issue "$issue"
+            python3 scripts/bootstrap_github_project.py --sync-issue "$issue"
+          else
+            python3 scripts/reconcile_github_issue_status.py --all
+            python3 scripts/bootstrap_github_project.py --sync-all
+          fi

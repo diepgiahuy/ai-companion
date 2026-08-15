@@ -1,0 +1,390 @@
+name: ci
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
+  push:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * 1'
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.head_ref || (github.event_name == 'push' && github.ref) || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    name: Evidence truth gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      e2e: ${{ steps.classify.outputs.e2e }}
+      backend: ${{ steps.classify.outputs.backend }}
+      codeql: ${{ steps.classify.outputs.codeql }}
+      postgres: ${{ steps.classify.outputs.postgres }}
+      protocol: ${{ steps.classify.outputs.protocol }}
+      tier1: ${{ steps.classify.outputs.tier1 }}
+      full: ${{ steps.classify.outputs.full }}
+    steps:
+      - name: Checkout for classification and evidence
+        if: github.event_name != 'schedule'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Classify changed paths and feedback mode
+        id: classify
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_DRAFT: ${{ github.event.pull_request.draft || false }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          e2e=false
+          backend=false
+          codeql=false
+          postgres=false
+          protocol=false
+          tier1=false
+          full=true
+
+          if [[ "$EVENT_NAME" == "pull_request" && "$PR_DRAFT" == "true" ]]; then
+            full=false
+          fi
+
+          if [[ "$EVENT_NAME" == "schedule" ]]; then
+            codeql=true
+          elif [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            e2e=true
+            backend=true
+            codeql=true
+            postgres=true
+            protocol=true
+            tier1=true
+          elif [[ -z "${BASE_SHA:-}" || "$BASE_SHA" =~ ^0+$ ]]; then
+            e2e=true
+            backend=true
+            codeql=true
+            postgres=true
+            protocol=true
+            tier1=true
+          else
+            git diff --name-only "$BASE_SHA" "$HEAD_SHA" > /tmp/ci-changed-files.txt
+            cat /tmp/ci-changed-files.txt
+            while IFS= read -r file; do
+              case "$file" in
+                components/*|host/*|testdata/*|CMakeLists.txt|partitions.csv|scripts/e2e.sh|scripts/budget_check.py|.github/workflows/ci.yml)
+                  e2e=true
+                  ;;
+              esac
+              case "$file" in
+                backend/*|db/postgres/*|ops/postgres/*|testdata/*|Dockerfile.test|scripts/backend_quality.sh|.github/workflows/ci.yml)
+                  backend=true
+                  ;;
+              esac
+              case "$file" in
+                backend/*|Dockerfile.test|.github/workflows/ci.yml)
+                  codeql=true
+                  ;;
+              esac
+              case "$file" in
+                db/postgres/*|ops/postgres/*|backend/internal/pgstore/*|backend/internal/jobs/*|backend/cmd/companiond/*|backend/cmd/companion-river-migrate/*|backend/cmd/companion-migrate/*|backend/go.mod|backend/go.sum|.github/workflows/postgres-schema.yml|.github/workflows/ci.yml)
+                  postgres=true
+                  ;;
+              esac
+              case "$file" in
+                backend/internal/protocol/*|backend/internal/server/*|components/companion_app/*|components/esp32_network/*|host/*|testdata/protocol/*|CMakeLists.txt|sdkconfig.defaults|partitions.csv|main/*|Dockerfile.esp-idf|.github/workflows/protocol_v2.yml|.github/workflows/ci.yml)
+                  protocol=true
+                  ;;
+              esac
+              case "$file" in
+                host/companion_software_device/*|components/companion_app/*|backend/*|db/postgres/*|ops/postgres/*|testdata/scenarios/*|.github/workflows/software-device-e2e.yml|.github/workflows/ci.yml)
+                  tier1=true
+                  ;;
+              esac
+            done < /tmp/ci-changed-files.txt
+          fi
+
+          {
+            echo "e2e=$e2e"
+            echo "backend=$backend"
+            echo "codeql=$codeql"
+            echo "postgres=$postgres"
+            echo "protocol=$protocol"
+            echo "tier1=$tier1"
+            echo "full=$full"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "## CI scope"
+            echo
+            echo "- mode: $([[ "$full" == "true" ]] && echo full || echo draft-fast)"
+            echo "- host tests: $e2e"
+            echo "- backend quality: $backend"
+            echo "- CodeQL Go: $codeql"
+            echo "- PostgreSQL/River: $postgres"
+            echo "- Protocol v2: $protocol"
+            echo "- Tier-1 software device: $tier1"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Validate production evidence claims
+        if: github.event_name != 'schedule'
+        run: python3 scripts/check_evidence.py
+
+      - name: Enforce single product runtime/auth/transport path
+        if: github.event_name != 'schedule'
+        run: python3 scripts/check_single_path.py
+
+  e2e:
+    name: Host component tests
+    needs: prepare
+    if: >-
+      github.event_name != 'schedule' &&
+      always() &&
+      (needs.prepare.result != 'success' || needs.prepare.outputs.e2e == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Fail closed if classification failed
+        if: needs.prepare.result != 'success'
+        run: exit 1
+
+      - name: Checkout
+        if: needs.prepare.result == 'success'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install host dependencies
+        if: needs.prepare.result == 'success'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build pkg-config libopus-dev libopusfile-dev
+
+      - name: Run host component and integration tests
+        if: needs.prepare.result == 'success'
+        run: bash scripts/e2e.sh
+
+  backend-quality:
+    name: Go reproducibility, vet, race, vulnerabilities
+    needs: prepare
+    if: >-
+      github.event_name != 'schedule' &&
+      always() &&
+      (needs.prepare.result != 'success' || needs.prepare.outputs.backend == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Fail closed if classification failed
+        if: needs.prepare.result != 'success'
+        run: exit 1
+
+      - name: Checkout
+        if: needs.prepare.result == 'success'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up exact Go toolchain for draft-fast mode
+        if: needs.prepare.result == 'success' && needs.prepare.outputs.full != 'true'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.6'
+          cache-dependency-path: backend/go.sum
+
+      - name: Install draft-fast native dependency
+        if: needs.prepare.result == 'success' && needs.prepare.outputs.full != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config libopus-dev
+
+      - name: Draft-fast backend tests
+        if: needs.prepare.result == 'success' && needs.prepare.outputs.full != 'true'
+        run: bash scripts/backend_quality.sh fast
+
+      - name: Set up Docker Buildx for full mode
+        if: needs.prepare.result == 'success' && needs.prepare.outputs.full == 'true'
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+
+      - name: Build cached full quality image
+        if: needs.prepare.result == 'success' && needs.prepare.outputs.full == 'true'
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        with:
+          context: .
+          file: Dockerfile.test
+          target: quality
+          load: true
+          pull: true
+          tags: companion-test:quality
+          cache-from: type=gha,scope=companion-quality
+          cache-to: type=gha,mode=max,scope=companion-quality
+
+      - name: Full backend quality and security
+        if: needs.prepare.result == 'success' && needs.prepare.outputs.full == 'true'
+        run: docker run --rm companion-test:quality bash scripts/backend_quality.sh full
+
+      - name: Diff hygiene
+        if: needs.prepare.result == 'success'
+        run: git diff --check
+
+  codeql-go:
+    name: CodeQL Go
+    needs: prepare
+    if: >-
+      always() &&
+      (
+        github.event_name == 'schedule' ||
+        needs.prepare.result != 'success' ||
+        (needs.prepare.outputs.codeql == 'true' && needs.prepare.outputs.full == 'true')
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Fail closed if classification failed
+        if: needs.prepare.result != 'success'
+        run: exit 1
+
+      - name: Checkout
+        if: needs.prepare.result == 'success'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up exact Go toolchain
+        if: needs.prepare.result == 'success'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.6'
+          cache-dependency-path: backend/go.sum
+
+      - name: Install native build dependencies
+        if: needs.prepare.result == 'success'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config libopus-dev
+
+      - name: Initialize CodeQL
+        if: needs.prepare.result == 'success'
+        uses: github/codeql-action/init@5595ccaf912efad79be6eef63a5619ff05969be3 # v4
+        with:
+          languages: go
+          build-mode: manual
+
+      - name: Build production adapter tags under CodeQL tracing
+        if: needs.prepare.result == 'success'
+        working-directory: backend
+        run: go build -tags "adk,mcp,nolibopusfile" ./...
+
+      - name: Analyze
+        if: needs.prepare.result == 'success'
+        uses: github/codeql-action/analyze@5595ccaf912efad79be6eef63a5619ff05969be3 # v4
+        with:
+          category: /language:go
+
+  postgres-gate:
+    name: PostgreSQL / River integration
+    needs: prepare
+    if: >-
+      github.event_name != 'schedule' &&
+      needs.prepare.result == 'success' &&
+      needs.prepare.outputs.full == 'true' &&
+      needs.prepare.outputs.postgres == 'true'
+    uses: ./.github/workflows/postgres-schema.yml
+
+  protocol-gate:
+    name: Protocol v2 firmware compile
+    needs: prepare
+    if: >-
+      github.event_name != 'schedule' &&
+      needs.prepare.result == 'success' &&
+      needs.prepare.outputs.full == 'true' &&
+      needs.prepare.outputs.protocol == 'true'
+    uses: ./.github/workflows/protocol_v2.yml
+
+  tier1-gate:
+    name: Tier-1 software-device orchestration
+    needs: prepare
+    if: >-
+      github.event_name != 'schedule' &&
+      needs.prepare.result == 'success' &&
+      needs.prepare.outputs.full == 'true' &&
+      needs.prepare.outputs.tier1 == 'true'
+    uses: ./.github/workflows/software-device-e2e.yml
+
+  pr-gate:
+    name: PR Gate
+    needs: [prepare, e2e, backend-quality, codeql-go, postgres-gate, protocol-gate, tier1-gate]
+    if: github.event_name != 'schedule' && always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Aggregate relevant CI results
+        shell: bash
+        env:
+          PREPARE_RESULT: ${{ needs.prepare.result }}
+          E2E_RESULT: ${{ needs.e2e.result }}
+          BACKEND_RESULT: ${{ needs.backend-quality.result }}
+          CODEQL_RESULT: ${{ needs.codeql-go.result }}
+          POSTGRES_RESULT: ${{ needs.postgres-gate.result }}
+          PROTOCOL_RESULT: ${{ needs.protocol-gate.result }}
+          TIER1_RESULT: ${{ needs.tier1-gate.result }}
+          E2E_REQUIRED: ${{ needs.prepare.outputs.e2e }}
+          BACKEND_REQUIRED: ${{ needs.prepare.outputs.backend }}
+          CODEQL_REQUIRED: ${{ needs.prepare.outputs.codeql }}
+          POSTGRES_REQUIRED: ${{ needs.prepare.outputs.postgres }}
+          PROTOCOL_REQUIRED: ${{ needs.prepare.outputs.protocol }}
+          TIER1_REQUIRED: ${{ needs.prepare.outputs.tier1 }}
+          FULL_MODE: ${{ needs.prepare.outputs.full }}
+        run: |
+          set -euo pipefail
+          require_success() {
+            local name="$1" result="$2"
+            if [[ "$result" != "success" ]]; then
+              echo "::error::${name} expected success, got ${result}"
+              exit 1
+            fi
+          }
+
+          require_success "prepare/evidence" "$PREPARE_RESULT"
+
+          if [[ "$E2E_REQUIRED" == "true" ]]; then
+            require_success "host component tests" "$E2E_RESULT"
+          fi
+          if [[ "$BACKEND_REQUIRED" == "true" ]]; then
+            require_success "backend quality" "$BACKEND_RESULT"
+          fi
+          if [[ "$CODEQL_REQUIRED" == "true" && "$FULL_MODE" == "true" ]]; then
+            require_success "CodeQL Go" "$CODEQL_RESULT"
+          fi
+          if [[ "$POSTGRES_REQUIRED" == "true" && "$FULL_MODE" == "true" ]]; then
+            require_success "PostgreSQL / River integration" "$POSTGRES_RESULT"
+          fi
+          if [[ "$PROTOCOL_REQUIRED" == "true" && "$FULL_MODE" == "true" ]]; then
+            require_success "Protocol v2 firmware compile" "$PROTOCOL_RESULT"
+          fi
+          if [[ "$TIER1_REQUIRED" == "true" && "$FULL_MODE" == "true" ]]; then
+            require_success "Tier-1 software-device orchestration" "$TIER1_RESULT"
+          fi
+
+          {
+            echo "## PR Gate"
+            echo
+            echo "- mode: $([[ "$FULL_MODE" == "true" ]] && echo full || echo draft-fast)"
+            echo "- evidence: $PREPARE_RESULT"
+            echo "- host tests: $E2E_RESULT"
+            echo "- backend: $BACKEND_RESULT"
+            echo "- CodeQL: $CODEQL_RESULT"
+            echo "- PostgreSQL/River: $POSTGRES_RESULT"
+            echo "- Protocol v2: $PROTOCOL_RESULT"
+            echo "- Tier-1 software device: $TIER1_RESULT"
+          } >> "$GITHUB_STEP_SUMMARY"
