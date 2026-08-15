@@ -16,7 +16,7 @@ import (
 
 func (s *Store) CreatePairingSession(ctx context.Context, mutation pairing.CreateMutation) (pairing.Session, bool, error) {
 	request := idempotency.Request{
-		Actor: mutation.Initiator.UserID, Operation: "pairing.session.create",
+		Actor: pairingActor(mutation.Initiator.UserID, mutation.Initiator.DeviceID), Operation: "pairing.session.create",
 		Key: mutation.IdempotencyKey, RequestHash: mutation.RequestHash,
 	}
 	outcome, err := RunIdempotent(ctx, s.pool, request, func(tx pgx.Tx) (any, error) {
@@ -50,12 +50,21 @@ func (s *Store) CreatePairingSession(ctx context.Context, mutation pairing.Creat
 	if err := json.Unmarshal([]byte(outcome.JSON), &session); err != nil {
 		return pairing.Session{}, false, fmt.Errorf("decode pairing create outcome: %w", err)
 	}
+	// Keep confirmation nonces out of idempotency JSON so the durable replay
+	// record does not become a second secret store. Rehydrate them from the
+	// authoritative short-lived session row for both first execution and replay.
+	if err := s.pool.QueryRow(ctx, `
+		SELECT initiator_nonce,peer_nonce
+		FROM pairing_sessions
+		WHERE session_id=$1`, session.ID).Scan(&session.InitiatorNonce, &session.PeerNonce); err != nil {
+		return pairing.Session{}, false, fmt.Errorf("rehydrate pairing confirmation nonces: %w", err)
+	}
 	return session, outcome.Replayed, nil
 }
 
 func (s *Store) ConfirmPairingSession(ctx context.Context, mutation pairing.ConfirmMutation) (pairing.ConfirmationOutcome, error) {
 	request := idempotency.Request{
-		Actor: mutation.Participant.UserID, Operation: "pairing.session.confirm",
+		Actor: pairingActor(mutation.Participant.UserID, mutation.Participant.DeviceID), Operation: "pairing.session.confirm",
 		Key: mutation.IdempotencyKey, RequestHash: mutation.RequestHash,
 	}
 	outcome, err := RunIdempotent(ctx, s.pool, request, func(tx pgx.Tx) (any, error) {
@@ -148,6 +157,10 @@ func (s *Store) ConfirmPairingSession(ctx context.Context, mutation pairing.Conf
 	}
 	decoded.Replayed = outcome.Replayed
 	return decoded, nil
+}
+
+func pairingActor(userID, deviceID string) string {
+	return strings.TrimSpace(userID) + ":device:" + strings.TrimSpace(deviceID)
 }
 
 func canonicalPair(a, b string) (string, string) {
