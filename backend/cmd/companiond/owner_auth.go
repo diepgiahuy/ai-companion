@@ -59,6 +59,12 @@ func ownerAuthFromEnvironment(next http.Handler, claimRepository controlplane.De
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/v1/owner/auth/login":
+			handoff.HandleLogin(w, r)
+			return
+		case "/v1/owner/auth/callback":
+			handoff.HandleCallback(w, r)
+			return
 		case "/v1/owner/device-claim":
 			handoff.HandleOwnerPage(w, r)
 			return
