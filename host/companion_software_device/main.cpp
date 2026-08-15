@@ -11,14 +11,17 @@
 
 #include <algorithm>
 #include <chrono>
+#include <ctime>
 #include <cstdlib>
 #include <fstream>
 #include <functional>
+#include <iomanip>
 #include <iostream>
 #include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <sstream>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -53,6 +56,8 @@ struct RecordingSpeaker final : Speaker {
   uint64_t starts{};
   uint64_t stops{};
   uint64_t hash{1469598103934665603ULL};
+  size_t maximum_write{static_cast<size_t>(-1)};
+  bool drained{true};
   bool start_playback(uint32_t sample_rate_hz) override {
     if (sample_rate_hz != 24'000 && sample_rate_hz != 16'000) return false;
     active = true;
@@ -62,17 +67,18 @@ struct RecordingSpeaker final : Speaker {
   }
   size_t write_playback(std::span<const int16_t> pcm) override {
     if (!active) return 0;
-    for (const int16_t sample : pcm) {
+    const size_t accepted = std::min(pcm.size(), maximum_write);
+    for (const int16_t sample : pcm.first(accepted)) {
       const uint16_t value = static_cast<uint16_t>(sample);
       hash ^= value & 0xffU;
       hash *= 1099511628211ULL;
       hash ^= value >> 8U;
       hash *= 1099511628211ULL;
     }
-    samples += pcm.size();
-    return pcm.size();
+    samples += accepted;
+    return accepted;
   }
-  bool playback_drained() const override { return true; }
+  bool playback_drained() const override { return drained; }
   void stop_playback() override {
     if (active) ++stops;
     active = false;
@@ -210,6 +216,98 @@ void patch_device_config(const std::string& host, const std::string& port,
   stream.socket().shutdown(tcp::socket::shutdown_both, ignored);
 }
 
+http::response<http::string_body> device_request(
+    const std::string& host, const std::string& port, http::verb method,
+    const std::string& target, const std::string& device_id,
+    const std::string& token, std::string body = {},
+    std::string_view content_type = "application/json") {
+  net::io_context io;
+  tcp::resolver resolver(io);
+  beast::tcp_stream stream(io);
+  stream.connect(resolver.resolve(host, port));
+  http::request<http::string_body> request{method, target, 11};
+  request.set(http::field::host, host);
+  request.set(http::field::authorization, "Bearer " + token);
+  request.set("Device-Id", device_id);
+  if (!body.empty()) {
+    request.set(http::field::content_type, std::string(content_type));
+    request.body() = std::move(body);
+    request.prepare_payload();
+  }
+  http::write(stream, request);
+  beast::flat_buffer buffer;
+  http::response<http::string_body> response;
+  http::read(stream, buffer, response);
+  beast::error_code ignored;
+  stream.socket().shutdown(tcp::socket::shutdown_both, ignored);
+  return response;
+}
+
+std::string future_rfc3339() {
+  const std::time_t value = std::time(nullptr) + 3'600;
+  std::tm utc{};
+#if defined(_WIN32)
+  gmtime_s(&utc, &value);
+#else
+  gmtime_r(&value, &utc);
+#endif
+  std::ostringstream output;
+  output << std::put_time(&utc, "%Y-%m-%dT%H:%M:%SZ");
+  return output.str();
+}
+
+std::string read_binary_file(const std::string& path) {
+  std::ifstream input(path, std::ios::binary);
+  if (!input) throw std::runtime_error("voice-mail fixture is unavailable");
+  return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+}
+
+std::string provision_voice_mail(const std::string& host, const std::string& port,
+                                 const std::string& sender_device,
+                                 const std::string& sender_token,
+                                 const std::string& recipient_device,
+                                 const std::string& media_path,
+                                 const std::string& checksum,
+                                 std::string_view suffix) {
+  const std::string media = read_binary_file(media_path);
+  const std::string key = "tier1-voice-mail-" + std::string(suffix);
+  const json create{{"recipient_user_id", "default"},
+                    {"recipient_device_id", recipient_device},
+                    {"duration_ms", 240},
+                    {"size_bytes", media.size()},
+                    {"checksum_sha256", checksum},
+                    {"policy", "ephemeral"},
+                    {"expires_at", future_rfc3339()},
+                    {"idempotency_key", key + "-create"}};
+  auto response = device_request(host, port, http::verb::post, "/v1/voice-mail",
+                                 sender_device, sender_token, create.dump());
+  require(response.result() == http::status::created,
+          "voice-mail create did not return 201");
+  const std::string id = json::parse(response.body()).at("id").get<std::string>();
+  response = device_request(host, port, http::verb::put,
+                            "/v1/voice-mail/" + id + "/media", sender_device,
+                            sender_token, media, "audio/ogg");
+  require(response.result() == http::status::no_content,
+          "voice-mail upload did not return 204");
+  response = device_request(
+      host, port, http::verb::post, "/v1/voice-mail/" + id + "/complete",
+      sender_device, sender_token,
+      json{{"idempotency_key", key + "-complete"}}.dump());
+  require(response.result() == http::status::ok,
+          "voice-mail complete did not return 200");
+  return id;
+}
+
+size_t unread_voice_mail_count(const std::string& host, const std::string& port,
+                               const std::string& device_id,
+                               const std::string& token) {
+  const auto response = device_request(host, port, http::verb::get,
+                                       "/v1/voice-mail?limit=8", device_id, token);
+  require(response.result() == http::status::ok,
+          "voice-mail list did not return 200");
+  return json::parse(response.body()).at("items").size();
+}
+
 bool probe_v1_rejection(const std::string& host, const std::string& port,
                         const std::string& token, const std::string& device_id) {
   net::io_context io;
@@ -258,6 +356,10 @@ int run(int argc, char** argv) {
   std::string expected_text = "Tier-1 tool parity ok";
   std::string evidence_path = "software-device-evidence.json";
   std::string scenario_set = "core";
+  std::string voice_mail_sender_device;
+  std::string voice_mail_sender_token;
+  std::string voice_mail_media;
+  std::string voice_mail_checksum;
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
     auto value = [&](const char* name) -> std::string {
@@ -271,6 +373,13 @@ int run(int argc, char** argv) {
     else if (arg == "--expected-text") expected_text = value("--expected-text");
     else if (arg == "--evidence") evidence_path = value("--evidence");
     else if (arg == "--scenario-set") scenario_set = value("--scenario-set");
+    else if (arg == "--voice-mail-sender-device")
+      voice_mail_sender_device = value("--voice-mail-sender-device");
+    else if (arg == "--voice-mail-sender-token")
+      voice_mail_sender_token = value("--voice-mail-sender-token");
+    else if (arg == "--voice-mail-media") voice_mail_media = value("--voice-mail-media");
+    else if (arg == "--voice-mail-checksum")
+      voice_mail_checksum = value("--voice-mail-checksum");
     else throw std::runtime_error("unknown argument: " + arg);
   }
   const auto [host, port] = split_host_port(url);
@@ -369,6 +478,111 @@ int run(int argc, char** argv) {
     require(probe_v1_rejection(host, port, token, device_id),
             "v1 probe did not receive unsupported_protocol_version");
   }));
+  } else if (scenario_set == "voice-mail") {
+    require(!voice_mail_sender_device.empty() && !voice_mail_sender_token.empty() &&
+                !voice_mail_media.empty() && voice_mail_checksum.size() == 64,
+            "voice-mail scenario credentials/fixture are required");
+    results.push_back(run_scenario("voice_mail_lifecycle", [&](ScenarioResult& result) {
+      {
+        DeviceFixture notified(url, token, device_id);
+        notified.require_ready();
+        provision_voice_mail(host, port, voice_mail_sender_device,
+                             voice_mail_sender_token, device_id, voice_mail_media,
+                             voice_mail_checksum, "success");
+        require(notified.until([&] {
+                  return notified.app.state() == UiState::voice_mail_waiting;
+                }), "voice-mail notification did not enter waiting state");
+        require(notified.speaker.starts == 0,
+                "voice mail auto-played before an explicit gesture");
+      }
+
+      DeviceFixture fixture(url, token, device_id);
+      require(fixture.app.start(fixture.now_ms), "cold-start app failed to start");
+      require(fixture.until([&] {
+                return fixture.app.state() == UiState::voice_mail_waiting;
+              }), "unread voice mail was not recovered after a cold restart");
+      require(fixture.speaker.starts == 0,
+              "recovered voice mail auto-played before an explicit gesture");
+
+      fixture.backend.disconnect_for_test();
+      require(fixture.until([&] { return fixture.app.state() == UiState::error; }),
+              "duplicate recovery setup did not observe disconnect");
+      fixture.button.press();
+      fixture.tick();
+      require(fixture.until([&] {
+                return fixture.app.state() == UiState::voice_mail_waiting;
+              }), "voice-mail item was not preserved and deduplicated after reconnect");
+      require(fixture.speaker.starts == 0,
+              "duplicate notification triggered automatic playback");
+
+      fixture.speaker.drained = false;
+      fixture.button.press();
+      fixture.tick();
+      require(fixture.until([&] {
+                return fixture.app.state() == UiState::voice_mail_playing &&
+                       fixture.speaker.samples > 0;
+              }), "voice-mail media did not reach the logical speaker");
+      for (int i = 0; i < 20; ++i) fixture.tick();
+      require(fixture.app.state() == UiState::voice_mail_playing,
+              "voice mail completed before the speaker drained");
+      fixture.speaker.drained = true;
+      require(fixture.until([&] { return fixture.app.state() == UiState::ready; }),
+              "voice-mail success did not return ready after drain");
+      require(unread_voice_mail_count(host, port, device_id, token) == 0,
+              "successfully consumed ephemeral voice mail remained unread");
+
+      provision_voice_mail(host, port, voice_mail_sender_device,
+                           voice_mail_sender_token, device_id, voice_mail_media,
+                           voice_mail_checksum, "cancel");
+      require(fixture.until([&] {
+                return fixture.app.state() == UiState::voice_mail_waiting;
+              }), "cancel fixture did not reach waiting");
+      fixture.button.press();
+      fixture.tick();
+      require(fixture.until([&] {
+                return fixture.app.state() == UiState::voice_mail_playing;
+              }), "cancel fixture did not start playback");
+      fixture.button.press();
+      fixture.tick();
+      require(fixture.app.state() == UiState::voice_mail_waiting,
+              "explicit cancel did not return waiting");
+      require(fixture.until([&] {
+                return unread_voice_mail_count(host, port, device_id, token) == 1;
+              }, 200), "cancelled voice mail was consumed instead of released");
+
+      fixture.button.press();
+      fixture.tick();
+      require(fixture.until([&] {
+                return fixture.app.state() == UiState::voice_mail_playing;
+              }), "released voice mail could not be reclaimed");
+      require(fixture.until([&] { return fixture.app.state() == UiState::ready; }),
+              "reclaimed voice mail did not complete");
+
+      provision_voice_mail(host, port, voice_mail_sender_device,
+                           voice_mail_sender_token, device_id, voice_mail_media,
+                           voice_mail_checksum, "timeout");
+      require(fixture.until([&] {
+                return fixture.app.state() == UiState::voice_mail_waiting;
+              }), "timeout fixture did not reach waiting");
+      fixture.speaker.maximum_write = 0;
+      fixture.button.press();
+      fixture.tick();
+      require(fixture.until([&] {
+                return fixture.app.state() == UiState::voice_mail_playing;
+              }), "timeout fixture did not start playback");
+      require(fixture.until([&] {
+                return fixture.app.state() == UiState::voice_mail_waiting;
+              }), "stalled output did not time out to waiting");
+      fixture.speaker.maximum_write = static_cast<size_t>(-1);
+      require(fixture.until([&] {
+                return unread_voice_mail_count(host, port, device_id, token) == 1;
+              }, 200), "timed-out voice mail was consumed instead of released");
+      result.counters = stats_json(fixture.backend.stats());
+      result.counters["speaker_samples"] = fixture.speaker.samples;
+      result.counters["cold_start_recoveries"] = 1;
+      result.counters["unread_after_cancel"] = 1;
+      result.counters["unread_after_timeout"] = 1;
+    }));
   } else if (scenario_set == "tool") {
     results.push_back(run_scenario("agent_tool_authoritative_mutation", [&](ScenarioResult& result) {
       DeviceFixture fixture(url, token, device_id);

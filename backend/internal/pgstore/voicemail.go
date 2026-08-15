@@ -165,7 +165,11 @@ func (s *Store) CompleteVoiceMailPlayback(ctx context.Context, request idempoten
 			return voicemail.Item{}, err
 		}
 		if succeeded {
-			if err := enqueueVoiceMailEvent(ctx, tx, item, "voice_mail.consumed", now); err != nil {
+			eventType := "voice_mail.consumed"
+			if item.State == voicemail.Unread {
+				eventType = "voice_mail.available"
+			}
+			if err := enqueueVoiceMailEvent(ctx, tx, item, eventType, now); err != nil {
 				return voicemail.Item{}, err
 			}
 		}
@@ -232,6 +236,11 @@ func (s *Store) ClaimCleanup(ctx context.Context, now time.Time, limit int) ([]v
 	}
 	rows.Close()
 	for i := range items {
+		if items[i].State == voicemail.Unread || items[i].State == voicemail.Claimed {
+			if err := enqueueVoiceMailEvent(ctx, tx, items[i], "voice_mail.expired", now); err != nil {
+				return nil, err
+			}
+		}
 		items[i].State, items[i].PlaybackID, items[i].LeaseExpiresAt, items[i].UpdatedAt = voicemail.DeletePending, "", nil, now.UTC()
 		if _, err := tx.Exec(ctx, `UPDATE voice_mail_items SET state='delete_pending',playback_id='',lease_expires_at=NULL,updated_at=$1 WHERE id=$2`, now.UTC(), items[i].ID); err != nil {
 			return nil, err
@@ -248,10 +257,7 @@ func enqueueVoiceMailEvent(ctx context.Context, tx pgx.Tx, item voicemail.Item, 
 	if err != nil {
 		return err
 	}
-	eventID := "voice-mail-" + item.ID + "-" + strings.TrimPrefix(eventType, "voice_mail.")
-	if eventType != "voice_mail.available" {
-		eventID += "-" + strconv.FormatInt(now.UnixNano(), 10)
-	}
+	eventID := "voice-mail-" + item.ID + "-" + strings.TrimPrefix(eventType, "voice_mail.") + "-" + strconv.FormatInt(now.UnixNano(), 10)
 	event := events.Event{ID: eventID, Source: "/companion/voice-mail", Type: eventType, Subject: "voice-mail/" + item.ID, UserID: item.RecipientUserID, Data: data, Time: now.UTC()}
 	_, err = tx.Exec(ctx, `INSERT INTO outbox(event_id,source,event_type,subject,user_id,data_json,occurred_at,status,attempts,next_attempt_at,last_error) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7,'pending',0,$7,'') ON CONFLICT(event_id) DO NOTHING`, event.ID, event.Source, event.Type, event.Subject, event.UserID, string(event.Data), event.Time)
 	return err

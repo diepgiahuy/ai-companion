@@ -10,14 +10,27 @@
 #include <boost/beast/websocket.hpp>
 #include <nlohmann/json.hpp>
 #include <opus/opus.h>
+#include <opus/opusfile.h>
+#include <openssl/rand.h>
+#include <openssl/sha.h>
 
 #include <algorithm>
+#include <array>
+#include <cctype>
 #include <chrono>
 #include <cstring>
+#include <ctime>
+#include <iomanip>
 #include <iostream>
 #include <limits>
+#include <sstream>
 #include <stdexcept>
 #include <utility>
+
+#if !defined(_WIN32)
+#include <sys/socket.h>
+#include <sys/time.h>
+#endif
 
 namespace companion::software_device {
 namespace beast = boost::beast;
@@ -32,6 +45,8 @@ constexpr size_t kUplinkFrameSamples = 16'000 * 60 / 1000;
 constexpr size_t kDownlinkFrameSamples = 24'000 * 60 / 1000;
 constexpr size_t kMaximumOpusPacketBytes = 1275;
 constexpr size_t kMaximumPlaybackSamples = 24'000 * 10;
+constexpr size_t kMaximumVoiceMailBytes = 32 * 1024 * 1024;
+constexpr size_t kMaximumVoiceMailSamples = 48'000 * 600;
 constexpr size_t kMaximumEvents = 128;
 
 struct ParsedURL {
@@ -70,6 +85,114 @@ RuntimeConfigPatch parse_config(const json& payload) {
 std::string json_string(const json& object, const char* key) {
   const auto it = object.find(key);
   return it != object.end() && it->is_string() ? it->get<std::string>() : std::string{};
+}
+
+std::string rfc3339_now() {
+  const auto now = std::chrono::system_clock::now();
+  const std::time_t seconds = std::chrono::system_clock::to_time_t(now);
+  std::tm utc{};
+  gmtime_r(&seconds, &utc);
+  std::ostringstream out;
+  out << std::put_time(&utc, "%Y-%m-%dT%H:%M:%SZ");
+  return out.str();
+}
+
+std::string random_opaque_id(std::string_view prefix) {
+  std::array<unsigned char, 16> bytes{};
+  if (RAND_bytes(bytes.data(), bytes.size()) != 1) return {};
+  std::ostringstream out;
+  out << prefix << std::hex << std::setfill('0');
+  for (const unsigned char byte : bytes) out << std::setw(2) << static_cast<int>(byte);
+  return out.str();
+}
+
+std::string sha256_hex(std::span<const uint8_t> bytes) {
+  std::array<unsigned char, SHA256_DIGEST_LENGTH> digest{};
+  SHA256(bytes.data(), bytes.size(), digest.data());
+  std::ostringstream out;
+  out << std::hex << std::setfill('0');
+  for (const unsigned char byte : digest) out << std::setw(2) << static_cast<int>(byte);
+  return out.str();
+}
+
+std::optional<uint64_t> parse_rfc3339_unix_ms(const std::string& value) {
+  if (value.size() < 20 || value.back() != 'Z') return std::nullopt;
+  std::tm utc{};
+  std::istringstream input(value.substr(0, 19));
+  input >> std::get_time(&utc, "%Y-%m-%dT%H:%M:%S");
+  if (input.fail()) return std::nullopt;
+  uint64_t milliseconds = 0;
+  if (value.size() > 20) {
+    if (value[19] != '.') return std::nullopt;
+    const std::string fraction = value.substr(20, value.size() - 21);
+    if (fraction.empty() || fraction.size() > 9 ||
+        !std::all_of(fraction.begin(), fraction.end(),
+                     [](unsigned char value) { return std::isdigit(value) != 0; })) {
+      return std::nullopt;
+    }
+    std::string millis = fraction.substr(0, std::min<size_t>(3, fraction.size()));
+    millis.append(3 - millis.size(), '0');
+    milliseconds = static_cast<uint64_t>(std::stoul(millis));
+  }
+  const std::time_t seconds = timegm(&utc);
+  if (seconds < 0) return std::nullopt;
+  std::array<char, 20> normalized{};
+  if (std::strftime(normalized.data(), normalized.size(), "%Y-%m-%dT%H:%M:%S", &utc) == 0 ||
+      value.substr(0, 19) != normalized.data()) {
+    return std::nullopt;
+  }
+  return static_cast<uint64_t>(seconds) * 1000 + milliseconds;
+}
+
+bool valid_opaque_id(std::string_view value, size_t maximum) {
+  if (value.empty() || value.size() > maximum) return false;
+  return std::any_of(value.begin(), value.end(),
+                     [](unsigned char character) { return !std::isspace(character); });
+}
+
+bool parse_voice_mail_metadata(const json& payload, VoiceMailMetadata& item) {
+  if (!payload.is_object() || !payload.contains("duration_ms") ||
+      !payload.at("duration_ms").is_number_unsigned() ||
+      !payload.contains("size_bytes") || !payload.at("size_bytes").is_number_unsigned()) {
+    return false;
+  }
+  const uint64_t duration = payload.at("duration_ms").get<uint64_t>();
+  const uint64_t size = payload.at("size_bytes").get<uint64_t>();
+  const std::string voice_mail_id = json_string(payload, "voice_mail_id");
+  const std::string from_device_id = json_string(payload, "from_device_id");
+  const std::string media_format = json_string(payload, "media_format");
+  const std::string checksum = json_string(payload, "checksum_sha256");
+  const std::string expires_at = json_string(payload, "expires_at");
+  const std::string policy = json_string(payload, "policy");
+  const auto expires_at_ms = parse_rfc3339_unix_ms(expires_at);
+  if (!valid_opaque_id(voice_mail_id, 128) ||
+      !valid_opaque_id(from_device_id, 128) || media_format != "ogg_opus" ||
+      checksum.size() != 64 ||
+      !std::all_of(checksum.begin(), checksum.end(), [](unsigned char value) {
+        return std::isxdigit(value) != 0;
+      }) || duration == 0 || duration > 600'000 || size == 0 ||
+      size > kMaximumVoiceMailBytes || !expires_at_ms ||
+      (policy != "ephemeral" && policy != "retained")) {
+    return false;
+  }
+  item.set_voice_mail_id(voice_mail_id);
+  item.set_from_device_id(from_device_id);
+  item.set_media_format(media_format);
+  item.set_checksum_sha256(checksum);
+  item.duration_ms = static_cast<uint32_t>(duration);
+  item.size_bytes = static_cast<uint32_t>(size);
+  item.expires_at_unix_ms = *expires_at_ms;
+  item.policy = policy == "ephemeral" ? VoiceMailMetadata::Policy::ephemeral
+                                      : VoiceMailMetadata::Policy::retained;
+  return item.valid();
+}
+
+bool safe_media_ref(std::string_view ref) {
+  return ref.size() <= 256 && ref.starts_with("/v1/voice-mail/") &&
+         ref.ends_with("/media") &&
+         ref.find("..") == std::string_view::npos &&
+         ref.find('?') == std::string_view::npos &&
+         ref.find('#') == std::string_view::npos;
 }
 } // namespace
 
@@ -231,6 +354,7 @@ WebSocketVoiceBackend::WebSocketVoiceBackend(std::string url, std::string token,
 WebSocketVoiceBackend::~WebSocketVoiceBackend() {
   stopping_.store(true);
   stop_connection(false);
+  if (media_thread_.joinable()) media_thread_.join();
   if (decoder_ != nullptr) opus_decoder_destroy(decoder_);
   if (encoder_ != nullptr) opus_encoder_destroy(encoder_);
 }
@@ -239,6 +363,7 @@ bool WebSocketVoiceBackend::start(uint64_t) {
   const auto parsed = parse_ws_url(url_);
   if (!parsed) return false;
   stop_connection(false);
+  if (media_thread_.joinable()) media_thread_.join();
   {
     std::lock_guard lock(state_mutex_);
     session_id_.clear();
@@ -248,6 +373,7 @@ bool WebSocketVoiceBackend::start(uint64_t) {
     tts_active_ = false;
     upload_samples_.clear();
     playback_samples_.clear();
+    clear_voice_mail_locked();
   }
   protocol_connected_.store(false);
   const uint64_t generation = connection_generation_.fetch_add(1) + 1;
@@ -257,7 +383,9 @@ bool WebSocketVoiceBackend::start(uint64_t) {
   return true;
 }
 
-void WebSocketVoiceBackend::tick(uint64_t) {}
+void WebSocketVoiceBackend::tick(uint64_t) {
+  finish_media_worker();
+}
 
 bool WebSocketVoiceBackend::begin_turn(uint64_t, ListenMode mode) {
   if (!protocol_connected_.load()) return false;
@@ -373,8 +501,118 @@ bool WebSocketVoiceBackend::report_config(const RuntimeConfigPatch& config, bool
   return sent;
 }
 
+bool WebSocketVoiceBackend::claim_voice_mail(const VoiceMailMetadata& item, uint64_t) {
+  finish_media_worker();
+  if (!protocol_connected_.load() || !item.valid() || media_worker_running_.load()) {
+    return false;
+  }
+  const std::string candidate_playback_id = random_opaque_id("host-playback-");
+  const std::string candidate_claim_key = random_opaque_id("host-voice-mail-claim-");
+  if (candidate_playback_id.empty() || candidate_claim_key.empty()) return false;
+  std::string wire;
+  std::string playback_id;
+  std::string idempotency_key;
+  {
+    std::lock_guard lock(state_mutex_);
+    if (voice_mail_claim_active_) {
+      if (active_voice_mail_.voice_mail_id_view() != item.voice_mail_id_view()) return false;
+      wire = voice_mail_claim_wire_;
+    } else {
+      active_voice_mail_ = item;
+      voice_mail_playback_id_ = candidate_playback_id;
+      voice_mail_claim_idempotency_key_ = candidate_claim_key;
+      voice_mail_claim_active_ = true;
+      voice_mail_result_sent_ = false;
+      voice_mail_result_wire_.clear();
+      voice_mail_samples_.clear();
+      voice_mail_sample_offset_ = 0;
+    }
+    playback_id = voice_mail_playback_id_;
+    idempotency_key = voice_mail_claim_idempotency_key_;
+  }
+  if (wire.empty()) {
+    json payload{{"voice_mail_id", std::string(item.voice_mail_id_view())},
+                 {"playback_id", playback_id}};
+    wire = encode_control(static_cast<int>(protocol::ControlType::voice_mail_claim),
+                          payload.dump(), {}, {}, true, std::nullopt,
+                          idempotency_key, rfc3339_now());
+    if (wire.empty()) {
+      std::lock_guard lock(state_mutex_);
+      clear_voice_mail_locked();
+      return false;
+    }
+    std::lock_guard lock(state_mutex_);
+    voice_mail_claim_wire_ = wire;
+  }
+  return send_text(std::move(wire));
+}
+
+bool WebSocketVoiceBackend::report_voice_mail_playback(
+    const VoiceMailMetadata& item, bool succeeded, std::string_view failure_code,
+    uint64_t) {
+  if (!protocol_connected_.load() || !item.valid() || failure_code.size() > 64 ||
+      (succeeded && !failure_code.empty())) {
+    return false;
+  }
+  std::string wire;
+  std::string playback_id;
+  {
+    std::lock_guard lock(state_mutex_);
+    if (!voice_mail_claim_active_ ||
+        active_voice_mail_.voice_mail_id_view() != item.voice_mail_id_view() ||
+        voice_mail_result_sent_) {
+      return false;
+    }
+    playback_id = voice_mail_playback_id_;
+    wire = voice_mail_result_wire_;
+  }
+  if (wire.empty()) {
+    json payload{{"voice_mail_id", std::string(item.voice_mail_id_view())},
+                 {"playback_id", playback_id},
+                 {"result", succeeded ? "succeeded" : "failed"}};
+    if (!succeeded && !failure_code.empty()) payload["failure_code"] = failure_code;
+    const std::string idempotency = random_opaque_id("host-voice-mail-result-");
+    if (idempotency.empty()) return false;
+    wire = encode_control(
+        static_cast<int>(protocol::ControlType::voice_mail_playback_result),
+        payload.dump(), {}, {}, true, std::nullopt, idempotency, rfc3339_now());
+    if (wire.empty()) return false;
+    std::lock_guard lock(state_mutex_);
+    voice_mail_result_wire_ = wire;
+  }
+  if (!send_text(std::move(wire))) return false;
+  {
+    std::lock_guard lock(state_mutex_);
+    voice_mail_result_sent_ = true;
+    if (!succeeded) clear_voice_mail_locked();
+  }
+  return true;
+}
+
+void WebSocketVoiceBackend::cancel_voice_mail(const VoiceMailMetadata& item,
+                                              std::string_view failure_code,
+                                              uint64_t now_ms) {
+  if (report_voice_mail_playback(item, false, failure_code, now_ms)) return;
+  std::lock_guard lock(state_mutex_);
+  if (active_voice_mail_.voice_mail_id_view() == item.voice_mail_id_view()) {
+    clear_voice_mail_locked();
+  }
+}
+
 size_t WebSocketVoiceBackend::read_playback(std::span<int16_t> destination) {
   std::lock_guard lock(state_mutex_);
+  if (voice_mail_sample_offset_ < voice_mail_samples_.size()) {
+    const size_t count = std::min(destination.size(),
+                                  voice_mail_samples_.size() - voice_mail_sample_offset_);
+    std::copy_n(voice_mail_samples_.begin() + voice_mail_sample_offset_, count,
+                destination.begin());
+    voice_mail_sample_offset_ += count;
+    if (voice_mail_sample_offset_ == voice_mail_samples_.size()) {
+      voice_mail_samples_.clear();
+      voice_mail_sample_offset_ = 0;
+    }
+    return count;
+  }
   const size_t count = std::min(destination.size(), playback_samples_.size());
   for (size_t i = 0; i < count; ++i) {
     destination[i] = playback_samples_.front();
@@ -385,7 +623,8 @@ size_t WebSocketVoiceBackend::read_playback(std::span<int16_t> destination) {
 
 bool WebSocketVoiceBackend::playback_empty() const {
   std::lock_guard lock(state_mutex_);
-  return playback_samples_.empty();
+  return playback_samples_.empty() &&
+         voice_mail_sample_offset_ == voice_mail_samples_.size();
 }
 
 uint32_t WebSocketVoiceBackend::playback_sample_rate_hz() const {
@@ -442,7 +681,9 @@ std::string WebSocketVoiceBackend::encode_control(int type_index, std::string pa
                                                   std::string turn_id,
                                                   std::string correlation_id,
                                                   bool include_session,
-                                                  std::optional<uint64_t> generation_id) {
+                                                  std::optional<uint64_t> generation_id,
+                                                  std::string idempotency_key,
+                                                  std::string occurred_at) {
   const auto type = static_cast<protocol::ControlType>(type_index);
   const std::string message_id =
       "host-message-" + std::to_string(message_sequence_.fetch_add(1) + 1);
@@ -462,8 +703,8 @@ std::string WebSocketVoiceBackend::encode_control(int type_index, std::string pa
       .turn_id = turn_id,
       .generation_id = generation_id.value_or(0),
       .has_generation_id = generation_id.has_value(),
-      .idempotency_key = {},
-      .occurred_at = {},
+      .idempotency_key = idempotency_key,
+      .occurred_at = occurred_at,
   };
   if (!protocol::encode(envelope, buffer, written)) return {};
   return {buffer.data(), written};
@@ -474,6 +715,18 @@ void WebSocketVoiceBackend::enqueue_event(BackendEventType type, std::string_vie
   if (events_.size() == kMaximumEvents) events_.pop_front();
   BackendEvent event{};
   event.type = type;
+  event.set_text(text);
+  events_.push_back(event);
+}
+
+void WebSocketVoiceBackend::enqueue_voice_mail_event(BackendEventType type,
+                                                     const VoiceMailMetadata& item,
+                                                     std::string_view text) {
+  std::lock_guard lock(state_mutex_);
+  if (events_.size() == kMaximumEvents) events_.pop_front();
+  BackendEvent event{};
+  event.type = type;
+  event.voice_mail = item;
   event.set_text(text);
   events_.push_back(event);
 }
@@ -498,6 +751,7 @@ void WebSocketVoiceBackend::handle_connection_closed(uint64_t generation,
     turn_active_ = false;
     tts_active_ = false;
     clear_turn_media_locked();
+    clear_voice_mail_locked();
   }
   if (notify && !stopping_.load()) enqueue_event(BackendEventType::disconnected, reason);
 }
@@ -523,6 +777,17 @@ void WebSocketVoiceBackend::handle_text(uint64_t generation, const std::string& 
     protocol::ControlType type{};
     if (!protocol::parse_type(type_name, type)) {
       enqueue_event(BackendEventType::error, "UNKNOWN TYPE");
+      return;
+    }
+    const bool voice_mail_message = type == protocol::ControlType::voice_mail_available ||
+                                    type == protocol::ControlType::voice_mail_claimed ||
+                                    type == protocol::ControlType::voice_mail_consumed ||
+                                    type == protocol::ControlType::voice_mail_expired;
+    const std::string interaction_key = json_string(envelope, "idempotency_key");
+    if (voice_mail_message &&
+        (interaction_key.empty() || interaction_key.size() > 128 ||
+         json_string(envelope, "occurred_at").empty())) {
+      enqueue_event(BackendEventType::error, "INVALID VOICE MAIL ENVELOPE");
       return;
     }
     if (type == protocol::ControlType::session_ready) {
@@ -649,6 +914,104 @@ void WebSocketVoiceBackend::handle_text(uint64_t generation, const std::string& 
       events_.push_back(event);
       break;
     }
+    case protocol::ControlType::voice_mail_available: {
+      VoiceMailMetadata item{};
+      if (!parse_voice_mail_metadata(payload, item)) {
+        enqueue_event(BackendEventType::error, "INVALID VOICE MAIL");
+        break;
+      }
+      const uint64_t now_ms = static_cast<uint64_t>(
+          std::chrono::duration_cast<std::chrono::milliseconds>(
+              std::chrono::system_clock::now().time_since_epoch()).count());
+      {
+        std::lock_guard lock(state_mutex_);
+        if (voice_mail_result_sent_ &&
+            active_voice_mail_.voice_mail_id_view() == item.voice_mail_id_view()) {
+          clear_voice_mail_locked();
+        }
+      }
+      enqueue_voice_mail_event(item.expires_at_unix_ms <= now_ms
+                                   ? BackendEventType::voice_mail_expired
+                                   : BackendEventType::voice_mail_available,
+                               item);
+      break;
+    }
+    case protocol::ControlType::voice_mail_claimed: {
+      const std::string voice_mail_id = json_string(payload, "voice_mail_id");
+      const std::string playback_id = json_string(payload, "playback_id");
+      const std::string media_ref = json_string(payload, "media_ref");
+      const auto lease_expires =
+          parse_rfc3339_unix_ms(json_string(payload, "lease_expires_at"));
+      const uint64_t now_ms = static_cast<uint64_t>(
+          std::chrono::duration_cast<std::chrono::milliseconds>(
+              std::chrono::system_clock::now().time_since_epoch()).count());
+      VoiceMailMetadata item{};
+      bool accepted = false;
+      bool duplicate = false;
+      {
+        std::lock_guard lock(state_mutex_);
+        const bool matched = voice_mail_claim_active_ &&
+                             active_voice_mail_.voice_mail_id_view() == voice_mail_id &&
+                             voice_mail_playback_id_ == playback_id;
+        duplicate = matched && voice_mail_media_started_;
+        accepted = matched && !voice_mail_media_started_ && safe_media_ref(media_ref) &&
+                   lease_expires.has_value() && *lease_expires > now_ms;
+        if (accepted) {
+          voice_mail_media_started_ = true;
+          item = active_voice_mail_;
+        }
+      }
+      if (duplicate) break;
+      if (!accepted) {
+        enqueue_event(BackendEventType::error, "INVALID VOICE MAIL CLAIM");
+        break;
+      }
+      start_voice_mail_fetch(media_ref, generation, item, playback_id);
+      break;
+    }
+    case protocol::ControlType::voice_mail_consumed: {
+      const std::string voice_mail_id = json_string(payload, "voice_mail_id");
+      const std::string playback_id = json_string(payload, "playback_id");
+      if (!valid_opaque_id(voice_mail_id, 128) ||
+          (!playback_id.empty() && !valid_opaque_id(playback_id, 128))) {
+        enqueue_event(BackendEventType::error, "INVALID VOICE MAIL CONSUMED");
+        break;
+      }
+      VoiceMailMetadata item{};
+      bool matched = false;
+      {
+        std::lock_guard lock(state_mutex_);
+        matched = voice_mail_claim_active_ &&
+                  active_voice_mail_.voice_mail_id_view() == voice_mail_id &&
+                  (playback_id.empty() || voice_mail_playback_id_ == playback_id);
+        if (matched) item = active_voice_mail_;
+      }
+      if (!matched) break;
+      enqueue_voice_mail_event(BackendEventType::voice_mail_consumed, item);
+      {
+        std::lock_guard lock(state_mutex_);
+        clear_voice_mail_locked();
+      }
+      break;
+    }
+    case protocol::ControlType::voice_mail_expired: {
+      const std::string voice_mail_id = json_string(payload, "voice_mail_id");
+      if (!valid_opaque_id(voice_mail_id, 128)) {
+        enqueue_event(BackendEventType::error, "INVALID VOICE MAIL EXPIRY");
+        break;
+      }
+      VoiceMailMetadata item{};
+      item.set_voice_mail_id(voice_mail_id);
+      {
+        std::lock_guard lock(state_mutex_);
+        if (active_voice_mail_.voice_mail_id_view() == voice_mail_id) {
+          item = active_voice_mail_;
+          clear_voice_mail_locked();
+        }
+      }
+      enqueue_voice_mail_event(BackendEventType::voice_mail_expired, item);
+      break;
+    }
     case protocol::ControlType::capability_call: {
       {
         std::lock_guard lock(state_mutex_);
@@ -702,7 +1065,21 @@ void WebSocketVoiceBackend::handle_text(uint64_t generation, const std::string& 
       break;
     }
     case protocol::ControlType::protocol_error:
-      enqueue_event(BackendEventType::error, json_string(payload, "code"));
+      {
+        VoiceMailMetadata item{};
+        bool voice_mail_active = false;
+        {
+          std::lock_guard lock(state_mutex_);
+          voice_mail_active = voice_mail_claim_active_;
+          if (voice_mail_active) item = active_voice_mail_;
+        }
+        if (voice_mail_active) {
+          enqueue_voice_mail_event(BackendEventType::voice_mail_failed, item,
+                                   json_string(payload, "code"));
+        } else {
+          enqueue_event(BackendEventType::error, json_string(payload, "code"));
+        }
+      }
       break;
     default:
       break;
@@ -767,6 +1144,180 @@ bool WebSocketVoiceBackend::flush_upload_frame(std::span<const int16_t> samples)
 void WebSocketVoiceBackend::clear_turn_media_locked() {
   upload_samples_.clear();
   playback_samples_.clear();
+}
+
+void WebSocketVoiceBackend::start_voice_mail_fetch(std::string media_ref,
+                                                   uint64_t generation,
+                                                   VoiceMailMetadata item,
+                                                   std::string playback_id) {
+  if (media_thread_.joinable()) media_thread_.join();
+  media_worker_running_.store(true);
+  media_thread_ = std::thread(
+      [this, media_ref = std::move(media_ref), generation, item,
+       playback_id = std::move(playback_id)] {
+        struct RunningGuard {
+          std::atomic<bool>& running;
+          ~RunningGuard() { running.store(false); }
+        } guard{media_worker_running_};
+
+        auto fail = [this, &item](std::string_view message) {
+          if (stopping_.load()) return;
+          bool current = false;
+          {
+            std::lock_guard lock(state_mutex_);
+            current = voice_mail_claim_active_ &&
+                      active_voice_mail_.voice_mail_id_view() == item.voice_mail_id_view();
+            voice_mail_samples_.clear();
+            voice_mail_sample_offset_ = 0;
+          }
+          if (current) enqueue_voice_mail_event(BackendEventType::voice_mail_failed, item, message);
+        };
+
+        try {
+          const auto parsed = parse_ws_url(url_);
+          if (!parsed) throw std::runtime_error("invalid media origin");
+          net::io_context ioc;
+          tcp::resolver resolver(ioc);
+          beast::tcp_stream stream(ioc);
+          stream.expires_after(std::chrono::seconds(5));
+          const auto endpoints = resolver.resolve(parsed->host, parsed->port);
+          stream.connect(endpoints);
+#if !defined(_WIN32)
+          const timeval socket_timeout{.tv_sec = 5, .tv_usec = 0};
+          const int descriptor = stream.socket().native_handle();
+          if (::setsockopt(descriptor, SOL_SOCKET, SO_RCVTIMEO, &socket_timeout,
+                           sizeof(socket_timeout)) != 0 ||
+              ::setsockopt(descriptor, SOL_SOCKET, SO_SNDTIMEO, &socket_timeout,
+                           sizeof(socket_timeout)) != 0) {
+            throw std::runtime_error("media socket timeout setup failed");
+          }
+#endif
+
+          const std::string media_target =
+              media_ref + "?playback_id=" + playback_id;
+          http::request<http::empty_body> request{http::verb::get, media_target, 11};
+          request.set(http::field::host, parsed->host + ":" + parsed->port);
+          request.set(http::field::authorization, "Bearer " + token_);
+          request.set(http::field::user_agent, "companion-software-device");
+          request.set("Device-Id", device_id_);
+          http::write(stream, request);
+
+          beast::flat_buffer buffer;
+          http::response_parser<http::vector_body<uint8_t>> parser;
+          parser.body_limit(kMaximumVoiceMailBytes);
+          http::read(stream, buffer, parser);
+          auto response = parser.release();
+          beast::error_code ignored;
+          stream.socket().shutdown(tcp::socket::shutdown_both, ignored);
+          if (response.result() != http::status::ok) {
+            throw std::runtime_error("media request rejected");
+          }
+          const auto& bytes = response.body();
+          if (bytes.size() != item.size_bytes) throw std::runtime_error("media size mismatch");
+          std::string expected(item.checksum_sha256.data());
+          std::transform(expected.begin(), expected.end(), expected.begin(),
+                         [](unsigned char value) {
+                           return static_cast<char>(std::tolower(value));
+                         });
+          if (sha256_hex(bytes) != expected) throw std::runtime_error("media checksum mismatch");
+
+          int opus_error = 0;
+          OggOpusFile* file = op_open_memory(bytes.data(), bytes.size(), &opus_error);
+          if (file == nullptr) throw std::runtime_error("invalid ogg opus media");
+          struct OpusFileGuard {
+            OggOpusFile* file;
+            ~OpusFileGuard() { op_free(file); }
+          } file_guard{file};
+
+          std::vector<int16_t> decoded;
+          const ogg_int64_t expected_samples = op_pcm_total(file, -1);
+          if (expected_samples <= 0 ||
+              static_cast<uint64_t>(expected_samples) > kMaximumVoiceMailSamples) {
+            throw std::runtime_error("invalid decoded media length");
+          }
+          decoded.reserve(static_cast<size_t>(expected_samples));
+          std::array<opus_int16, 5760 * 2> frame{};
+          while (true) {
+            int link = 0;
+            const int samples = op_read(file, frame.data(), static_cast<int>(frame.size()), &link);
+            if (samples == 0) break;
+            if (samples < 0) throw std::runtime_error("ogg opus decode failed");
+            const int channels = op_channel_count(file, link);
+            if (channels != 1 && channels != 2) {
+              throw std::runtime_error("unsupported voice mail channels");
+            }
+            if (decoded.size() + static_cast<size_t>(samples) > kMaximumVoiceMailSamples) {
+              throw std::runtime_error("decoded media too large");
+            }
+            if (channels == 1) {
+              decoded.insert(decoded.end(), frame.begin(), frame.begin() + samples);
+            } else {
+              for (int index = 0; index < samples; ++index) {
+                const int32_t mixed = static_cast<int32_t>(frame[index * 2]) +
+                                      static_cast<int32_t>(frame[index * 2 + 1]);
+                decoded.push_back(static_cast<int16_t>(mixed / 2));
+              }
+            }
+          }
+          if (decoded.size() != static_cast<size_t>(expected_samples)) {
+            throw std::runtime_error("decoded media length mismatch");
+          }
+          std::vector<int16_t> output_16khz;
+          output_16khz.reserve((decoded.size() + 2) / 3);
+          for (size_t offset = 0; offset < decoded.size(); offset += 3) {
+            int32_t sum = 0;
+            const size_t count = std::min<size_t>(3, decoded.size() - offset);
+            for (size_t index = 0; index < count; ++index) {
+              sum += decoded[offset + index];
+            }
+            output_16khz.push_back(static_cast<int16_t>(sum / static_cast<int32_t>(count)));
+          }
+
+          const uint64_t now_ms = static_cast<uint64_t>(
+              std::chrono::duration_cast<std::chrono::milliseconds>(
+                  std::chrono::system_clock::now().time_since_epoch()).count());
+          bool publish = false;
+          {
+            std::lock_guard lock(state_mutex_);
+            publish = generation == connection_generation_.load() &&
+                      protocol_connected_.load() && voice_mail_claim_active_ &&
+                      voice_mail_playback_id_ == playback_id &&
+                      active_voice_mail_.voice_mail_id_view() == item.voice_mail_id_view() &&
+                      item.expires_at_unix_ms > now_ms;
+            if (publish) {
+              voice_mail_samples_ = std::move(output_16khz);
+              voice_mail_sample_offset_ = 0;
+              playback_sample_rate_ = 16'000;
+            }
+          }
+          if (!publish) {
+            fail(item.expires_at_unix_ms <= now_ms ? "VOICE MAIL EXPIRED"
+                                                   : "VOICE MAIL FETCH CANCELLED");
+            return;
+          }
+          enqueue_voice_mail_event(BackendEventType::voice_mail_playback_ready, item);
+          enqueue_voice_mail_event(BackendEventType::voice_mail_playback_finished, item);
+        } catch (const std::exception&) {
+          fail("VOICE MAIL MEDIA ERROR");
+        }
+      });
+}
+
+void WebSocketVoiceBackend::finish_media_worker() {
+  if (media_thread_.joinable() && !media_worker_running_.load()) media_thread_.join();
+}
+
+void WebSocketVoiceBackend::clear_voice_mail_locked() {
+  active_voice_mail_ = {};
+  voice_mail_playback_id_.clear();
+  voice_mail_claim_wire_.clear();
+  voice_mail_claim_idempotency_key_.clear();
+  voice_mail_result_wire_.clear();
+  voice_mail_claim_active_ = false;
+  voice_mail_media_started_ = false;
+  voice_mail_result_sent_ = false;
+  voice_mail_samples_.clear();
+  voice_mail_sample_offset_ = 0;
 }
 
 } // namespace companion::software_device

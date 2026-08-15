@@ -72,7 +72,7 @@ func TestPostgresVoiceMailLifecycleIdempotencyPrivacyAndOwnership(t *testing.T) 
 		t.Fatalf("complete replay=%+v err=%v", completedReplay, err)
 	}
 	var availableEvents int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM outbox WHERE event_id=$1`, "voice-mail-"+created.ID+"-available").Scan(&availableEvents); err != nil || availableEvents != 1 {
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM outbox WHERE event_type='voice_mail.available' AND subject=$1`, "voice-mail/"+created.ID).Scan(&availableEvents); err != nil || availableEvents != 1 {
 		t.Fatalf("available events=%d err=%v", availableEvents, err)
 	}
 
@@ -119,6 +119,10 @@ func TestPostgresVoiceMailLifecycleIdempotencyPrivacyAndOwnership(t *testing.T) 
 	if _, err := pool.Exec(ctx, `INSERT INTO voice_mail_items(id,sender_user_id,sender_device_id,recipient_user_id,recipient_device_id,object_key,media_format,duration_ms,size_bytes,checksum_sha256,policy,state,expires_at,created_at,updated_at) VALUES($1,$2,'sender-device',$3,'recipient-device',$4,'ogg_opus',1000,20,$5,'ephemeral','unread',$6,$7,$7)`, expiredID, sender, recipient, prefix+"-expired-object", create.ChecksumSHA256, now.Add(-time.Minute), now.Add(-time.Hour)); err != nil {
 		t.Fatal(err)
 	}
+	pendingExpiredID := prefix + "-pending-expired"
+	if _, err := pool.Exec(ctx, `INSERT INTO voice_mail_items(id,sender_user_id,sender_device_id,recipient_user_id,recipient_device_id,object_key,media_format,duration_ms,size_bytes,checksum_sha256,policy,state,expires_at,created_at,updated_at) VALUES($1,$2,'sender-device',$3,'recipient-device',$4,'ogg_opus',1000,20,$5,'ephemeral','pending_upload',$6,$7,$7)`, pendingExpiredID, sender, recipient, prefix+"-pending-expired-object", create.ChecksumSHA256, now.Add(-time.Minute), now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
 	cleanup, err := store.ClaimCleanup(ctx, now, 10)
 	if err != nil {
 		t.Fatal(err)
@@ -131,6 +135,13 @@ func TestPostgresVoiceMailLifecycleIdempotencyPrivacyAndOwnership(t *testing.T) 
 	}
 	if !foundExpired {
 		t.Fatalf("expired item was not claimed for cleanup: %+v", cleanup)
+	}
+	var expiredEvents int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM outbox WHERE event_type='voice_mail.expired' AND subject=$1`, "voice-mail/"+expiredID).Scan(&expiredEvents); err != nil || expiredEvents != 1 {
+		t.Fatalf("expired events=%d err=%v", expiredEvents, err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM outbox WHERE event_type='voice_mail.expired' AND subject=$1`, "voice-mail/"+pendingExpiredID).Scan(&expiredEvents); err != nil || expiredEvents != 0 {
+		t.Fatalf("pending upload leaked expiry event: events=%d err=%v", expiredEvents, err)
 	}
 	retry, err := store.ClaimCleanup(ctx, now.Add(time.Second), 10)
 	if err != nil {
@@ -173,5 +184,8 @@ func TestPostgresVoiceMailLifecycleIdempotencyPrivacyAndOwnership(t *testing.T) 
 	retainedPlayed, err := store.CompleteVoiceMailPlayback(ctx, retainedPlayReq, retainedRecipient, retained.ID, "retained-play", true, now.Add(time.Second))
 	if err != nil || retainedPlayed.State != voicemail.Unread {
 		t.Fatalf("retained playback=%+v err=%v", retainedPlayed, err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM outbox WHERE event_type='voice_mail.available' AND subject=$1`, "voice-mail/"+retained.ID).Scan(&availableEvents); err != nil || availableEvents != 2 {
+		t.Fatalf("retained available events=%d err=%v", availableEvents, err)
 	}
 }

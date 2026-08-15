@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,6 +16,42 @@ import (
 	"companion-server/internal/protocol"
 	"companion-server/internal/voicemail"
 )
+
+const maximumRecoveredVoiceMail = 4
+
+func (s *session) recoverUnreadVoiceMail(ctx context.Context) error {
+	if s.voiceMail == nil {
+		return nil
+	}
+	items, err := s.voiceMail.ListUnread(ctx, s.userID, s.deviceID, maximumRecoveredVoiceMail)
+	if err != nil {
+		return fmt.Errorf("list unread: %w", err)
+	}
+	for _, item := range items {
+		message := protocol.VoiceMailAvailable{
+			VoiceMailID: item.ID, FromDeviceID: item.SenderDeviceID,
+			MediaFormat: item.MediaFormat, DurationMS: item.DurationMS,
+			SizeBytes: item.SizeBytes, ChecksumSHA256: item.ChecksumSHA256,
+			ExpiresAt: item.ExpiresAt, Policy: protocol.VoiceMailPolicy(item.Policy),
+		}
+		if err := message.Validate(); err != nil {
+			return fmt.Errorf("validate unread %q: %w", item.ID, err)
+		}
+		occurredAt := item.UpdatedAt
+		if occurredAt.IsZero() {
+			occurredAt = time.Now().UTC()
+		}
+		digest := sha256.Sum256([]byte(item.ID + "\x00" + item.UpdatedAt.UTC().Format(time.RFC3339Nano)))
+		metadata := protocol.Metadata{
+			IdempotencyKey: fmt.Sprintf("voice-mail-recovery-%x", digest[:12]),
+			OccurredAt:     occurredAt.UTC().Format(time.RFC3339Nano),
+		}
+		if err := s.sendJSONMeta(ctx, protocol.VoiceMailAvailableType, metadata, message); err != nil {
+			return fmt.Errorf("send unread %q: %w", item.ID, err)
+		}
+	}
+	return nil
+}
 
 func voiceMailRequest(actor, operation, key string, value any) (idempotency.Request, error) {
 	hash, err := idempotency.HashValue(value)
@@ -278,7 +315,7 @@ func voiceMailError(w http.ResponseWriter, err error) {
 }
 
 func (s *Server) HandleEvent(ctx context.Context, event events.Event) error {
-	if event.Type != "voice_mail.available" {
+	if event.Type != "voice_mail.available" && event.Type != "voice_mail.consumed" && event.Type != "voice_mail.expired" {
 		return nil
 	}
 	var payload struct {
@@ -295,12 +332,30 @@ func (s *Server) HandleEvent(ctx context.Context, event events.Event) error {
 	if err := json.Unmarshal(event.Data, &payload); err != nil {
 		return fmt.Errorf("decode voice mail outbox event: %w", err)
 	}
-	message := protocol.VoiceMailAvailable{VoiceMailID: payload.VoiceMailID, FromDeviceID: payload.FromDeviceID, MediaFormat: payload.MediaFormat, DurationMS: payload.DurationMS, SizeBytes: payload.SizeBytes, ChecksumSHA256: payload.ChecksumSHA256, ExpiresAt: payload.ExpiresAt, Policy: payload.Policy}
-	if err := message.Validate(); err != nil {
-		return err
-	}
 	for _, target := range s.hub.targets(event.UserID, payload.RecipientDeviceID) {
-		if err := target.sendJSONMeta(ctx, protocol.VoiceMailAvailableType, protocol.Metadata{IdempotencyKey: event.ID, OccurredAt: event.Time.UTC().Format(time.RFC3339Nano)}, message); err != nil {
+		metadata := protocol.Metadata{IdempotencyKey: event.ID, OccurredAt: event.Time.UTC().Format(time.RFC3339Nano)}
+		var err error
+		switch event.Type {
+		case "voice_mail.available":
+			message := protocol.VoiceMailAvailable{VoiceMailID: payload.VoiceMailID, FromDeviceID: payload.FromDeviceID, MediaFormat: payload.MediaFormat, DurationMS: payload.DurationMS, SizeBytes: payload.SizeBytes, ChecksumSHA256: payload.ChecksumSHA256, ExpiresAt: payload.ExpiresAt, Policy: payload.Policy}
+			if validateErr := message.Validate(); validateErr != nil {
+				return validateErr
+			}
+			err = target.sendJSONMeta(ctx, protocol.VoiceMailAvailableType, metadata, message)
+		case "voice_mail.consumed":
+			message := protocol.VoiceMailConsumed{VoiceMailID: payload.VoiceMailID}
+			if validateErr := message.Validate(); validateErr != nil {
+				return validateErr
+			}
+			err = target.sendJSONMeta(ctx, protocol.VoiceMailConsumedType, metadata, message)
+		case "voice_mail.expired":
+			message := protocol.VoiceMailExpired{VoiceMailID: payload.VoiceMailID}
+			if validateErr := message.Validate(); validateErr != nil {
+				return validateErr
+			}
+			err = target.sendJSONMeta(ctx, protocol.VoiceMailExpiredType, metadata, message)
+		}
+		if err != nil {
 			return err
 		}
 	}

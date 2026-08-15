@@ -5,6 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 OUT="${COMPANION_EVIDENCE_OUT:-$ROOT/software-device-evidence.json}"
 TOOL_OUT="${OUT%.json}-tool.json"
 TOOL_DB_OUT="${OUT%.json}-tool-db.json"
+VOICE_MAIL_OUT="${OUT%.json}-voice-mail.json"
 CORE_OBS_OUT="${OUT%.json}-observability-core.json"
 TMP="$(mktemp -d)"
 SERVER_LOG="$TMP/companiond.log"
@@ -19,9 +20,10 @@ start_server(){ local log="$1"; "${COMPANIOND_BIN:-/usr/local/bin/companiond}" >
 enroll_device(){ local device_id="$1"; curl -fsS -X POST -H "Authorization: Bearer $COMPANION_ADMIN_TOKEN" -H 'Content-Type: application/json' --data '{"user_id":"default","tenant_id":"tier1","plan":"test"}' "http://127.0.0.1:18000/v1/admin/devices/${device_id}/credential" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("shown_once") is True; print(d["token"])'; }
 revoke_device(){ local device_id="$1"; curl -fsS -X DELETE -H "Authorization: Bearer $COMPANION_ADMIN_TOKEN" "http://127.0.0.1:18000/v1/admin/devices/${device_id}/credential" >/dev/null; }
 set_memory_consent(){ local user_id="$1"; curl -fsS -X PATCH -H "Authorization: Bearer $COMPANION_ADMIN_TOKEN" -H 'Content-Type: application/json' --data '{"save_voice_audio":false,"long_term_memory_enabled":true,"conversation_retention_days":0,"voice_memo_retention_days":0,"memory_retention_days":0}' "http://127.0.0.1:18000/v1/admin/users/${user_id}/privacy" >/dev/null; }
+set_voice_mail_policy(){ local user_id="$1"; curl -fsS -X PATCH -H "Authorization: Bearer $COMPANION_ADMIN_TOKEN" -H 'Content-Type: application/json' --data '{"voice_mail_policy":"ephemeral"}' "http://127.0.0.1:18000/v1/admin/users/${user_id}/privacy" >/dev/null; }
 expect_unauthorized(){ local device_id="$1" credential="$2" status; status="$(curl -sS -o /dev/null -w '%{http_code}' -H "Device-Id: ${device_id}" -H "Authorization: Bearer ${credential}" http://127.0.0.1:18000/v2/device)"; [[ "$status" == "401" ]] || { echo "expected 401 for device=$device_id, got $status" >&2; return 1; }; }
 
-export COMPANION_PROFILE=test COMPANION_ALLOW_MOCK_PROVIDERS=true COMPANION_ADDRESS="127.0.0.1:18000" COMPANION_ADMIN_TOKEN="tier1-admin-token" COMPANION_TIMEZONE="Asia/Ho_Chi_Minh"
+export COMPANION_PROFILE=test COMPANION_ALLOW_MOCK_PROVIDERS=true COMPANION_ADDRESS="127.0.0.1:18000" COMPANION_ADMIN_TOKEN="tier1-admin-token" COMPANION_TIMEZONE="Asia/Ho_Chi_Minh" COMPANION_VOICE_MAIL_DIR="$TMP/voice-mail"
 test -n "${COMPANION_DATABASE_URL:-}" || { echo "COMPANION_DATABASE_URL is required" >&2; exit 1; }
 export COMPANION_EVIDENCE_COMMIT="${GITHUB_SHA:-$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)}" ADK_OPENAI_BASE_URL="http://127.0.0.1:19000/v1" ADK_OPENAI_API_KEY="tier1-fake-key" ADK_MODEL="tier1-fake-model"
 python3 "$ROOT/host/companion_software_device/fake_responses.py" >"$MODEL_LOG" 2>&1 & MODEL_PID=$!
@@ -32,6 +34,12 @@ CORE_DEVICE="software-device-core"; export MOCK_TRANSCRIPT="tier1 transcript" CO
 COMPANION_EVIDENCE_CONFIG_SHA256="$(printf '%s\n' 'profile=test' 'allow_mock=true' 'agent=adk:fake_responses' 'auth=database_enrolled' 'asr=mock:tier1 transcript' 'tts=mock' 'protocol=v2' | sha256sum | awk '{print $1}')"
 export COMPANION_OBSERVABILITY_FILE="$CORE_OBS_OUT"; start_server "$SERVER_LOG"; CORE_CREDENTIAL="$(enroll_device "$CORE_DEVICE")"; expect_unauthorized "$CORE_DEVICE" "wrong-tier1-credential"
 "${SOFTWARE_DEVICE_BIN:-/usr/local/bin/companion_software_device}" --url ws://127.0.0.1:18000/v2/device --device-id "$CORE_DEVICE" --token "$CORE_CREDENTIAL" --admin-token "$COMPANION_ADMIN_TOKEN" --scenario-set core --evidence "$OUT"
+VOICE_MAIL_SENDER="software-device-voice-mail-sender"; VOICE_MAIL_SENDER_CREDENTIAL="$(enroll_device "$VOICE_MAIL_SENDER")"; set_voice_mail_policy default
+VOICE_MAIL_FIXTURE="$TMP/voice-mail-tier1.ogg"; base64 -d < "$ROOT/testdata/scenarios/voice-mail/tone.ogg.b64" > "$VOICE_MAIL_FIXTURE"
+VOICE_MAIL_CHECKSUM="$(sha256sum "$VOICE_MAIL_FIXTURE" | awk '{print $1}')"; test "$VOICE_MAIL_CHECKSUM" = "8ec2737fa77258b22c49421ede99ac2a373bf1b27fa02e30fc532a3be01aecd9"
+COMPANION_EVIDENCE_CONFIG_SHA256="$(printf '%s\n' 'profile=test' 'auth=database_enrolled' 'protocol=v2' 'voice_mail=ephemeral:ogg_opus' | sha256sum | awk '{print $1}')"
+"${SOFTWARE_DEVICE_BIN:-/usr/local/bin/companion_software_device}" --url ws://127.0.0.1:18000/v2/device --device-id "$CORE_DEVICE" --token "$CORE_CREDENTIAL" --admin-token "$COMPANION_ADMIN_TOKEN" --scenario-set voice-mail --voice-mail-sender-device "$VOICE_MAIL_SENDER" --voice-mail-sender-token "$VOICE_MAIL_SENDER_CREDENTIAL" --voice-mail-media "$VOICE_MAIL_FIXTURE" --voice-mail-checksum "$VOICE_MAIL_CHECKSUM" --evidence "$VOICE_MAIL_OUT"
+python3 "$ROOT/host/companion_software_device/validate_evidence.py" "$VOICE_MAIL_OUT"
 revoke_device "$CORE_DEVICE"; expect_unauthorized "$CORE_DEVICE" "$CORE_CREDENTIAL"; python3 "$ROOT/host/companion_software_device/validate_evidence.py" "$OUT"; stop_server; python3 "$ROOT/host/companion_software_device/validate_observability.py" "$CORE_OBS_OUT" core
 
 # Reuse one authoritative PostgreSQL DB and enrolled device across server restarts.

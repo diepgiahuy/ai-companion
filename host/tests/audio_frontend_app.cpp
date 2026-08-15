@@ -85,6 +85,13 @@ struct ScriptedBackend final : VoiceBackend {
   void cancel_turn() override { ++cancel_count; }
   bool poll_event(BackendEvent& event) override { if (events.empty()) return false; event = events.front(); events.erase(events.begin()); return true; }
   bool report_config(const RuntimeConfigPatch&, bool) override { return true; }
+  bool claim_voice_mail(const VoiceMailMetadata&, uint64_t) override { return false; }
+  bool report_voice_mail_playback(const VoiceMailMetadata&, bool,
+                                  std::string_view, uint64_t) override {
+    return false;
+  }
+  void cancel_voice_mail(const VoiceMailMetadata&, std::string_view,
+                         uint64_t) override {}
   size_t read_playback(std::span<int16_t> destination) override {
     const size_t remaining = playback.size() - playback_offset;
     const size_t count = std::min(remaining, destination.size());

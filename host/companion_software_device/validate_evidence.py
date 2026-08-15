@@ -35,6 +35,10 @@ expected = {
         "providers": adk_fixture,
         "scenarios": {"agent_tool_authoritative_mutation"},
     },
+    "voice-mail": {
+        "providers": adk_fixture,
+        "scenarios": {"voice_mail_lifecycle"},
+    },
 }.get(scenario_set)
 if expected is None:
     raise SystemExit(f"software-device evidence: unsupported scenario_set {scenario_set!r}")

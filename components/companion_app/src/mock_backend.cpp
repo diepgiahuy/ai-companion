@@ -74,11 +74,53 @@ bool MockVoiceBackend::report_config(const RuntimeConfigPatch& config, bool appl
   return true;
 }
 
+bool MockVoiceBackend::claim_voice_mail(const VoiceMailMetadata& item, uint64_t) {
+  if (!connected_ || !item.valid()) return false;
+  ++voice_mail_claims_;
+  playback_offset_ = 0;
+  return inject_voice_mail(item, BackendEventType::voice_mail_playback_ready) &&
+         inject_voice_mail(item, BackendEventType::voice_mail_playback_finished);
+}
+
+bool MockVoiceBackend::report_voice_mail_playback(const VoiceMailMetadata& item,
+                                                  bool succeeded,
+                                                  std::string_view,
+                                                  uint64_t) {
+  if (!item.valid()) return false;
+  if (succeeded) {
+    ++voice_mail_successes_;
+    if (item.policy == VoiceMailMetadata::Policy::retained) {
+      return inject_voice_mail(item, BackendEventType::voice_mail_available);
+    }
+    return inject_voice_mail(item, BackendEventType::voice_mail_consumed);
+  }
+  ++voice_mail_failures_;
+  return true;
+}
+
+void MockVoiceBackend::cancel_voice_mail(const VoiceMailMetadata& item,
+                                         std::string_view, uint64_t) {
+  if (item.valid()) ++voice_mail_failures_;
+  playback_offset_ = reply_pcm_.size();
+}
+
 bool MockVoiceBackend::inject_config(const RuntimeConfigPatch& config) {
   if (event_count_ == event_capacity_) return false;
   BackendEvent event{};
   event.type = BackendEventType::config;
   event.config = config;
+  events_[event_tail_] = event;
+  event_tail_ = (event_tail_ + 1) % event_capacity_;
+  ++event_count_;
+  return true;
+}
+
+bool MockVoiceBackend::inject_voice_mail(const VoiceMailMetadata& item,
+                                         BackendEventType type) {
+  if (event_count_ == event_capacity_) return false;
+  BackendEvent event{};
+  event.type = type;
+  event.voice_mail = item;
   events_[event_tail_] = event;
   event_tail_ = (event_tail_ + 1) % event_capacity_;
   ++event_count_;

@@ -22,6 +22,9 @@ enum class UiState : uint8_t {
   listening,
   processing,
   speaking,
+  voice_mail_waiting,
+  voice_mail_claiming,
+  voice_mail_playing,
   alarm,
   error,
 };
@@ -52,13 +55,39 @@ enum class BackendEventType : uint8_t {
   schedule,
   ui_card,
   config,
+  voice_mail_available,
+  voice_mail_playback_ready,
+  voice_mail_playback_finished,
+  voice_mail_consumed,
+  voice_mail_expired,
+  voice_mail_failed,
   error,
+};
+
+struct VoiceMailMetadata {
+  enum class Policy : uint8_t { unknown, ephemeral, retained };
+  std::array<char, 129> voice_mail_id{};
+  std::array<char, 129> from_device_id{};
+  std::array<char, 16> media_format{};
+  std::array<char, 65> checksum_sha256{};
+  uint32_t duration_ms{};
+  uint32_t size_bytes{};
+  uint64_t expires_at_unix_ms{};
+  Policy policy{Policy::unknown};
+
+  void set_voice_mail_id(std::string_view value);
+  void set_from_device_id(std::string_view value);
+  void set_media_format(std::string_view value);
+  void set_checksum_sha256(std::string_view value);
+  std::string_view voice_mail_id_view() const;
+  bool valid() const;
 };
 
 struct BackendEvent {
   BackendEventType type{BackendEventType::error};
   std::array<char, 96> text{};
   RuntimeConfigPatch config{};
+  VoiceMailMetadata voice_mail{};
 
   void set_text(std::string_view value) {
     text.fill('\0');
@@ -112,6 +141,14 @@ public:
   virtual void cancel_turn() = 0;
   virtual bool poll_event(BackendEvent& event) = 0;
   virtual bool report_config(const RuntimeConfigPatch& config, bool applied) = 0;
+  virtual bool claim_voice_mail(const VoiceMailMetadata& item, uint64_t now_ms) = 0;
+  virtual bool report_voice_mail_playback(const VoiceMailMetadata& item,
+                                          bool succeeded,
+                                          std::string_view failure_code,
+                                          uint64_t now_ms) = 0;
+  virtual void cancel_voice_mail(const VoiceMailMetadata& item,
+                                 std::string_view failure_code,
+                                 uint64_t now_ms) = 0;
   virtual size_t read_playback(std::span<int16_t> destination) = 0;
   virtual bool playback_empty() const = 0;
   virtual uint32_t playback_sample_rate_hz() const = 0;
@@ -128,6 +165,7 @@ struct AppConfig {
   uint16_t vad_mean_abs_threshold{450};
   uint32_t vad_silence_ms{800};
   uint32_t vad_min_speech_ms{250};
+  uint32_t voice_mail_operation_timeout_ms{15'000};
 };
 
 class CompanionApp final {
@@ -162,11 +200,18 @@ private:
   uint64_t runtime_config_version_{};
   uint64_t last_voice_ms_{};
   uint64_t first_voice_ms_{};
+  uint64_t voice_mail_operation_started_ms_{};
+  uint64_t voice_mail_last_progress_ms_{};
   bool speech_detected_{};
   bool tts_finished_{};
   bool alarm_pending_{};
   bool alarm_tone_active_{};
   bool microphone_capture_active_{};
+  bool voice_mail_stream_finished_{};
+  bool voice_mail_result_pending_{};
+  static constexpr size_t kVoiceMailQueueCapacity = 4;
+  std::array<VoiceMailMetadata, kVoiceMailQueueCapacity> voice_mail_queue_{};
+  size_t voice_mail_count_{};
   std::array<char, 96> upcoming_{};
   std::array<char, 96> pending_alarm_{};
   std::array<int16_t, kAudioFrameSamples> capture_frame_{};
@@ -182,12 +227,20 @@ private:
   void pump_capture(uint64_t now_ms);
   void pump_frontend_monitor(uint64_t now_ms);
   void pump_playback(uint64_t now_ms);
+  void pump_voice_mail(uint64_t now_ms);
   void pump_alarm_tone();
   void begin_listening(uint64_t now_ms);
   void finish_listening(uint64_t now_ms);
   void abort_and_listen(uint64_t now_ms);
   void enter_ready(uint64_t now_ms, std::string_view message = "PRESS TO TALK");
   void enter_alarm(uint64_t now_ms, std::string_view message);
+  void enter_voice_mail_waiting();
+  void begin_voice_mail(uint64_t now_ms);
+  void fail_voice_mail(uint64_t now_ms, std::string_view code,
+                       std::string_view message);
+  bool enqueue_voice_mail(const VoiceMailMetadata& item);
+  bool remove_voice_mail(std::string_view voice_mail_id);
+  bool current_voice_mail_matches(const VoiceMailMetadata& item) const;
   void render_idle(uint64_t now_ms);
   void set_upcoming(std::string_view text);
   void set_pending_alarm(std::string_view text);

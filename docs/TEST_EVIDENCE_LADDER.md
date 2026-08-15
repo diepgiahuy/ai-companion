@@ -12,7 +12,7 @@ C++ `CompanionApp` tests, Go unit/race/store tests, protocol-v2 golden vectors a
 
 The first dependency baseline is intentionally host-only and pinned by the test container: Boost.Beast/Boost.System 1.74 from Debian bookworm, libopus 1.3.1, and nlohmann-json 3.11.2. These packages never enter the ESP-IDF component graph.
 
-Current mandatory scenarios are session/turn/TTS, duplicate live-session message identity, barge-in generation cancellation, disconnect/reconnect with a new session, live config/report ordering, and deterministic protocol-v1 rejection. Synthetic microphone PCM and bounded speaker/display sinks require no host audio hardware. Deterministic model runs exercise the production ADK/ToolRegistry/PostgreSQL path across server restarts and verify representative authoritative mutations; this is still non-production provider evidence.
+Current mandatory scenarios are session/turn/TTS, duplicate live-session message identity, barge-in generation cancellation, disconnect/reconnect with a new session, live config/report ordering, deterministic protocol-v1 rejection, and the voice-mail lifecycle. The voice-mail scenario proves no autoplay, cold-start unread recovery, reconnect deduplication, authenticated Ogg Opus playback, speaker-drain ordering, cancel/reclaim, and output timeout against authoritative PostgreSQL state. Synthetic microphone PCM and bounded speaker/display sinks require no host audio hardware. Deterministic model runs exercise the production ADK/ToolRegistry/PostgreSQL path across server restarts and verify representative authoritative mutations; this is still non-production provider evidence.
 
 A Tier-1 run with `MockASR`, `MockAgent` and `MockTTS` is **orchestration evidence only**. Its artifact must say `evidence_class=tier1_orchestration` and `promotion=orchestration_only`; it cannot promote real ASR/TTS/model quality. #18 must plug real providers into this same device FSM/protocol harness rather than create another client.
 
@@ -27,6 +27,9 @@ Official sources used for this checkpoint: Wokwi ESP32 simulation guide, Wokwi C
 ## Tier 3 — trusted physical HIL
 
 `.github/workflows/firmware_hil.yml` / issue #3 is the only promotion path for physical ESP32 audio, RF/BLE, final display/touch/haptic timing, power/current/thermal and enclosure evidence. It must continue to run only trusted refs with explicit operator/device selection; public PR code never auto-runs on attached hardware.
+
+The issue #6 flow, automated checkpoints, firmware buffering tradeoff, and exact
+human-only voice-mail procedure are documented in `docs/VOICE_MAIL_UX.md`.
 
 ## Evidence identity
 
