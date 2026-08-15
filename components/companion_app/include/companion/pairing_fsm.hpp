@@ -49,11 +49,6 @@ struct FixedText {
   }
 };
 
-// PairingFsm contains no radio/backend code. BLE discovery feeds rotating opaque
-// aliases into observe_candidate(); the authenticated backend remains the only
-// authority that turns an alias observation into a pairing session/relationship.
-// Until #100 supplies calibrated proximity ranking, discovery is intentionally
-// conservative: exactly one distinct peer may be committed automatically.
 class PairingFsm final {
 public:
   explicit constexpr PairingFsm(Config config = {}) : config_(config) {}
@@ -79,9 +74,6 @@ public:
     return true;
   }
 
-  // Repeated observations of one alias are harmless. A second distinct alias is
-  // remembered only as ambiguity; it never replaces the first candidate and no
-  // unbounded scan history is retained.
   bool observe_candidate(uint64_t now_ms, std::string_view candidate_alias,
                          std::string_view evidence_id) {
     if (!active_at(now_ms) || state_ != State::discovering ||
@@ -99,9 +91,16 @@ public:
     return false;
   }
 
-  // Candidate selection is a separate explicit transition so callers can run a
-  // bounded discovery interval before committing. Without #100 calibration, any
-  // observed ambiguity fails closed instead of picking the strongest/first RSSI.
+  // Both devices see the same two rotating aliases. Lexical ordering elects one
+  // initiator without revealing stable identity and prevents reversed concurrent
+  // session creation. The non-initiator stays in discovery waiting for the
+  // backend's pairing.session_created event.
+  bool should_initiate() const {
+    return state_ == State::discovering && !ambiguous_ &&
+           !local_alias_.view().empty() && !candidate_alias_.view().empty() &&
+           local_alias_.view() < candidate_alias_.view();
+  }
+
   bool commit_candidate(uint64_t now_ms) {
     if (!active_at(now_ms) || state_ != State::discovering || ambiguous_ ||
         candidate_alias_.view().empty() || evidence_id_.view().empty()) {
@@ -112,10 +111,6 @@ public:
     return true;
   }
 
-  // message_id from pairing.session_created is the participant-specific nonce.
-  // A peer may receive this while still advertising/scanning; the initiator sees
-  // it after commit_candidate(). Both paths converge on the same confirmation
-  // state without trusting a BLE identity as authority.
   bool session_created(uint64_t now_ms, std::string_view session_id,
                        std::string_view confirmation_nonce,
                        uint64_t server_expiry_ms) {
