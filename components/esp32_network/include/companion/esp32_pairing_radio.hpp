@@ -4,6 +4,7 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
+#include "host/ble_gap.h"
 
 #include <array>
 #include <atomic>
@@ -28,8 +29,8 @@ public:
 private:
   static void host_task(void* parameter);
   static void on_sync();
-  static int gap_event(struct ble_gap_event* event, void* argument);
-  void handle_discovery(const struct ble_gap_disc_desc& report);
+  static int gap_event(ble_gap_event* event, void* argument);
+  void handle_discovery(const ble_gap_disc_desc& report);
 
   static Esp32PairingRadio* instance_;
   StaticQueue_t queue_storage_{};
