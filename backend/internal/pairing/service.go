@@ -15,10 +15,10 @@ import (
 const SessionTTL = 2 * time.Minute
 
 var (
-	ErrUnauthorized       = errors.New("pairing participant is not authorized")
-	ErrDeviceUnavailable  = errors.New("pairing candidate device is unavailable")
-	ErrSessionExpired     = errors.New("pairing session expired")
-	ErrSessionClosed      = errors.New("pairing session is closed")
+	ErrUnauthorized        = errors.New("pairing participant is not authorized")
+	ErrDeviceUnavailable   = errors.New("pairing candidate device is unavailable")
+	ErrSessionExpired      = errors.New("pairing session expired")
+	ErrSessionClosed       = errors.New("pairing session is closed")
 	ErrInvalidConfirmation = errors.New("invalid pairing confirmation")
 )
 
@@ -48,25 +48,34 @@ type CreateMutation struct {
 }
 
 type ConfirmMutation struct {
-	SessionID       string
-	Participant     Participant
-	Nonce           string
-	ConfirmedAt     time.Time
-	IdempotencyKey  string
-	RequestHash     string
-	RelationshipID  string
+	SessionID      string
+	Participant    Participant
+	Nonce          string
+	ConfirmedAt    time.Time
+	IdempotencyKey string
+	RequestHash    string
+	RelationshipID string
+}
+
+type RejectMutation struct {
+	SessionID      string
+	Participant    Participant
+	RejectedAt     time.Time
+	IdempotencyKey string
+	RequestHash    string
 }
 
 type ConfirmationOutcome struct {
 	Session        Session `json:"session"`
 	Completed      bool    `json:"completed"`
-	RelationshipID string `json:"relationship_id,omitempty"`
+	RelationshipID string  `json:"relationship_id,omitempty"`
 	Replayed       bool    `json:"replayed"`
 }
 
 type Repository interface {
 	CreatePairingSession(context.Context, CreateMutation) (Session, bool, error)
 	ConfirmPairingSession(context.Context, ConfirmMutation) (ConfirmationOutcome, error)
+	RejectPairingSession(context.Context, RejectMutation) (Session, bool, error)
 }
 
 type Service struct {
@@ -108,8 +117,8 @@ func (s *Service) Create(ctx context.Context, initiator Participant, candidateDe
 		return Session{}, false, err
 	}
 	requestHash, err := idempotency.HashValue(struct {
-		InitiatorDeviceID  string `json:"initiator_device_id"`
-		CandidateDeviceID  string `json:"candidate_device_id"`
+		InitiatorDeviceID   string `json:"initiator_device_id"`
+		CandidateDeviceID   string `json:"candidate_device_id"`
 		ProximityEvidenceID string `json:"proximity_evidence_id"`
 	}{initiator.DeviceID, candidateDeviceID, proximityEvidenceID})
 	if err != nil {
@@ -150,11 +159,52 @@ func (s *Service) Confirm(ctx context.Context, participant Participant, sessionI
 	if err != nil {
 		return ConfirmationOutcome{}, err
 	}
-	return s.repository.ConfirmPairingSession(ctx, ConfirmMutation{
+	outcome, err := s.repository.ConfirmPairingSession(ctx, ConfirmMutation{
 		SessionID: sessionID, Participant: participant, Nonce: nonce,
 		ConfirmedAt: s.now(), IdempotencyKey: strings.TrimSpace(idempotencyKey),
 		RequestHash: requestHash, RelationshipID: relationshipID,
 	})
+	if err != nil {
+		return ConfirmationOutcome{}, err
+	}
+	if outcome.Session.State == "expired" {
+		return outcome, ErrSessionExpired
+	}
+	return outcome, nil
+}
+
+// Reject records an authenticated participant's explicit decline. The device
+// protocol permits several rejection reasons, but only user_declined is accepted
+// from a device; authorization/rate/nonce reasons are server-generated responses.
+func (s *Service) Reject(ctx context.Context, participant Participant, sessionID, reason, idempotencyKey string) (Session, bool, error) {
+	participant = normalizeParticipant(participant)
+	sessionID = strings.TrimSpace(sessionID)
+	reason = strings.TrimSpace(reason)
+	if participant.UserID == "" || participant.DeviceID == "" || sessionID == "" || reason != "user_declined" {
+		return Session{}, false, ErrUnauthorized
+	}
+	if err := validateIdempotencyKey(idempotencyKey); err != nil {
+		return Session{}, false, err
+	}
+	requestHash, err := idempotency.HashValue(struct {
+		SessionID string `json:"session_id"`
+		DeviceID  string `json:"device_id"`
+		Reason    string `json:"reason"`
+	}{sessionID, participant.DeviceID, reason})
+	if err != nil {
+		return Session{}, false, err
+	}
+	session, replayed, err := s.repository.RejectPairingSession(ctx, RejectMutation{
+		SessionID: sessionID, Participant: participant, RejectedAt: s.now(),
+		IdempotencyKey: strings.TrimSpace(idempotencyKey), RequestHash: requestHash,
+	})
+	if err != nil {
+		return Session{}, false, err
+	}
+	if session.State == "expired" {
+		return session, replayed, ErrSessionExpired
+	}
+	return session, replayed, nil
 }
 
 func normalizeParticipant(p Participant) Participant {
