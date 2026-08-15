@@ -5,6 +5,7 @@
 #include "nvs.h"
 
 #include <cstring>
+#include <string>
 
 namespace companion::provisioning {
 namespace {
@@ -33,6 +34,11 @@ bool get_string(nvs_handle_t handle, const char* key, char* out, size_t capacity
 bool set_string(nvs_handle_t handle, const char* key, std::string_view value) {
   if (value.find('\0') != std::string_view::npos) return false;
   return nvs_set_str(handle, key, std::string(value).c_str()) == ESP_OK;
+}
+
+bool erase_optional(nvs_handle_t handle, const char* key) {
+  const esp_err_t err = nvs_erase_key(handle, key);
+  return err == ESP_OK || err == ESP_ERR_NVS_NOT_FOUND;
 }
 
 template <size_t N>
@@ -113,7 +119,7 @@ bool ProvisioningStore::save_pending(const PendingConfig& pending) const {
                   set_string(handle, kBootstrap, pending.bootstrap_id.view()) &&
                   set_string(handle, kClaimAuth, pending.claim_authorization.view()) &&
                   set_string(handle, kIdemKey, pending.idempotency_key.view()) &&
-                  nvs_erase_key(handle, kDeviceCred) != ESP_ERR_NVS_INVALID_HANDLE &&
+                  erase_optional(handle, kDeviceCred) &&
                   set_string(handle, kState, "pending") && nvs_commit(handle) == ESP_OK;
   nvs_close(handle);
   return ok;
@@ -140,9 +146,8 @@ bool ProvisioningStore::commit_runtime(const PendingConfig& pending,
                   set_string(handle, kWifiPass, runtime.wifi_password.view()) &&
                   set_string(handle, kServerUrl, runtime.server_url.view()) &&
                   set_string(handle, kDeviceCred, runtime.device_credential.view()) &&
-                  nvs_erase_key(handle, kBootstrap) != ESP_ERR_NVS_INVALID_HANDLE &&
-                  nvs_erase_key(handle, kClaimAuth) != ESP_ERR_NVS_INVALID_HANDLE &&
-                  nvs_erase_key(handle, kIdemKey) != ESP_ERR_NVS_INVALID_HANDLE &&
+                  erase_optional(handle, kBootstrap) && erase_optional(handle, kClaimAuth) &&
+                  erase_optional(handle, kIdemKey) &&
                   set_string(handle, kState, "validating") && nvs_commit(handle) == ESP_OK;
   nvs_close(handle);
   return ok;
