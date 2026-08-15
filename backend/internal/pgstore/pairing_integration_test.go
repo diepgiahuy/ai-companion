@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -20,6 +21,17 @@ func enrollPairingDevice(t *testing.T, store *Store, userID, deviceID, secret st
 	if err != nil { t.Fatal(err) }
 }
 
+func cleanupPairingPrefix(t *testing.T, store *Store, prefix string) {
+	t.Helper()
+	t.Cleanup(func() {
+		_, _ = store.pool.Exec(context.Background(), `DELETE FROM idempotency_records WHERE actor_id LIKE $1 AND operation LIKE 'pairing.%'`, prefix+"%")
+		_, _ = store.pool.Exec(context.Background(), `DELETE FROM pairing_sessions WHERE initiator_device_id LIKE $1 OR peer_device_id LIKE $1`, prefix+"%")
+		_, _ = store.pool.Exec(context.Background(), `DELETE FROM device_relationships WHERE device_a_id LIKE $1 OR device_b_id LIKE $1`, prefix+"%")
+		_, _ = store.pool.Exec(context.Background(), `DELETE FROM device_credentials WHERE device_id LIKE $1`, prefix+"%")
+		_, _ = store.pool.Exec(context.Background(), `DELETE FROM outbox WHERE subject LIKE 'relationship/%' AND data_json->>'device_a_id' LIKE $1`, prefix+"%")
+	})
+}
+
 func TestPostgresPairingBilateralConfirmationCreatesOneRelationshipAndOutbox(t *testing.T) {
 	pool := postgresTestPool(t)
 	store, err := New(pool)
@@ -32,13 +44,7 @@ func TestPostgresPairingBilateralConfirmationCreatesOneRelationshipAndOutbox(t *
 	userB, deviceB := prefix+"-ub", prefix+"-db"
 	enrollPairingDevice(t, store, userA, deviceA, "secret-a")
 	enrollPairingDevice(t, store, userB, deviceB, "secret-b")
-	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM idempotency_records WHERE actor_id LIKE $1 AND operation LIKE 'pairing.%'`, prefix+"%")
-		_, _ = pool.Exec(context.Background(), `DELETE FROM pairing_sessions WHERE initiator_device_id LIKE $1 OR peer_device_id LIKE $1`, prefix+"%")
-		_, _ = pool.Exec(context.Background(), `DELETE FROM device_relationships WHERE device_a_id LIKE $1 OR device_b_id LIKE $1`, prefix+"%")
-		_, _ = pool.Exec(context.Background(), `DELETE FROM device_credentials WHERE device_id LIKE $1`, prefix+"%")
-		_, _ = pool.Exec(context.Background(), `DELETE FROM outbox WHERE subject LIKE 'relationship/%' AND data_json->>'device_a_id' LIKE $1`, prefix+"%")
-	})
+	cleanupPairingPrefix(t, store, prefix)
 
 	created, replayed, err := service.Create(ctx, pairing.Participant{UserID:userA, DeviceID:deviceA}, deviceB, "rf-sample-1", prefix+"-create")
 	if err != nil || replayed { t.Fatalf("create replayed=%v err=%v", replayed, err) }
@@ -74,12 +80,7 @@ func TestPostgresPairingReversedSessionsConvergeOnOneCanonicalRelationship(t *te
 	userB, deviceB := prefix+"-ub", prefix+"-db"
 	enrollPairingDevice(t, store, userA, deviceA, "secret-a")
 	enrollPairingDevice(t, store, userB, deviceB, "secret-b")
-	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM idempotency_records WHERE actor_id LIKE $1 AND operation LIKE 'pairing.%'`, prefix+"%")
-		_, _ = pool.Exec(context.Background(), `DELETE FROM pairing_sessions WHERE initiator_device_id LIKE $1 OR peer_device_id LIKE $1`, prefix+"%")
-		_, _ = pool.Exec(context.Background(), `DELETE FROM device_relationships WHERE device_a_id LIKE $1 OR device_b_id LIKE $1`, prefix+"%")
-		_, _ = pool.Exec(context.Background(), `DELETE FROM device_credentials WHERE device_id LIKE $1`, prefix+"%")
-	})
+	cleanupPairingPrefix(t, store, prefix)
 
 	s1, _, err := service.Create(ctx, pairing.Participant{UserID:userA,DeviceID:deviceA}, deviceB, "rf-a", prefix+"-c1")
 	if err != nil { t.Fatal(err) }
@@ -95,4 +96,55 @@ func TestPostgresPairingReversedSessionsConvergeOnOneCanonicalRelationship(t *te
 	var count int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM device_relationships WHERE (device_a_id=$1 AND device_b_id=$2) OR (device_a_id=$2 AND device_b_id=$1)`, deviceA, deviceB).Scan(&count); err != nil { t.Fatal(err) }
 	if count != 1 { t.Fatalf("canonical relationship count=%d, want 1", count) }
+}
+
+func TestPostgresPairingRejectIsDurableAndIdempotent(t *testing.T) {
+	pool := postgresTestPool(t)
+	store, err := New(pool)
+	if err != nil { t.Fatal(err) }
+	service, err := pairing.New(store)
+	if err != nil { t.Fatal(err) }
+	ctx := context.Background()
+	prefix := fmt.Sprintf("pair-reject-%d", time.Now().UnixNano())
+	userA, deviceA := prefix+"-ua", prefix+"-da"
+	userB, deviceB := prefix+"-ub", prefix+"-db"
+	enrollPairingDevice(t, store, userA, deviceA, "secret-a")
+	enrollPairingDevice(t, store, userB, deviceB, "secret-b")
+	cleanupPairingPrefix(t, store, prefix)
+
+	created, _, err := service.Create(ctx, pairing.Participant{UserID:userA,DeviceID:deviceA}, deviceB, "rf-reject", prefix+"-create")
+	if err != nil { t.Fatal(err) }
+	rejected, replayed, err := service.Reject(ctx, pairing.Participant{UserID:userB,DeviceID:deviceB}, created.ID, "user_declined", prefix+"-reject")
+	if err != nil || replayed || rejected.State != "cancelled" { t.Fatalf("reject=%+v replayed=%v err=%v", rejected, replayed, err) }
+	replayedReject, replayed, err := service.Reject(ctx, pairing.Participant{UserID:userB,DeviceID:deviceB}, created.ID, "user_declined", prefix+"-reject")
+	if err != nil || !replayed || replayedReject.State != "cancelled" { t.Fatalf("reject replay=%+v replayed=%v err=%v", replayedReject, replayed, err) }
+	if _, err := service.Confirm(ctx, pairing.Participant{UserID:userA,DeviceID:deviceA}, created.ID, created.InitiatorNonce, prefix+"-confirm-after-reject"); !errors.Is(err, pairing.ErrSessionClosed) {
+		t.Fatalf("confirm after reject err=%v, want session closed", err)
+	}
+}
+
+func TestPostgresPairingExpiryPersistsBeforeReturningExpired(t *testing.T) {
+	pool := postgresTestPool(t)
+	store, err := New(pool)
+	if err != nil { t.Fatal(err) }
+	service, err := pairing.New(store)
+	if err != nil { t.Fatal(err) }
+	ctx := context.Background()
+	prefix := fmt.Sprintf("pair-expire-%d", time.Now().UnixNano())
+	userA, deviceA := prefix+"-ua", prefix+"-da"
+	userB, deviceB := prefix+"-ub", prefix+"-db"
+	enrollPairingDevice(t, store, userA, deviceA, "secret-a")
+	enrollPairingDevice(t, store, userB, deviceB, "secret-b")
+	cleanupPairingPrefix(t, store, prefix)
+
+	created, _, err := service.Create(ctx, pairing.Participant{UserID:userA,DeviceID:deviceA}, deviceB, "rf-expire", prefix+"-create")
+	if err != nil { t.Fatal(err) }
+	if _, err := pool.Exec(ctx, `UPDATE pairing_sessions SET expires_at=now()-interval '1 second' WHERE session_id=$1`, created.ID); err != nil { t.Fatal(err) }
+	outcome, err := service.Confirm(ctx, pairing.Participant{UserID:userA,DeviceID:deviceA}, created.ID, created.InitiatorNonce, prefix+"-confirm-expired")
+	if !errors.Is(err, pairing.ErrSessionExpired) || outcome.Session.State != "expired" {
+		t.Fatalf("expired outcome=%+v err=%v", outcome, err)
+	}
+	var state string
+	if err := pool.QueryRow(ctx, `SELECT state FROM pairing_sessions WHERE session_id=$1`, created.ID).Scan(&state); err != nil { t.Fatal(err) }
+	if state != "expired" { t.Fatalf("persisted state=%q, want expired", state) }
 }
