@@ -197,17 +197,40 @@ ClaimStatus ClaimClient::redeem_code(const PendingConfig& pending, std::string_v
 ClaimStatus ClaimClient::claim(const PendingConfig& pending, std::string_view device_id,
                                ClaimResult& result) const {
   result = {};
-  if (device_id.empty() || device_id.size() > 128 || !pending.claim_code.view().empty() ||
-      pending.claim_authorization.view().empty()) {
+  if (device_id.empty() || device_id.size() > 128) return ClaimStatus::setup_required;
+
+  // Reload the canonical pending phase on every retry. After a human code is
+  // redeemed, persist the opaque authorization before attempting credential
+  // issuance; a reboot therefore resumes from authorization rather than trying
+  // to replay the one-time human code.
+  PendingConfig effective = pending;
+  ProvisioningStore persistence;
+  PendingConfig persisted{};
+  if (persistence.load_pending(persisted)) effective = persisted;
+
+  if (!effective.claim_code.view().empty()) {
+    ClaimAuthorizationResult authorization{};
+    const ClaimStatus redemption = redeem_code(effective, device_id, authorization);
+    if (redemption != ClaimStatus::success) return redemption;
+    effective.claim_authorization.value.fill('\0');
+    if (!copy_fixed(authorization.authorization_view(), effective.claim_authorization.value.data(),
+                    effective.claim_authorization.value.size())) {
+      return ClaimStatus::retryable;
+    }
+    effective.claim_code.value.fill('\0');
+    if (!persistence.save_pending(effective)) return ClaimStatus::retryable;
+  }
+
+  if (!effective.claim_code.view().empty() || effective.claim_authorization.view().empty()) {
     return ClaimStatus::setup_required;
   }
   std::array<char, 640> url{};
-  if (!owner_claim_url(pending.server_url.view(), url)) return ClaimStatus::setup_required;
+  if (!owner_claim_url(effective.server_url.view(), url)) return ClaimStatus::setup_required;
 
   cJSON* request = cJSON_CreateObject();
   if (request == nullptr) return ClaimStatus::retryable;
   const std::string owned_device(device_id);
-  const std::string owned_bootstrap(pending.bootstrap_id.view());
+  const std::string owned_bootstrap(effective.bootstrap_id.view());
   cJSON_AddStringToObject(request, "device_id", owned_device.c_str());
   cJSON_AddStringToObject(request, "bootstrap_id", owned_bootstrap.c_str());
   char* encoded = cJSON_PrintUnformatted(request);
@@ -216,8 +239,8 @@ ClaimStatus ClaimClient::claim(const PendingConfig& pending, std::string_view de
   const std::string body(encoded);
   cJSON_free(encoded);
 
-  const HttpResult response = post_json(url.data(), pending.claim_authorization.view(),
-                                        pending.idempotency_key.view(), body);
+  const HttpResult response = post_json(url.data(), effective.claim_authorization.view(),
+                                        effective.idempotency_key.view(), body);
   const ClaimStatus status = classify_claim_status(response.status);
   if (status != ClaimStatus::success) return status;
 
