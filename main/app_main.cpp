@@ -4,6 +4,7 @@
 #include "companion/esp_sr_audio_frontend.hpp"
 #include "companion/gpio_button.hpp"
 #include "companion/ota_manager.hpp"
+#include "companion/provisioning_fsm.hpp"
 #include "companion/provisioning_store.hpp"
 #include "companion/setup_portal.hpp"
 #include "companion/ssd1306_display.hpp"
@@ -84,9 +85,10 @@ void show_portal_access(companion::Ssd1306Display& display,
 
 [[noreturn]] void run_setup_portal(companion::Ssd1306Display& display,
                                    const companion::provisioning::ProvisioningStore& store,
-                                   std::string_view device_suffix) {
+                                   std::string_view device_suffix,
+                                   std::string_view device_id) {
   companion::provisioning::SetupPortal portal;
-  if (!portal.start(device_suffix)) {
+  if (!portal.start(device_suffix, device_id)) {
     display.show(companion::UiState::error, "SETUP AP ERROR");
     while (true) vTaskDelay(portMAX_DELAY);
   }
@@ -142,7 +144,7 @@ void show_portal_access(companion::Ssd1306Display& display,
 [[noreturn]] void run_claim_phase(companion::Ssd1306Display& display,
                                   companion::WifiStation& wifi,
                                   const companion::provisioning::ProvisioningStore& store,
-                                  const companion::provisioning::PendingConfig& pending,
+                                  companion::provisioning::PendingConfig pending,
                                   std::string_view device_id) {
   const bool initially_connected = wifi.connect(pending.wifi_ssid.view(), pending.wifi_password.view());
   if (!initially_connected) display.show(companion::UiState::connecting, "WIFI RETRY");
@@ -168,6 +170,35 @@ void show_portal_access(companion::Ssd1306Display& display,
       vTaskDelay(pdMS_TO_TICKS(250));
       continue;
     }
+
+    // Production setup persists the human code first. After network/time are
+    // trustworthy, exchange it once for the existing opaque claim authorization
+    // and persist that authorization before it can ever be used as a Bearer.
+    if (companion::provisioning::valid_human_claim_code(pending.claim_authorization.view())) {
+      display.show(companion::UiState::connecting, "VERIFY CODE");
+      const auto exchange = claims.exchange_claim_code(pending, device_id);
+      if (exchange == companion::provisioning::ClaimStatus::setup_required) {
+        if (!store.clear()) {
+          display.show(companion::UiState::error, "SETUP RESET ERROR");
+          while (true) vTaskDelay(portMAX_DELAY);
+        }
+        restart_after_message(display, "CODE EXPIRED");
+      }
+      if (exchange == companion::provisioning::ClaimStatus::owner_recovery_required) {
+        display.show(companion::UiState::error, "CODE CONFLICT");
+        while (true) vTaskDelay(portMAX_DELAY);
+      }
+      if (exchange != companion::provisioning::ClaimStatus::success) {
+        display.show(companion::UiState::connecting, "CODE RETRY");
+        next_claim = now + 10'000;
+        continue;
+      }
+      if (!store.save_pending(pending)) {
+        display.show(companion::UiState::error, "CODE SAVE ERROR");
+        while (true) vTaskDelay(portMAX_DELAY);
+      }
+    }
+
     display.show(companion::UiState::connecting, "CLAIMING");
     companion::provisioning::ClaimResult result{};
     const auto status = claims.claim(pending, device_id, result);
@@ -188,10 +219,10 @@ void show_portal_access(companion::Ssd1306Display& display,
       restart_after_message(display, "SETUP REQUIRED");
     }
     if (status == companion::provisioning::ClaimStatus::owner_recovery_required) {
-      // 409/410 can mean backend ownership or a committed delivery already
-      // exists. Never loop a fresh claim or silently transfer ownership.
-      ESP_LOGW(kTag, "owner recovery required before device claim can continue");
-      display.show(companion::UiState::error, "OWNER RECOVERY");
+      // Same-owner recovery is handled by the authoritative backend transaction.
+      // A remaining conflict therefore cannot be solved by a local retry.
+      ESP_LOGW(kTag, "device claim ownership conflict");
+      display.show(companion::UiState::error, "OWNER CONFLICT");
       while (true) vTaskDelay(portMAX_DELAY);
     }
     display.show(companion::UiState::connecting, "CLAIM RETRY");
@@ -280,7 +311,7 @@ extern "C" void app_main() {
   }
 
   if (persisted == provisioning::PersistedState::unprovisioned) {
-    run_setup_portal(display, provisioning_store, device_suffix.data());
+    run_setup_portal(display, provisioning_store, device_suffix.data(), device_id.data());
   }
   if (persisted == provisioning::PersistedState::pending_claim) {
     provisioning::PendingConfig pending{};
