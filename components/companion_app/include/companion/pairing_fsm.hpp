@@ -113,10 +113,14 @@ public:
   }
 
   // message_id from pairing.session_created is the participant-specific nonce.
+  // A peer may receive this while still advertising/scanning; the initiator sees
+  // it after commit_candidate(). Both paths converge on the same confirmation
+  // state without trusting a BLE identity as authority.
   bool session_created(uint64_t now_ms, std::string_view session_id,
                        std::string_view confirmation_nonce,
                        uint64_t server_expiry_ms) {
-    if (!active_at(now_ms) || state_ != State::session_pending ||
+    if (!active_at(now_ms) ||
+        (state_ != State::session_pending && state_ != State::discovering) ||
         session_id.empty() || session_id.size() > 128 ||
         confirmation_nonce.size() < 16 || confirmation_nonce.size() > 256 ||
         server_expiry_ms <= now_ms) {
