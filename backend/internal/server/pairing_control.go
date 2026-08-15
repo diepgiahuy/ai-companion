@@ -61,14 +61,26 @@ func (s *session) handlePairingControl(ctx context.Context, data []byte) (bool, 
 		if value.Initiator != authenticated {
 			return true, pairing.ErrUnauthorized
 		}
+		candidateDeviceID := value.CandidateDeviceID
+		if pairing.ValidDiscoveryID(candidateDeviceID) {
+			resolved, err := service.ResolveCandidate(ctx, candidateDeviceID)
+			if err != nil {
+				return true, err
+			}
+			candidateDeviceID = resolved.DeviceID
+		}
+		if candidateDeviceID == s.deviceID {
+			return true, pairing.ErrUnauthorized
+		}
 		// The peer must have an authenticated active Companion session to receive
 		// its participant-specific confirmation nonce. Enrollment/ownership is
-		// rechecked transactionally by the pairing repository.
-		if len(s.hub.targets("", value.CandidateDeviceID)) == 0 {
+		// rechecked transactionally by the pairing repository. Rotating BLE
+		// pseudonyms are resolved server-side before this stable-ID lookup.
+		if len(s.hub.targets("", candidateDeviceID)) == 0 {
 			return true, pairing.ErrDeviceUnavailable
 		}
 		return true, s.processInbound(envelope.MessageID, data, func() error {
-			created, _, err := service.Create(ctx, sessionPairingParticipant(s), value.CandidateDeviceID, value.ProximityEvidenceID, envelope.IdempotencyKey)
+			created, _, err := service.Create(ctx, sessionPairingParticipant(s), candidateDeviceID, value.ProximityEvidenceID, envelope.IdempotencyKey)
 			if err != nil {
 				return err
 			}
