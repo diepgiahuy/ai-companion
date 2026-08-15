@@ -66,7 +66,7 @@ BootGesture boot_gesture(companion::GpioButton& button,
 
 void show_portal_access(companion::Ssd1306Display& display,
                         const companion::provisioning::SetupPortal& portal,
-                        uint32_t& frame, uint64_t now) {
+                        uint32_t& frame) {
   std::array<char, 24> line{};
   switch (frame++ % 3) {
   case 0:
@@ -79,7 +79,6 @@ void show_portal_access(companion::Ssd1306Display& display,
     std::snprintf(line.data(), line.size(), "GO 192.168.4.1");
     break;
   }
-  (void)now;
   display.show(companion::UiState::connecting, line.data());
 }
 
@@ -96,7 +95,7 @@ void show_portal_access(companion::Ssd1306Display& display,
   while (true) {
     const uint64_t now = now_ms();
     if (now >= next_render) {
-      show_portal_access(display, portal, frame, now);
+      show_portal_access(display, portal, frame);
       next_render = now + 2'000;
     }
     companion::provisioning::PendingConfig pending{};
@@ -125,7 +124,7 @@ void show_portal_access(companion::Ssd1306Display& display,
   while (true) {
     const uint64_t now = now_ms();
     if (now >= next_render) {
-      show_portal_access(display, portal, frame, now);
+      show_portal_access(display, portal, frame);
       next_render = now + 2'000;
     }
     companion::provisioning::WifiConfig wifi{};
@@ -171,12 +170,29 @@ void show_portal_access(companion::Ssd1306Display& display,
     }
     display.show(companion::UiState::connecting, "CLAIMING");
     companion::provisioning::ClaimResult result{};
-    if (claims.claim(pending, device_id, result)) {
+    const auto status = claims.claim(pending, device_id, result);
+    if (status == companion::provisioning::ClaimStatus::success) {
       if (!store.commit_runtime(pending, result.credential_view())) {
         display.show(companion::UiState::error, "CLAIM SAVE ERROR");
         while (true) vTaskDelay(portMAX_DELAY);
       }
       restart_after_message(display, "CLAIMED");
+    }
+    if (status == companion::provisioning::ClaimStatus::setup_required) {
+      // Expired/invalid claim authorization means the pending setup must be
+      // re-entered. No long-lived credential has been accepted locally yet.
+      if (!store.clear()) {
+        display.show(companion::UiState::error, "SETUP RESET ERROR");
+        while (true) vTaskDelay(portMAX_DELAY);
+      }
+      restart_after_message(display, "SETUP REQUIRED");
+    }
+    if (status == companion::provisioning::ClaimStatus::owner_recovery_required) {
+      // 409/410 can mean backend ownership or a committed delivery already
+      // exists. Never loop a fresh claim or silently transfer ownership.
+      ESP_LOGW(kTag, "owner recovery required before device claim can continue");
+      display.show(companion::UiState::error, "OWNER RECOVERY");
+      while (true) vTaskDelay(portMAX_DELAY);
     }
     display.show(companion::UiState::connecting, "CLAIM RETRY");
     next_claim = now + 10'000;
