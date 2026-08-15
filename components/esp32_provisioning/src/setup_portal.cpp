@@ -16,7 +16,8 @@ namespace companion::provisioning {
 namespace {
 constexpr size_t kMaximumBodyBytes = 4 * 1024;
 constexpr char kNonceHeader[] = "X-Companion-Setup-Nonce";
-constexpr char kHtml[] = R"HTML(<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>Companion Setup</title><style>body{font-family:sans-serif;max-width:34rem;margin:2rem auto;padding:0 1rem}label{display:block;margin:.8rem 0}input{width:100%;padding:.6rem;box-sizing:border-box}button{padding:.7rem 1rem}</style><h1>Companion Setup</h1><form id=f><label>Wi-Fi SSID<input name=wifi_ssid required maxlength=32></label><label>Wi-Fi password<input name=wifi_password type=password maxlength=63></label><label>Companion WSS URL<input name=server_url required placeholder="wss://..." maxlength=512></label><label>Bootstrap ID<input name=bootstrap_id required maxlength=128></label><label>Claim authorization<input name=claim_authorization type=password required maxlength=1024></label><label>Idempotency key<input name=idempotency_key required minlength=8 maxlength=128></label><button>Save and reboot</button></form><pre id=o></pre><script>let nonce='';async function setupNonce(){const r=await fetch('/nonce',{cache:'no-store'});if(!r.ok)throw new Error('nonce');nonce=(await r.text()).trim()}setupNonce().catch(()=>o.textContent='Setup session unavailable. Reload this page.');f.onsubmit=async e=>{e.preventDefault();try{if(!nonce)await setupNonce();o.textContent='Saving...';const x=Object.fromEntries(new FormData(f));const r=await fetch('/configure',{method:'POST',headers:{'Content-Type':'application/json','X-Companion-Setup-Nonce':nonce},body:JSON.stringify(x)});o.textContent=r.ok?'Saved. Companion will reboot.':'Invalid or expired setup session.'}catch(_){o.textContent='Setup session unavailable. Reload this page.'}}</script>)HTML";
+constexpr char kFullHtml[] = R"HTML(<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>Companion Setup</title><style>body{font-family:sans-serif;max-width:34rem;margin:2rem auto;padding:0 1rem}label{display:block;margin:.8rem 0}input{width:100%;padding:.6rem;box-sizing:border-box}button{padding:.7rem 1rem}</style><h1>Companion Setup</h1><form id=f><label>Wi-Fi SSID<input name=wifi_ssid required maxlength=32></label><label>Wi-Fi password<input name=wifi_password type=password maxlength=63></label><label>Companion WSS URL<input name=server_url required placeholder="wss://..." maxlength=512></label><label>Bootstrap ID<input name=bootstrap_id required maxlength=128></label><label>Claim authorization<input name=claim_authorization type=password required maxlength=1024></label><label>Idempotency key<input name=idempotency_key required minlength=8 maxlength=128></label><button>Save and reboot</button></form><pre id=o></pre><script>let nonce='';async function setupNonce(){const r=await fetch('/nonce',{cache:'no-store'});if(!r.ok)throw new Error('nonce');nonce=(await r.text()).trim()}setupNonce().catch(()=>o.textContent='Setup session unavailable. Reload this page.');f.onsubmit=async e=>{e.preventDefault();try{if(!nonce)await setupNonce();o.textContent='Saving...';const x=Object.fromEntries(new FormData(f));const r=await fetch('/configure',{method:'POST',headers:{'Content-Type':'application/json','X-Companion-Setup-Nonce':nonce},body:JSON.stringify(x)});o.textContent=r.ok?'Saved. Companion will reboot.':'Invalid or expired setup session.'}catch(_){o.textContent='Setup session unavailable. Reload this page.'}}</script>)HTML";
+constexpr char kWifiHtml[] = R"HTML(<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>Companion Wi-Fi</title><style>body{font-family:sans-serif;max-width:34rem;margin:2rem auto;padding:0 1rem}label{display:block;margin:.8rem 0}input{width:100%;padding:.6rem;box-sizing:border-box}button{padding:.7rem 1rem}</style><h1>Change Companion Wi-Fi</h1><p>Backend identity and device credential will be preserved.</p><form id=f><label>Wi-Fi SSID<input name=wifi_ssid required maxlength=32></label><label>Wi-Fi password<input name=wifi_password type=password maxlength=63></label><button>Save Wi-Fi and reboot</button></form><pre id=o></pre><script>let nonce='';async function setupNonce(){const r=await fetch('/nonce',{cache:'no-store'});if(!r.ok)throw new Error('nonce');nonce=(await r.text()).trim()}setupNonce().catch(()=>o.textContent='Setup session unavailable. Reload this page.');f.onsubmit=async e=>{e.preventDefault();try{if(!nonce)await setupNonce();o.textContent='Saving...';const x=Object.fromEntries(new FormData(f));const r=await fetch('/configure',{method:'POST',headers:{'Content-Type':'application/json','X-Companion-Setup-Nonce':nonce},body:JSON.stringify(x)});o.textContent=r.ok?'Saved. Companion will reboot.':'Invalid or expired setup session.'}catch(_){o.textContent='Setup session unavailable. Reload this page.'}}</script>)HTML";
 
 template <size_t N>
 bool copy_json_string(const cJSON* root, const char* name, FixedSecret<N>& output) {
@@ -34,6 +35,10 @@ bool validate_pending(const PendingConfig& pending) {
          valid_pending_claim(PendingClaimView{
              pending.bootstrap_id.view(), pending.claim_authorization.view(),
              pending.idempotency_key.view(), pending.server_url.view()});
+}
+
+bool validate_wifi(const WifiConfig& wifi) {
+  return valid_wifi(wifi.ssid.view(), wifi.password.view());
 }
 
 void random_password(std::array<char, 17>& output) {
@@ -67,9 +72,19 @@ std::string_view SetupPortal::password() const {
 }
 
 bool SetupPortal::start(std::string_view device_suffix) {
+  return start_impl(device_suffix, false);
+}
+
+bool SetupPortal::start_wifi_only(std::string_view device_suffix) {
+  return start_impl(device_suffix, true);
+}
+
+bool SetupPortal::start_impl(std::string_view device_suffix, bool wifi_only) {
   if (device_suffix.empty()) return false;
   configured_.store(false);
   pending_ = {};
+  wifi_ = {};
+  wifi_only_ = wifi_only;
   ssid_.fill('\0');
   password_.fill('\0');
   session_nonce_.fill('\0');
@@ -128,17 +143,28 @@ bool SetupPortal::start(std::string_view device_suffix) {
 }
 
 bool SetupPortal::take_pending(PendingConfig& out) {
-  if (!configured_.exchange(false)) return false;
+  if (wifi_only_ || !configured_.exchange(false)) return false;
   out = pending_;
   pending_ = {};
   session_nonce_.fill('\0');
   return true;
 }
 
+bool SetupPortal::take_wifi(WifiConfig& out) {
+  if (!wifi_only_ || !configured_.exchange(false)) return false;
+  out = wifi_;
+  wifi_ = {};
+  session_nonce_.fill('\0');
+  return true;
+}
+
 esp_err_t SetupPortal::handle_index(httpd_req_t* request) {
+  if (request == nullptr || request->user_ctx == nullptr) return ESP_FAIL;
+  auto* portal = static_cast<SetupPortal*>(request->user_ctx);
   httpd_resp_set_type(request, "text/html; charset=utf-8");
   httpd_resp_set_hdr(request, "Cache-Control", "no-store");
-  return httpd_resp_send(request, kHtml, HTTPD_RESP_USE_STRLEN);
+  return httpd_resp_send(request, portal->wifi_only_ ? kWifiHtml : kFullHtml,
+                         HTTPD_RESP_USE_STRLEN);
 }
 
 esp_err_t SetupPortal::handle_nonce(httpd_req_t* request) {
@@ -187,20 +213,31 @@ esp_err_t SetupPortal::configure(httpd_req_t* request) {
     httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST, "invalid setup data");
     return ESP_OK;
   }
-  PendingConfig candidate{};
-  const bool ok = copy_json_string(root, "wifi_ssid", candidate.wifi_ssid) &&
-                  copy_json_string(root, "wifi_password", candidate.wifi_password) &&
-                  copy_json_string(root, "server_url", candidate.server_url) &&
-                  copy_json_string(root, "bootstrap_id", candidate.bootstrap_id) &&
-                  copy_json_string(root, "claim_authorization", candidate.claim_authorization) &&
-                  copy_json_string(root, "idempotency_key", candidate.idempotency_key) &&
-                  validate_pending(candidate);
+
+  bool ok = false;
+  if (wifi_only_) {
+    WifiConfig candidate{};
+    ok = copy_json_string(root, "wifi_ssid", candidate.ssid) &&
+         copy_json_string(root, "wifi_password", candidate.password) &&
+         validate_wifi(candidate);
+    if (ok) wifi_ = candidate;
+  } else {
+    PendingConfig candidate{};
+    ok = copy_json_string(root, "wifi_ssid", candidate.wifi_ssid) &&
+         copy_json_string(root, "wifi_password", candidate.wifi_password) &&
+         copy_json_string(root, "server_url", candidate.server_url) &&
+         copy_json_string(root, "bootstrap_id", candidate.bootstrap_id) &&
+         copy_json_string(root, "claim_authorization", candidate.claim_authorization) &&
+         copy_json_string(root, "idempotency_key", candidate.idempotency_key) &&
+         validate_pending(candidate);
+    if (ok) pending_ = candidate;
+  }
   cJSON_Delete(root);
   if (!ok) {
     httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST, "invalid setup data");
     return ESP_OK;
   }
-  pending_ = candidate;
+
   configured_.store(true);
   httpd_resp_set_hdr(request, "Cache-Control", "no-store");
   httpd_resp_sendstr(request, "saved");
