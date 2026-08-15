@@ -6,7 +6,9 @@ on:
       - "db/postgres/**"
       - "ops/postgres/**"
       - "backend/internal/pgstore/**"
+      - "backend/internal/jobs/**"
       - "backend/cmd/companiond/**"
+      - "backend/cmd/companion-river-migrate/**"
       - "backend/cmd/companion-migrate/**"
       - "backend/go.mod"
       - "backend/go.sum"
@@ -74,6 +76,21 @@ jobs:
             --dir file:///migrations \
             --url 'postgres://companion:companion@companion-pg:5432/companion?sslmode=disable'
 
+      - name: Apply and validate River-owned schema
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/postgres-river
+          docker run --rm --network host \
+            -v "$PWD:/src" -w /src/backend golang:1.26.6-bookworm \
+            go run ./cmd/companion-river-migrate up \
+            --database-url 'postgres://companion:companion@127.0.0.1:55432/companion?sslmode=disable' \
+            | tee artifacts/postgres-river/migrate-up.json
+          docker run --rm --network host \
+            -v "$PWD:/src" -w /src/backend golang:1.26.6-bookworm \
+            go run ./cmd/companion-river-migrate validate \
+            --database-url 'postgres://companion:companion@127.0.0.1:55432/companion?sslmode=disable' \
+            | tee artifacts/postgres-river/migrate-validate.json
+
       - name: Configure least-privilege application role
         run: |
           set -euo pipefail
@@ -105,6 +122,30 @@ jobs:
             -e COMPANION_POSTGRES_TEST_DSN='postgres://companion_app:companion_app_test@127.0.0.1:55432/companion?sslmode=disable' \
             golang:1.26.6-bookworm \
             sh -c 'set -eu; go test ./internal/pgstore -count=1 -timeout=2m'
+
+      - name: Prove River transaction and worker lifecycle
+        run: |
+          set -euo pipefail
+          docker run --rm --network host \
+            -v "$PWD:/src" -w /src/backend \
+            -e COMPANION_RIVER_TEST_DSN='postgres://companion_app:companion_app_test@127.0.0.1:55432/companion?sslmode=disable' \
+            golang:1.26.6-bookworm \
+            sh -c 'set -eu; go test -json ./internal/jobs -run Integration -count=1 -timeout=2m' \
+            | tee artifacts/postgres-river/integration-tests.jsonl
+
+      - name: Record River operational state
+        run: |
+          set -euo pipefail
+          postgres_version="$(docker exec companion-pg psql -v ON_ERROR_STOP=1 -At -U companion -d companion -c 'SHOW server_version;')"
+          database_bytes="$(docker exec companion-pg psql -v ON_ERROR_STOP=1 -At -U companion -d companion -c 'SELECT pg_database_size(current_database());')"
+          river_versions="$(docker exec companion-pg psql -v ON_ERROR_STOP=1 -At -U companion -d companion -c 'SELECT string_agg(version::text,'"'"','"'"' ORDER BY version) FROM river.river_migration WHERE line='"'"'main'"'"';')"
+          role_flags="$(docker exec companion-pg psql -v ON_ERROR_STOP=1 -At -U companion -d companion -c "SELECT rolsuper::int || ':' || rolcreatedb::int || ':' || rolcreaterole::int || ':' || has_schema_privilege('companion_app','river','CREATE')::int FROM pg_roles WHERE rolname='companion_app';")"
+          job_states="$(docker exec companion-pg psql -v ON_ERROR_STOP=1 -At -U companion -d companion -c "SELECT COALESCE(json_object_agg(state,total),'{}') FROM (SELECT state,count(*) AS total FROM river.river_job GROUP BY state ORDER BY state) states;")"
+          printf '{"schema_version":1,"source_head":"%s","postgres":"%s","database_bytes":%s,"river_migrations":"%s","runtime_role":"companion_app","role_flags":"%s","job_states":%s}\n' \
+            "$GITHUB_SHA" "$postgres_version" "$database_bytes" "$river_versions" "$role_flags" "$job_states" \
+            | tee artifacts/postgres-river/operations.json
+          test "$role_flags" = "0:0:0:0"
+          test "$river_versions" = "1,2,3,4,5,6,7"
 
       - name: Prove application server and ToolRegistry on PostgreSQL only
         run: |
@@ -203,3 +244,19 @@ jobs:
           after_outbox="$(docker exec companion-pg psql -v ON_ERROR_STOP=1 -At -U companion -d companion -c "SELECT count(*) FROM outbox;")"
           test "$before_idempotency" = "$after_idempotency"
           test "$before_outbox" = "$after_outbox"
+
+      - name: Collect PostgreSQL recovery evidence
+        if: always()
+        run: |
+          mkdir -p artifacts/postgres-river
+          cp .tmp-postgres-restore-evidence.json artifacts/postgres-river/ 2>/dev/null || true
+          cp .tmp-postgres-rollback-evidence.json artifacts/postgres-river/ 2>/dev/null || true
+
+      - name: Upload PostgreSQL and River evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: postgres-river-${{ github.sha }}
+          path: artifacts/postgres-river/
+          if-no-files-found: error
+          retention-days: 14

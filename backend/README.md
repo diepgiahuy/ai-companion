@@ -26,9 +26,9 @@ The admin credential endpoint emits a raw credential once; PostgreSQL stores its
 
 PostgreSQL is the sole authoritative product database. `companiond` requires `COMPANION_DATABASE_URL`, opens a bounded pgx pool, and verifies the exact completed Atlas revision plus required outbox triggers before runtime initialization. It never creates or migrates schema.
 
-There is no SQLite/PostgreSQL selector, fallback, shadow read, or dual write. SQLite remains only in the explicit `companion-migrate` cutover/recovery command and isolated tests. River remains pending until the PostgreSQL hard-cut transaction boundary is proven by hosted integration gates.
+There is no SQLite/PostgreSQL selector, fallback, shadow read, or dual write. SQLite remains only in the explicit `companion-migrate` cutover/recovery command and isolated tests. River uses the same pgx pool for durable retention jobs, validates its separately owned schema at startup, and never runs migrations or reindex DDL from the application role.
 
-Run `ops/postgres/configure_runtime_role.psql` as the migration owner after each Atlas apply to create/refresh a non-DDL application role and grant it access to the current schema objects. `companiond` rejects superusers and roles that can create databases, roles, or objects in the `public` schema.
+Run `companion-river-migrate up` with the migration owner after Atlas, then run `ops/postgres/configure_runtime_role.psql` to create/refresh the non-DDL application role. `companiond` rejects superusers and roles that can create databases, roles, or objects in `public`; River reindexing is disabled because the application role owns no DDL.
 
 ## Capability boundary
 

@@ -3,8 +3,8 @@
 ESP32-S3 personal voice companion with a Go backend, realtime audio, durable personal tools, typed UI state, replaceable AI providers, and an evidence-driven production rollout.
 
 > **Stable checkpoint:** [`CP-SW2.3-20260812`](https://github.com/diepgiahuy/ai-companion/tree/CP-SW2.3-20260812)
-> **Active baseline:** `main` includes protocol v2, Tier-1 evidence, repository governance and the ADK/auth single-path hard cut through merged PR #34; physical/provider gates remain unproven
-> **Updated:** 2026-08-14
+> **Active baseline:** `main` includes protocol v2, Tier-1 evidence, repository governance, the ADK/auth hard cut, and the PostgreSQL-only runtime hard cut; physical/provider gates remain unproven
+> **Updated:** 2026-08-15
 > **Truth rule:** README is the human-readable source of truth. `evidence/status.json` is the machine-verifiable backing for production claims. Mock/fake tests may verify logic, but they cannot promote a production gate to `passed`.
 
 This project is intentionally a **modular Go monolith + ESP32 firmware**, not a microservice demo. The LLM is a reasoning/composition component; authoritative personal state lives behind domain repositories/tools.
@@ -26,7 +26,7 @@ The table below distinguishes **implemented** from **production-proven**. A gree
 | Prompt regression quality | ⚪ unproven | Requires versioned real-model eval/red-team suite |
 | Destructive confirmation UX | ⚪ unproven | Exact tool+args authorization core implemented; durable user confirmation flow still needs proof |
 | Idempotency payload-conflict safety | ⚪ unproven | Same-key/different-payload conflict semantics not yet proven end-to-end |
-| PostgreSQL + Atlas/pgx + River | ⚪ unproven | PostgreSQL hard-cut code is implemented; hosted cutover/Tier-1 evidence and River job gates remain pending |
+| PostgreSQL + Atlas/pgx + River | ⚪ unproven | PostgreSQL hard cut and hosted Tier-1 are proven; River retention is implemented and remains unpromoted until its exact-head PostgreSQL 18.4 gate passes |
 | External MCP interoperability | ⚪ unproven | SDK bridge compiles; real external MCP contract test pending |
 | Tier-1 headless software device | 🟡 partial | Real Go `/v2/device` + production `CompanionApp`/protocol v2 + ADK Responses adapter; core scenarios, enrolled-auth lifecycle and representative expense/budget/note/journal/reminder/timer/memory mutations are deterministic orchestration gates; no provider/physical promotion |
 | Canonical protocol v2 | 🟡 partial | Backend, firmware and host share v2; Tier-1 proves v2 session/turn flow plus deterministic v1 rejection; physical-device evidence remains pending |
@@ -50,7 +50,7 @@ The current `main` branch includes foundations for the next production stages wi
 - **Expanded GitHub CI/CD** — module lock, race/vet, govulncheck, CodeQL, evidence truth gate, dependency review capability detection, release provenance foundation.
 - **Physical HIL workflow** — fail-closed ESP-IDF build/flash/serial test using `pytest-embedded`; it never falls back to a mock result and runs only when a maintainer manually selects a trusted ref and explicit device port.
 - **Tier-1 headless software device** — production C++ `CompanionApp` + protocol v2 connect to real `companiond` through a host-only WebSocket/libopus adapter; the harness covers reconnect/barge-in/replay/config, wrong/revoked device credentials, ADK tool loops, and representative authoritative mutations for expense/budget/note/journal/reminder/timer/memory. Deterministic providers remain `orchestration_only`.
-- **PostgreSQL authoritative composition** — `companiond` requires one `COMPANION_DATABASE_URL`, verifies the exact Atlas revision before runtime initialization, and has no SQLite product fallback/selector. SQLite remains only in explicit cutover/recovery tooling and isolated tests; hosted promotion evidence and River remain pending.
+- **PostgreSQL authoritative composition** — `companiond` requires one `COMPANION_DATABASE_URL`, verifies the exact Atlas revision before runtime initialization, and has no SQLite product fallback/selector. SQLite remains only in explicit cutover/recovery tooling and isolated tests. River owns durable retention execution on the active implementation branch, pending exact-head hosted promotion.
 - **Observability contract (#25 in progress)** — Companion-owned bounded/non-blocking event schema with safe session/turn/generation correlation, tool outcome timing and Tier-1 JSON snapshots; no hosted telemetry vendor is selected by the runtime contract.
 
 See merged PR #1 for the original implementation diff and deliberately unclaimed gates.
@@ -92,7 +92,7 @@ Capability + policy boundary
 Authoritative state
   ├─ PostgreSQL/pgx authoritative store
   ├─ Atlas-owned schema migrations
-  ├─ River durable jobs target
+  ├─ River durable retention jobs
   ├─ conversation store
   └─ memory / domain repositories
 ```

@@ -19,6 +19,7 @@ import (
 	"companion-server/internal/capability"
 	"companion-server/internal/controlplane"
 	"companion-server/internal/domain"
+	"companion-server/internal/jobs"
 	"companion-server/internal/observability"
 	"companion-server/internal/pipeline"
 	"companion-server/internal/privacy"
@@ -28,8 +29,8 @@ import (
 )
 
 const (
-	maximumControlQueue    = 32
-	maximumMediaQueue      = 24
+	maximumControlQueue     = 32
+	maximumMediaQueue       = 24
 	helloTimeout            = 10 * time.Second
 	sessionWorkerJoinMax    = 3 * time.Second
 	turnCancellationJoinMax = 2 * time.Second
@@ -52,6 +53,7 @@ type Server struct {
 	privacy           *privacy.Service
 	featureCatalog    *controlplane.FeatureCatalog
 	observer          observability.Recorder
+	jobControl        JobControl
 }
 
 type Option func(*Server)
@@ -83,6 +85,13 @@ func WithFeatureCatalog(c *controlplane.FeatureCatalog) Option {
 func WithAdminToken(token string) Option {
 	return func(s *Server) { s.adminToken = strings.TrimSpace(token) }
 }
+
+type JobControl interface {
+	EnqueueRetention(context.Context) (jobs.EnqueueResult, error)
+	MetricsSnapshot() jobs.MetricsSnapshot
+}
+
+func WithJobControl(control JobControl) Option { return func(s *Server) { s.jobControl = control } }
 
 type DeviceAuthenticator interface {
 	AuthenticateDevice(context.Context, string, string) (domain.Identity, bool, error)
@@ -183,7 +192,35 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("GET /v1/admin/modules", s.handleModulesGet)
 		mux.HandleFunc("PUT /v1/admin/modules/{id}", s.handleModulePut)
 	}
+	if s.jobControl != nil && s.adminToken != "" {
+		mux.HandleFunc("POST /v1/admin/jobs/retention", s.handleRetentionEnqueue)
+		mux.HandleFunc("GET /v1/admin/jobs/metrics", s.handleJobMetrics)
+	}
 	return mux
+}
+
+func (s *Server) handleRetentionEnqueue(w http.ResponseWriter, r *http.Request) {
+	if !s.adminOK(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	result, err := s.jobControl.EnqueueRetention(r.Context())
+	if err != nil {
+		http.Error(w, "retention enqueue failed", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	_ = json.NewEncoder(w).Encode(result)
+}
+
+func (s *Server) handleJobMetrics(w http.ResponseWriter, r *http.Request) {
+	if !s.adminOK(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(s.jobControl.MetricsSnapshot())
 }
 
 func (s *Server) authenticateDeviceRequest(ctx context.Context, request *http.Request) (domain.Identity, bool) {
