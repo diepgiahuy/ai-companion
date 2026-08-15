@@ -3,7 +3,6 @@ package ownerauth
 import (
 	"crypto/rand"
 	"encoding/json"
-	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -13,20 +12,14 @@ import (
 )
 
 const (
-	humanClaimMarker            = "human-code:"
-	humanClaimCodeLength        = 10
-	claimCodeAttemptsPerMinute  = 6
-	defaultHumanClaimCodeTTL    = 5 * time.Minute
+	humanClaimMarker           = "human-code:"
+	humanClaimCodeLength       = 10
+	claimCodeAttemptsPerMinute = 6
+	defaultHumanClaimCodeTTL   = 5 * time.Minute
 )
-
-var ErrClaimCodeRateLimited = errors.New("claim code rate limited")
 
 const humanClaimCodeAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 
-// claimCodeLimiter is intentionally process-local, like the short-lived owner
-// sessions and claim authorizations it protects. The code itself carries about
-// 50 bits of entropy; the limiter bounds online guessing without introducing a
-// durable recovery credential or another product identity store.
 var claimCodeLimiter = struct {
 	sync.Mutex
 	entries map[string]claimCodeAttemptWindow
@@ -36,6 +29,21 @@ type claimCodeAttemptWindow struct {
 	started time.Time
 	count   int
 }
+
+type claimCodeRedemption struct {
+	redemptionKey    string
+	rawAuthorization string
+	claim            ClaimAuthorization
+}
+
+// A consumed human code remains retryable only to the same device-generated
+// redemption ID. This closes the response-loss gap without making the human code
+// itself replayable after a successful redemption. State is deliberately
+// process-local and bounded by the same short ClaimTTL as owner claim auth.
+var claimCodeRedemptions = struct {
+	sync.Mutex
+	entries map[*Service]map[string]claimCodeRedemption
+}{entries: make(map[*Service]map[string]claimCodeRedemption)}
 
 func normalizeHumanClaimCode(raw string) string {
 	var b strings.Builder
@@ -81,11 +89,6 @@ func (s *Service) humanClaimTTL() time.Duration {
 	return defaultHumanClaimCodeTTL
 }
 
-// MintBoundHumanClaimCode produces the only human-transferred onboarding value.
-// The raw code is never stored: the existing claims map stores only tokenKey(code)
-// plus an owner/bootstrap/device binding. A code is not itself accepted by the
-// credential-issuance endpoint; it must be redeemed once into the existing opaque
-// claim-authorization contract.
 func (s *Service) MintBoundHumanClaimCode(rawSession, csrf, bootstrapID, deviceID string) (string, ClaimAuthorization, error) {
 	session, err := s.AuthenticateMutation(rawSession, csrf)
 	if err != nil {
@@ -124,20 +127,63 @@ func (s *Service) MintBoundHumanClaimCode(rawSession, csrf, bootstrapID, deviceI
 	return "", ClaimAuthorization{}, ErrInvalidClaim
 }
 
-// RedeemBoundHumanClaimCode consumes the human code exactly once and replaces it
-// with the existing high-entropy claim authorization. A lost credential-claim
-// response can then be retried with the opaque authorization and durable domain
-// idempotency without making the human code replayable.
-func (s *Service) RedeemBoundHumanClaimCode(rawCode, bootstrapID, deviceID string) (string, ClaimAuthorization, error) {
+func redemptionReplay(s *Service, codeKey, binding, redemptionID string, now time.Time) (string, ClaimAuthorization, bool) {
+	claimCodeRedemptions.Lock()
+	defer claimCodeRedemptions.Unlock()
+	serviceEntries := claimCodeRedemptions.entries[s]
+	if serviceEntries == nil {
+		return "", ClaimAuthorization{}, false
+	}
+	for key, entry := range serviceEntries {
+		if !entry.claim.ExpiresAt.After(now) {
+			delete(serviceEntries, key)
+		}
+	}
+	if len(serviceEntries) == 0 {
+		delete(claimCodeRedemptions.entries, s)
+		return "", ClaimAuthorization{}, false
+	}
+	entry, ok := serviceEntries[codeKey]
+	if !ok || entry.claim.BootstrapID != binding || entry.redemptionKey != tokenKey(redemptionID) {
+		return "", ClaimAuthorization{}, false
+	}
+	return entry.rawAuthorization, entry.claim, true
+}
+
+func rememberRedemption(s *Service, codeKey, redemptionID, rawAuthorization string, claim ClaimAuthorization) {
+	claimCodeRedemptions.Lock()
+	defer claimCodeRedemptions.Unlock()
+	serviceEntries := claimCodeRedemptions.entries[s]
+	if serviceEntries == nil {
+		serviceEntries = make(map[string]claimCodeRedemption)
+		claimCodeRedemptions.entries[s] = serviceEntries
+	}
+	serviceEntries[codeKey] = claimCodeRedemption{
+		redemptionKey:    tokenKey(redemptionID),
+		rawAuthorization: rawAuthorization,
+		claim:            claim,
+	}
+}
+
+// RedeemBoundHumanClaimCode consumes a human code once. A retry carrying the
+// same high-entropy device-generated redemption ID gets the same authorization;
+// a different redemption ID cannot replay a consumed code.
+func (s *Service) RedeemBoundHumanClaimCode(rawCode, bootstrapID, deviceID, redemptionID string) (string, ClaimAuthorization, error) {
 	code := normalizeHumanClaimCode(rawCode)
 	bootstrapID = strings.TrimSpace(bootstrapID)
 	deviceID = strings.TrimSpace(deviceID)
-	if code == "" || bootstrapID == "" || len(bootstrapID) > 128 || deviceID == "" || len(deviceID) > 128 {
+	redemptionID = strings.TrimSpace(redemptionID)
+	if code == "" || bootstrapID == "" || len(bootstrapID) > 128 || deviceID == "" || len(deviceID) > 128 ||
+		len(redemptionID) < 8 || len(redemptionID) > 128 {
 		return "", ClaimAuthorization{}, ErrInvalidClaim
 	}
 	key := tokenKey(code)
 	binding := claimBinding(bootstrapID, deviceID)
 	now := s.now()
+
+	if raw, claim, ok := redemptionReplay(s, key, binding, redemptionID, now); ok {
+		return raw, claim, nil
+	}
 
 	s.mu.Lock()
 	claim, ok := s.claims[key]
@@ -158,6 +204,7 @@ func (s *Service) RedeemBoundHumanClaimCode(rawCode, bootstrapID, deviceID strin
 	claim.BootstrapID = binding
 	s.claims[tokenKey(rawAuthorization)] = claim
 	s.mu.Unlock()
+	rememberRedemption(s, key, redemptionID, rawAuthorization, claim)
 	return rawAuthorization, claim, nil
 }
 
@@ -240,9 +287,10 @@ func (s *Service) HandleHumanClaimCodeRedeem(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	var request struct {
-		ClaimCode   string `json:"claim_code"`
-		BootstrapID string `json:"bootstrap_id"`
-		DeviceID    string `json:"device_id"`
+		ClaimCode    string `json:"claim_code"`
+		BootstrapID  string `json:"bootstrap_id"`
+		DeviceID     string `json:"device_id"`
+		RedemptionID string `json:"redemption_id"`
 	}
 	decoder := json.NewDecoder(io.LimitReader(r.Body, 4<<10))
 	decoder.DisallowUnknownFields()
@@ -250,12 +298,8 @@ func (s *Service) HandleHumanClaimCodeRedeem(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
-	raw, claim, err := s.RedeemBoundHumanClaimCode(request.ClaimCode, request.BootstrapID, request.DeviceID)
+	raw, claim, err := s.RedeemBoundHumanClaimCode(request.ClaimCode, request.BootstrapID, request.DeviceID, request.RedemptionID)
 	if err != nil {
-		if errors.Is(err, ErrClaimCodeRateLimited) {
-			http.Error(w, "too many attempts", http.StatusTooManyRequests)
-			return
-		}
 		http.Error(w, "invalid or expired claim code", http.StatusGone)
 		return
 	}
