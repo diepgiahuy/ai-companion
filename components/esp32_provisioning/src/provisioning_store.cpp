@@ -153,6 +153,22 @@ bool ProvisioningStore::commit_runtime(const PendingConfig& pending,
   return ok;
 }
 
+bool ProvisioningStore::update_wifi(const WifiConfig& wifi) const {
+  if (!valid_wifi(wifi.ssid.view(), wifi.password.view())) return false;
+  RuntimeConfig existing{};
+  if (!load_runtime(existing)) return false;
+
+  nvs_handle_t handle{};
+  if (nvs_open(kNamespace, NVS_READWRITE, &handle) != ESP_OK) return false;
+  // Preserve server_url + device_cred untouched. Force validating so the new
+  // network is not considered READY until the normal enrolled WSS path succeeds.
+  const bool ok = set_string(handle, kWifiSsid, wifi.ssid.view()) &&
+                  set_string(handle, kWifiPass, wifi.password.view()) &&
+                  set_string(handle, kState, "validating") && nvs_commit(handle) == ESP_OK;
+  nvs_close(handle);
+  return ok;
+}
+
 bool ProvisioningStore::mark_ready() const {
   RuntimeConfig runtime{};
   if (!load_runtime(runtime)) return false;
