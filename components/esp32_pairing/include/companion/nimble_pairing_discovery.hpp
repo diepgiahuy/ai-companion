@@ -63,6 +63,7 @@ private:
   alignas(portBYTE_ALIGNMENT)
       std::array<uint8_t, kDiscoveryQueueCapacity * sizeof(DiscoveryObservation)> queue_buffer_{};
   QueueHandle_t queue_{};
+  std::array<char, kDiscoveryAliasLength + 1> local_alias_{};
   std::atomic<bool> initialized_{false};
   std::atomic<bool> ready_{false};
   std::atomic<bool> active_{false};
