@@ -14,6 +14,7 @@ namespace companion::pairing {
 
 constexpr size_t kDiscoveryAliasLength = 19;
 constexpr size_t kDiscoveryQueueCapacity = 8;
+constexpr uint32_t kMaximumDiscoveryWindowMs = 60'000;
 
 inline bool valid_discovery_alias(std::string_view value) {
   if (value.size() != kDiscoveryAliasLength || !value.starts_with("CP-")) return false;
@@ -34,17 +35,10 @@ struct DiscoveryObservation {
   }
 };
 
-// Radio-only adapter. It sees only short-lived opaque aliases. Stable
-// owner/device IDs, credentials, relationship IDs and backend authorization do
-// not enter this component. RSSI is retained as evidence only; #100 owns
-// calibrated ranking/threshold policy.
 class NimblePairingDiscovery final {
 public:
   bool init();
   bool ready() const { return ready_.load(); }
-
-  // Non-connectable advertising + passive scanning. The window is hard-bounded
-  // to one minute by the public contract and every observation queue is fixed.
   bool start(std::string_view local_alias, uint32_t duration_ms);
   void stop();
   bool active() const { return active_.load(); }
@@ -56,6 +50,7 @@ private:
   static void on_sync();
   static void on_reset(int reason);
   static int gap_event(ble_gap_event* event, void* arg);
+  bool start_radio();
   void observe(const ble_gap_disc_desc& report);
 
   static NimblePairingDiscovery* instance_;
@@ -68,6 +63,7 @@ private:
   std::atomic<bool> ready_{false};
   std::atomic<bool> active_{false};
   std::atomic<uint32_t> dropped_{0};
+  uint32_t duration_ms_{};
   uint8_t own_addr_type_{};
 };
 
