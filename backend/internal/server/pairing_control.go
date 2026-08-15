@@ -34,39 +34,36 @@ func sessionPairingParticipant(s *session) pairing.Participant {
 }
 
 func (s *session) handlePairingControl(ctx context.Context, data []byte) (bool, error) {
-	message, err := protocol.Decode(data)
+	envelope, err := protocol.Decode(data)
 	if err != nil {
 		return false, nil
 	}
-	switch message.Type {
+	switch envelope.Type {
 	case protocol.PairingSessionCreateType, protocol.PairingConfirmationType, protocol.PairingRejectedType:
 	default:
 		return false, nil
 	}
-	if message.SessionID != s.id {
+	if envelope.SessionID != s.id {
 		return true, fmt.Errorf("session_id does not match")
 	}
-	envelope, payload, err := protocol.DecodeInteraction(data)
-	if err != nil {
-		return true, err
+	if envelope.IdempotencyKey == "" {
+		return true, fmt.Errorf("pairing mutation requires idempotency_key")
 	}
 	service := s.hub.pairing()
 	if service == nil {
 		return true, fmt.Errorf("pairing service unavailable")
 	}
 
-	switch value := payload.(type) {
-	case *protocol.PairingSessionCreate:
-		authenticated := protocolPairingParticipant(sessionPairingParticipant(s))
-		if value.Initiator != authenticated {
-			return true, pairing.ErrUnauthorized
+	switch envelope.Type {
+	case protocol.PairingSessionCreateType:
+		value, err := decodePairingCreate(envelope)
+		if err != nil {
+			return true, err
 		}
-		// Privacy boundary: CandidateDeviceID is deliberately interpreted as the
-		// peer's opaque active WebSocket session_id, not as a stable device ID.
-		// Firmware advertises that connection-scoped alias over BLE. Only the
-		// authenticated hub resolves it back to a stable device identity before
-		// entering the authoritative pairing service.
-		peerSession := s.hub.pairingDiscoveryTarget(value.CandidateDeviceID)
+		// Privacy boundary: the device submits only the peer's opaque active
+		// WebSocket session_id observed over BLE. The authenticated hub resolves
+		// that connection-scoped alias to the stable peer identity internally.
+		peerSession := s.hub.pairingDiscoveryTarget(value.CandidateDiscoveryID)
 		if peerSession == nil {
 			return true, pairing.ErrDeviceUnavailable
 		}
@@ -106,9 +103,10 @@ func (s *session) handlePairingControl(ctx context.Context, data []byte) (bool, 
 			return nil
 		})
 
-	case *protocol.PairingConfirmation:
-		if value.Participant != protocolPairingParticipant(sessionPairingParticipant(s)) {
-			return true, pairing.ErrUnauthorized
+	case protocol.PairingConfirmationType:
+		value, err := decodePairingConfirmation(envelope)
+		if err != nil {
+			return true, err
 		}
 		return true, s.processInbound(envelope.MessageID, data, func() error {
 			outcome, err := service.Confirm(ctx, sessionPairingParticipant(s), value.SessionID, value.ConfirmationNonce, envelope.IdempotencyKey)
@@ -130,9 +128,10 @@ func (s *session) handlePairingControl(ctx context.Context, data []byte) (bool, 
 			return s.pushPairingSucceeded(ctx, envelope, outcome.Session, outcome.RelationshipID)
 		})
 
-	case *protocol.PairingRejected:
-		if value.Reason != "user_declined" {
-			return true, pairing.ErrUnauthorized
+	case protocol.PairingRejectedType:
+		value, err := decodePairingReject(envelope)
+		if err != nil {
+			return true, err
 		}
 		return true, s.processInbound(envelope.MessageID, data, func() error {
 			rejected, _, err := service.Reject(ctx, sessionPairingParticipant(s), value.SessionID, value.Reason, envelope.IdempotencyKey)
