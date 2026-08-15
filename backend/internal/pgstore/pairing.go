@@ -68,49 +68,40 @@ func (s *Store) ConfirmPairingSession(ctx context.Context, mutation pairing.Conf
 		Key: mutation.IdempotencyKey, RequestHash: mutation.RequestHash,
 	}
 	outcome, err := RunIdempotent(ctx, s.pool, request, func(tx pgx.Tx) (any, error) {
-		var session pairing.Session
-		var initiatorConfirmed, peerConfirmed *time.Time
-		if err := tx.QueryRow(ctx, `
-			SELECT session_id,initiator_user_id,initiator_device_id,peer_user_id,peer_device_id,
-				proximity_evidence_id,initiator_nonce,peer_nonce,initiator_confirmed_at,peer_confirmed_at,
-				expires_at,COALESCE(relationship_id,''),state
-			FROM pairing_sessions WHERE session_id=$1 FOR UPDATE`, mutation.SessionID).Scan(
-			&session.ID, &session.Initiator.UserID, &session.Initiator.DeviceID,
-			&session.Peer.UserID, &session.Peer.DeviceID, &session.ProximityEvidenceID,
-			&session.InitiatorNonce, &session.PeerNonce, &initiatorConfirmed, &peerConfirmed,
-			&session.ExpiresAt, &session.RelationshipID, &session.State,
-		); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) { return nil, pairing.ErrInvalidConfirmation }
-			return nil, fmt.Errorf("load pairing session: %w", err)
-		}
-		session.InitiatorConfirmedAt = initiatorConfirmed
-		session.PeerConfirmedAt = peerConfirmed
-		if session.State != "pending" { return nil, pairing.ErrSessionClosed }
-		if !session.ExpiresAt.After(mutation.ConfirmedAt) { return nil, pairing.ErrSessionExpired }
-
+		session, err := loadPairingSessionForUpdate(ctx, tx, mutation.SessionID)
+		if err != nil { return nil, err }
 		isInitiator := mutation.Participant == session.Initiator
 		isPeer := mutation.Participant == session.Peer
 		if !isInitiator && !isPeer { return nil, pairing.ErrUnauthorized }
+		if session.State == "expired" {
+			return pairing.ConfirmationOutcome{Session: session}, nil
+		}
+		if session.State != "pending" { return nil, pairing.ErrSessionClosed }
+		if !session.ExpiresAt.After(mutation.ConfirmedAt) {
+			if _, err := tx.Exec(ctx, `UPDATE pairing_sessions SET state='expired',updated_at=now() WHERE session_id=$1`, session.ID); err != nil {
+				return nil, fmt.Errorf("expire pairing session: %w", err)
+			}
+			session.State = "expired"
+			return pairing.ConfirmationOutcome{Session: session}, nil
+		}
 		if (isInitiator && mutation.Nonce != session.InitiatorNonce) || (isPeer && mutation.Nonce != session.PeerNonce) {
 			return nil, pairing.ErrInvalidConfirmation
 		}
-		if (isInitiator && initiatorConfirmed != nil) || (isPeer && peerConfirmed != nil) {
+		if (isInitiator && session.InitiatorConfirmedAt != nil) || (isPeer && session.PeerConfirmedAt != nil) {
 			return nil, pairing.ErrInvalidConfirmation
 		}
 		if isInitiator {
-			initiatorConfirmed = &mutation.ConfirmedAt
+			session.InitiatorConfirmedAt = &mutation.ConfirmedAt
 			if _, err := tx.Exec(ctx, `UPDATE pairing_sessions SET initiator_confirmed_at=$2,updated_at=now() WHERE session_id=$1`, session.ID, mutation.ConfirmedAt); err != nil {
 				return nil, fmt.Errorf("record pairing confirmation: %w", err)
 			}
 		} else {
-			peerConfirmed = &mutation.ConfirmedAt
+			session.PeerConfirmedAt = &mutation.ConfirmedAt
 			if _, err := tx.Exec(ctx, `UPDATE pairing_sessions SET peer_confirmed_at=$2,updated_at=now() WHERE session_id=$1`, session.ID, mutation.ConfirmedAt); err != nil {
 				return nil, fmt.Errorf("record pairing confirmation: %w", err)
 			}
 		}
-		session.InitiatorConfirmedAt = initiatorConfirmed
-		session.PeerConfirmedAt = peerConfirmed
-		if initiatorConfirmed == nil || peerConfirmed == nil {
+		if session.InitiatorConfirmedAt == nil || session.PeerConfirmedAt == nil {
 			return pairing.ConfirmationOutcome{Session: session, Completed: false}, nil
 		}
 
@@ -157,6 +148,60 @@ func (s *Store) ConfirmPairingSession(ctx context.Context, mutation pairing.Conf
 	}
 	decoded.Replayed = outcome.Replayed
 	return decoded, nil
+}
+
+func (s *Store) RejectPairingSession(ctx context.Context, mutation pairing.RejectMutation) (pairing.Session, bool, error) {
+	request := idempotency.Request{
+		Actor: pairingActor(mutation.Participant.UserID, mutation.Participant.DeviceID), Operation: "pairing.session.reject",
+		Key: mutation.IdempotencyKey, RequestHash: mutation.RequestHash,
+	}
+	outcome, err := RunIdempotent(ctx, s.pool, request, func(tx pgx.Tx) (any, error) {
+		session, err := loadPairingSessionForUpdate(ctx, tx, mutation.SessionID)
+		if err != nil { return nil, err }
+		if mutation.Participant != session.Initiator && mutation.Participant != session.Peer {
+			return nil, pairing.ErrUnauthorized
+		}
+		if session.State == "expired" {
+			return session, nil
+		}
+		if session.State != "pending" { return nil, pairing.ErrSessionClosed }
+		if !session.ExpiresAt.After(mutation.RejectedAt) {
+			if _, err := tx.Exec(ctx, `UPDATE pairing_sessions SET state='expired',updated_at=now() WHERE session_id=$1`, session.ID); err != nil {
+				return nil, fmt.Errorf("expire pairing session: %w", err)
+			}
+			session.State = "expired"
+			return session, nil
+		}
+		if _, err := tx.Exec(ctx, `UPDATE pairing_sessions SET state='cancelled',updated_at=now() WHERE session_id=$1`, session.ID); err != nil {
+			return nil, fmt.Errorf("reject pairing session: %w", err)
+		}
+		session.State = "cancelled"
+		return session, nil
+	})
+	if err != nil { return pairing.Session{}, false, err }
+	var session pairing.Session
+	if err := json.Unmarshal([]byte(outcome.JSON), &session); err != nil {
+		return pairing.Session{}, false, fmt.Errorf("decode pairing rejection outcome: %w", err)
+	}
+	return session, outcome.Replayed, nil
+}
+
+func loadPairingSessionForUpdate(ctx context.Context, tx pgx.Tx, sessionID string) (pairing.Session, error) {
+	var session pairing.Session
+	if err := tx.QueryRow(ctx, `
+		SELECT session_id,initiator_user_id,initiator_device_id,peer_user_id,peer_device_id,
+			proximity_evidence_id,initiator_nonce,peer_nonce,initiator_confirmed_at,peer_confirmed_at,
+			expires_at,COALESCE(relationship_id,''),state
+		FROM pairing_sessions WHERE session_id=$1 FOR UPDATE`, sessionID).Scan(
+		&session.ID, &session.Initiator.UserID, &session.Initiator.DeviceID,
+		&session.Peer.UserID, &session.Peer.DeviceID, &session.ProximityEvidenceID,
+		&session.InitiatorNonce, &session.PeerNonce, &session.InitiatorConfirmedAt, &session.PeerConfirmedAt,
+		&session.ExpiresAt, &session.RelationshipID, &session.State,
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) { return pairing.Session{}, pairing.ErrInvalidConfirmation }
+		return pairing.Session{}, fmt.Errorf("load pairing session: %w", err)
+	}
+	return session, nil
 }
 
 func pairingActor(userID, deviceID string) string {
