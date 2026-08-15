@@ -45,6 +45,49 @@ jobs:
         run: |
           set -euo pipefail
           test -n "${PROJECT_TOKEN:-}" || { echo "::error::PROJECT_TOKEN is not configured"; exit 1; }
+
+      - name: Ensure canonical Project fields exist
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+        run: |
+          set -euo pipefail
+          project_json="$(gh project list --owner "${PROJECT_OWNER}" --limit 100 --format json)"
+          project_number="$(jq -r --arg title "${PROJECT_TITLE}" '[(.projects // .)[] | select(.title == $title) | .number][0] // empty' <<<"${project_json}")"
+          if [[ -z "${project_number}" ]]; then
+            project_number="$(gh project create --owner "${PROJECT_OWNER}" --title "${PROJECT_TITLE}" --format json --jq '.number')"
+          fi
+
+          field_json="$(gh project field-list "${project_number}" --owner "${PROJECT_OWNER}" --limit 100 --format json)"
+          has_field() {
+            jq -e --arg name "$1" 'any((.fields // .)[]; .name == $name)' <<<"${field_json}" >/dev/null
+          }
+          create_select() {
+            local name="$1" options="$2"
+            if ! has_field "${name}"; then
+              gh project field-create "${project_number}" --owner "${PROJECT_OWNER}" \
+                --name "${name}" --data-type SINGLE_SELECT --single-select-options "${options}" >/dev/null
+              field_json="$(gh project field-list "${project_number}" --owner "${PROJECT_OWNER}" --limit 100 --format json)"
+            fi
+          }
+          create_date() {
+            local name="$1"
+            if ! has_field "${name}"; then
+              gh project field-create "${project_number}" --owner "${PROJECT_OWNER}" \
+                --name "${name}" --data-type DATE >/dev/null
+              field_json="$(gh project field-list "${project_number}" --owner "${PROJECT_OWNER}" --limit 100 --format json)"
+            fi
+          }
+
+          create_select "Priority" "P0,P1,P2"
+          create_select "Wave" "W0 Foundation,W1 Core,W2 Product,W3 Social,Future"
+          create_select "Size" "XS,S,M,L"
+          create_select "Risk" "L1,L2,L3"
+          create_select "Required Evidence" "T0 Contract,T1 Software Device,T2 Wokwi,T3 Physical HIL"
+          create_date "Start Date"
+          create_date "Target Date"
+          echo "Canonical Project fields exist on Project #${project_number}."
+
       - name: Bootstrap/reconcile GitHub Project
         run: python3 scripts/bootstrap_github_project.py --bootstrap
 
