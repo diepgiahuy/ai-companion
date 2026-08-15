@@ -13,6 +13,10 @@ on:
       - ".github/workflows/protocol_v2.yml"
   workflow_dispatch:
 
+concurrency:
+  group: protocol-v2-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
