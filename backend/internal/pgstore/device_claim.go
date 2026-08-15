@@ -35,29 +35,49 @@ func (s *Store) ClaimDevice(ctx context.Context, mutation controlplane.DeviceCla
 		var owner string
 		err := tx.QueryRow(ctx, `SELECT user_id FROM device_credentials WHERE device_id = $1 FOR UPDATE`, mutation.DeviceID).Scan(&owner)
 		switch {
-		case err == nil:
+		case err == nil && owner != mutation.UserID:
 			return nil, controlplane.ErrDeviceAlreadyClaimed
-		case !errors.Is(err, pgx.ErrNoRows):
+		case err == nil:
+			// The canonical owner may use the normal authenticated claim flow as a
+			// recovery operation. Rotating the one stored hash immediately revokes
+			// the old credential; no second recovery secret or parallel auth path is
+			// introduced.
+			result, updateErr := tx.Exec(ctx, `
+				UPDATE device_credentials
+				SET token_sha256=$2,status='active',rotated_at=now()
+				WHERE device_id=$1 AND user_id=$3`,
+				mutation.DeviceID,
+				mutation.CredentialHash,
+				mutation.UserID,
+			)
+			if updateErr != nil {
+				return nil, fmt.Errorf("rotate claimed device credential: %w", updateErr)
+			}
+			if result.RowsAffected() != 1 {
+				return nil, fmt.Errorf("rotate claimed device credential: owner changed during claim")
+			}
+		case errors.Is(err, pgx.ErrNoRows):
+			_, err = tx.Exec(ctx, `
+				INSERT INTO device_credentials(
+					device_id,user_id,tenant_id,plan,token_sha256,status,created_at,rotated_at
+				) VALUES ($1,$2,$3,$4,$5,'active',now(),now())`,
+				mutation.DeviceID,
+				mutation.UserID,
+				strings.TrimSpace(mutation.TenantID),
+				strings.TrimSpace(mutation.Plan),
+				mutation.CredentialHash,
+			)
+			if err != nil {
+				var pgErr *pgconn.PgError
+				if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "device_credentials_pkey" {
+					return nil, controlplane.ErrDeviceAlreadyClaimed
+				}
+				return nil, fmt.Errorf("insert claimed device credential: %w", err)
+			}
+		default:
 			return nil, fmt.Errorf("check existing device claim: %w", err)
 		}
 
-		_, err = tx.Exec(ctx, `
-			INSERT INTO device_credentials(
-				device_id,user_id,tenant_id,plan,token_sha256,status,created_at,rotated_at
-			) VALUES ($1,$2,$3,$4,$5,'active',now(),now())`,
-			mutation.DeviceID,
-			mutation.UserID,
-			strings.TrimSpace(mutation.TenantID),
-			strings.TrimSpace(mutation.Plan),
-			mutation.CredentialHash,
-		)
-		if err != nil {
-			var pgErr *pgconn.PgError
-			if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "device_credentials_pkey" {
-				return nil, controlplane.ErrDeviceAlreadyClaimed
-			}
-			return nil, fmt.Errorf("insert claimed device credential: %w", err)
-		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO device_claim_deliveries(
 				delivery_id,device_id,user_id,credential_ciphertext,credential_nonce,expires_at,created_at
