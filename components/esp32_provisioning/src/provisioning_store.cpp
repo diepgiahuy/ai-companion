@@ -71,9 +71,10 @@ bool valid_runtime(const RuntimeConfig& runtime) {
 
 PersistedState ProvisioningStore::state() const {
   nvs_handle_t handle{};
-  if (nvs_open(kNamespace, NVS_READONLY, &handle) != ESP_OK) {
-    return PersistedState::unprovisioned;
-  }
+  const esp_err_t open_err = nvs_open(kNamespace, NVS_READONLY, &handle);
+  if (open_err == ESP_ERR_NVS_NOT_FOUND) return PersistedState::unprovisioned;
+  if (open_err != ESP_OK) return PersistedState::invalid;
+
   char raw[16]{};
   size_t size = sizeof(raw);
   const esp_err_t err = nvs_get_str(handle, kState, raw, &size);
