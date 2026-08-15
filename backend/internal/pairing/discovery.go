@@ -13,7 +13,11 @@ import (
 const (
 	DiscoveryPrefix       = "CP-"
 	DiscoverySlotDuration = 30 * time.Second
-	discoveryDigestBytes  = 10 // 80-bit rotating pseudonym; not authentication.
+	// Resolver accepts at most the pairing session horizon behind current time,
+	// plus one slot of device/server clock skew. This is deliberately bounded.
+	DiscoveryPastSlots   = 4
+	DiscoveryFutureSlots = 1
+	discoveryDigestBytes = 10 // 80-bit rotating pseudonym; not authentication.
 )
 
 var discoveryEncoding = base32.StdEncoding.WithPadding(base32.NoPadding)
