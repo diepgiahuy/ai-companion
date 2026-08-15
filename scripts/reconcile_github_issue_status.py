@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Keep compatibility execution labels consistent with native GitHub state.
+"""Keep compatibility status labels aligned with live native GitHub relationships.
 
-Project Status is the human management surface. These labels remain a compact
-machine/connector compatibility signal until every agent can read Project V2
-fields directly. Native issue dependencies win over stale labels.
+No issue-number allowlists are used. Closed issues and parent issues carry no
+execution label. Open native blockers deterministically own `status:blocked`.
+When a previously blocked leaf becomes unblocked, it is promoted to
+`status:ready`; otherwise human-selected ready/in-progress state is preserved.
 """
 from __future__ import annotations
 
@@ -17,8 +18,6 @@ REPO = os.getenv("PROJECT_REPOSITORY", "diepgiahuy/ai-companion")
 TOKEN = os.getenv("REPO_TOKEN") or os.getenv("GH_TOKEN", "")
 API_VERSION = "2026-03-10"
 STATUS_LABELS = {"status:ready", "status:in-progress", "status:blocked"}
-NON_CODING_PARENTS = {2, 7, 18, 21, 91}
-DEPENDENCY_OWNED = {9, 17, 99, 100, 102, 103, 104, 106, 114}
 
 
 def die(message: str) -> None:
@@ -50,90 +49,74 @@ def api(path: str, *, method: str = "GET", body: dict[str, Any] | None = None) -
     return json.loads(raw) if raw else None
 
 
-def issue(number: int) -> dict[str, Any]:
-    return api(f"repos/{REPO}/issues/{number}")
-
-
 def labels(item: dict[str, Any]) -> set[str]:
     return {label["name"] for label in item.get("labels", [])}
 
 
 def remove_label(number: int, label: str) -> None:
-    # REST DELETE returns 200 when the label exists. We only call it after checking.
     api(f"repos/{REPO}/issues/{number}/labels/{label}", method="DELETE")
-    print(f"Removed {label} from #{number}")
 
 
 def add_label(number: int, label: str) -> None:
     api(f"repos/{REPO}/issues/{number}/labels", method="POST", body={"labels": [label]})
-    print(f"Added {label} to #{number}")
 
 
-def set_status(number: int, desired: str | None) -> None:
-    item = issue(number)
-    current = labels(item)
-    for label in sorted(STATUS_LABELS):
-        if label != desired and label in current:
+def set_status(number: int, current: set[str], desired: str | None) -> None:
+    for label in sorted(STATUS_LABELS & current):
+        if label != desired:
             remove_label(number, label)
     if desired and desired not in current:
         add_label(number, desired)
 
 
-def reconcile_parent(number: int) -> None:
-    item = issue(number)
-    if item.get("state") == "closed":
-        set_status(number, None)
-        return
-    # Parent/epic issues are never coding work items. Their progress derives from children.
-    set_status(number, None)
-
-
-def reconcile_dependency_owned(number: int) -> None:
-    item = issue(number)
-    if item.get("state") == "closed":
-        set_status(number, None)
-        return
-
+def open_blockers(number: int) -> list[int]:
     blockers = api(f"repos/{REPO}/issues/{number}/dependencies/blocked_by?per_page=100") or []
-    open_blockers = [int(blocker["number"]) for blocker in blockers if blocker.get("state") != "closed"]
+    return [int(item["number"]) for item in blockers if item.get("state") != "closed"]
+
+
+def reconcile(item: dict[str, Any]) -> None:
+    if "pull_request" in item:
+        return
+    number = int(item["number"])
     current = labels(item)
 
-    if open_blockers:
-        set_status(number, "status:blocked")
-        print(f"#{number} remains blocked by open issues {open_blockers}")
+    if item.get("state") == "closed":
+        set_status(number, current, None)
         return
 
-    # Only automatically promote something that was dependency-blocked. Do not invent
-    # Ready for arbitrary backlog/human-gated work merely because it has no blocker.
+    if int(item.get("sub_issues_summary", {}).get("total", 0)) > 0:
+        set_status(number, current, None)
+        return
+
+    blockers = open_blockers(number)
+    if blockers:
+        set_status(number, current, "status:blocked")
+        print(f"#{number}: blocked by open native dependencies {blockers}")
+        return
+
     if "status:blocked" in current:
-        set_status(number, "status:ready")
-        print(f"#{number} dependencies are closed; promoted blocked -> ready")
+        set_status(number, current, "status:ready")
+        print(f"#{number}: blockers cleared; promoted blocked -> ready")
+        return
 
-
-def cleanup_closed_status_labels() -> None:
-    page = 1
-    while True:
-        batch = api(f"repos/{REPO}/issues?state=closed&per_page=100&page={page}") or []
-        if not batch:
-            break
-        for item in batch:
-            if "pull_request" in item:
-                continue
-            current = labels(item)
-            for label in sorted(STATUS_LABELS & current):
-                remove_label(int(item["number"]), label)
-        if len(batch) < 100:
-            break
-        page += 1
+    if "status:in-progress" in current:
+        set_status(number, current, "status:in-progress")
+    elif "status:ready" in current:
+        set_status(number, current, "status:ready")
 
 
 def main() -> None:
-    cleanup_closed_status_labels()
-    for number in sorted(NON_CODING_PARENTS):
-        reconcile_parent(number)
-    for number in sorted(DEPENDENCY_OWNED):
-        reconcile_dependency_owned(number)
-    print("Execution labels are consistent with closed state and native dependencies.")
+    page = 1
+    while True:
+        batch = api(f"repos/{REPO}/issues?state=all&per_page=100&page={page}") or []
+        if not batch:
+            break
+        for item in batch:
+            reconcile(item)
+        if len(batch) < 100:
+            break
+        page += 1
+    print("Compatibility execution labels now derive from live issue state and native relationships.")
 
 
 if __name__ == "__main__":
