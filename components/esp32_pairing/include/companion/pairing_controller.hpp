@@ -15,7 +15,7 @@ class PairingController final {
 public:
   PairingController(NimblePairingDiscovery& radio,
                     WebSocketVoiceBackend& backend)
-      : radio_(radio), backend_(backend), fsm_({.discovery_window_ms = 10'000,
+      : radio_(radio), backend_(backend), fsm_({.discovery_window_ms = 30'000,
                                                .confirmation_window_ms = 30'000}) {}
 
   bool start(uint64_t now_ms);
