@@ -59,14 +59,28 @@ extern "C" void app_main() {
     ESP_ERROR_CHECK(nvs_flash_erase());
     nvs_result = nvs_flash_init();
   }
-  if (nvs_result != ESP_OK ||
-      !wifi.connect(CONFIG_COMPANION_WIFI_SSID, CONFIG_COMPANION_WIFI_PASSWORD)) {
-    ESP_LOGE(kTag, "Wi-Fi initialization failed");
-    display.show(UiState::error, "WIFI ERROR");
+  if (nvs_result != ESP_OK) {
+    ESP_LOGE(kTag, "NVS initialization failed");
+    display.show(UiState::error, "STORAGE ERROR");
     return;
   }
+
+  const bool initially_connected =
+      wifi.connect(CONFIG_COMPANION_WIFI_SSID, CONFIG_COMPANION_WIFI_PASSWORD);
+  if (!initially_connected) {
+    // This is no longer terminal: WifiStation keeps reconnecting with bounded
+    // exponential backoff + jitter after the initial wait expires.
+    ESP_LOGW(kTag, "Wi-Fi not connected yet; continuing in reconnecting state");
+    display.show(UiState::connecting, "WIFI RETRY");
+  }
+
   if (!wifi.start_time_sync(CONFIG_COMPANION_TZ_RULE)) {
-    ESP_LOGW(kTag, "SNTP time sync initialization failed; idle clock will show --:--");
+    ESP_LOGW(kTag, "SNTP initialization failed; wall clock remains invalid");
+  } else if (initially_connected && !wifi.wait_for_valid_time()) {
+    // Starting SNTP is not evidence that wall clock is valid. The WebSocket client
+    // keeps its own reconnect lifecycle; once Wi-Fi/SNTP converge a fresh session
+    // hello causes the server to replay current config/schedule state.
+    ESP_LOGW(kTag, "wall clock not valid yet; secure backend may retry until SNTP converges");
   }
 
   std::array<uint8_t, 6> mac{};
@@ -77,8 +91,10 @@ extern "C" void app_main() {
   if (!backend.initialize(CONFIG_COMPANION_SERVER_URL,
                           CONFIG_COMPANION_DEVICE_CREDENTIAL,
                           device_id.data(), device_id.data())) {
+    // initialize() validates/allocates the backend. Network loss itself is handled
+    // by the WebSocket client's auto-reconnect and is not a reason to recreate it.
     ESP_LOGE(kTag, "WebSocket backend initialization failed");
-    display.show(UiState::error, "NETWORK ERROR");
+    display.show(UiState::error, "BACKEND INIT ERROR");
     return;
   }
 
