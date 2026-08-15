@@ -1,3 +1,5 @@
+//go:build apppge2e
+
 package pgstore_test
 
 import (
@@ -24,9 +26,9 @@ import (
 )
 
 func TestVoiceMailAuthenticatedApplicationLifecycle(t *testing.T) {
-	dsn := strings.TrimSpace(os.Getenv("COMPANION_POSTGRES_TEST_DSN"))
+	dsn := strings.TrimSpace(os.Getenv("COMPANION_POSTGRES_APP_TEST_DSN"))
 	if dsn == "" {
-		t.Skip("COMPANION_POSTGRES_TEST_DSN not set")
+		t.Skip("COMPANION_POSTGRES_APP_TEST_DSN is required")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
