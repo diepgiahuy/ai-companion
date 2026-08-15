@@ -69,6 +69,27 @@ constexpr bool valid_pending_claim(const PendingClaimView &claim) {
          valid_wss_url(claim.server_url);
 }
 
+// Consumer onboarding uses ten symbols from a deliberately unambiguous alphabet,
+// rendered as XXXXX-XXXXX. The backend accepts upper/lower case and ignores the
+// single separator, but local validation rejects arbitrary opaque values so the
+// setup page cannot accidentally send a long-lived credential-shaped secret.
+constexpr bool valid_human_claim_code(std::string_view value) {
+  if (value.size() != 10 && value.size() != 11) return false;
+  size_t symbols = 0;
+  for (const char raw : value) {
+    if (raw == '-') {
+      if (value.size() != 11 || symbols != 5) return false;
+      continue;
+    }
+    const char c = raw >= 'a' && raw <= 'z' ? static_cast<char>(raw - ('a' - 'A')) : raw;
+    const bool valid = (c >= 'A' && c <= 'Z' && c != 'I' && c != 'O') ||
+                       (c >= '2' && c <= '9');
+    if (!valid) return false;
+    ++symbols;
+  }
+  return symbols == 10;
+}
+
 constexpr State transition(State state, Event event) {
   if (event == Event::reset) {
     return State::setup;
