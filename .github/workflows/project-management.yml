@@ -1,0 +1,63 @@
+name: project-management
+
+on:
+  workflow_dispatch:
+  issues:
+    types:
+      - opened
+      - reopened
+      - closed
+      - labeled
+      - unlabeled
+      - assigned
+      - unassigned
+  push:
+    branches:
+      - agent/issue-115-project-token-smoke
+    paths:
+      - scripts/bootstrap_github_project.py
+      - .github/workflows/project-management.yml
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: ai-companion-project-management
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+      REPO_TOKEN: ${{ github.token }}
+      PROJECT_OWNER: diepgiahuy
+      PROJECT_OWNER_DATABASE_ID: '30974088'
+      PROJECT_REPOSITORY: diepgiahuy/ai-companion
+      PROJECT_TITLE: AI Companion — Production v1
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fail closed if PROJECT_TOKEN is unavailable
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${PROJECT_TOKEN:-}" || { echo "::error::PROJECT_TOKEN is not configured"; exit 1; }
+      - name: Bootstrap/reconcile GitHub Project
+        run: python3 scripts/bootstrap_github_project.py --bootstrap
+
+  sync-issue:
+    if: github.event_name == 'issues'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+      PROJECT_OWNER: diepgiahuy
+      PROJECT_REPOSITORY: diepgiahuy/ai-companion
+      PROJECT_TITLE: AI Companion — Production v1
+    steps:
+      - uses: actions/checkout@v4
+      - name: Sync changed issue into GitHub Project
+        run: python3 scripts/bootstrap_github_project.py --sync-issue "${{ github.event.issue.number }}"
