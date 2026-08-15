@@ -40,6 +40,11 @@ func ownerAuthFromEnvironment(next http.Handler, claimRepository controlplane.De
 			next.ServeHTTP(w, r)
 		})
 	}
+	handoff, err := ownerauth.NewHandoff(service)
+	if err != nil {
+		slog.Error("initialize owner claim handoff", "error", err)
+		return next
+	}
 	owner := service.Handler()
 	var claims http.Handler
 	if claimRepository != nil {
@@ -54,9 +59,18 @@ func ownerAuthFromEnvironment(next http.Handler, claimRepository controlplane.De
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/v1/owner/device-claim":
+			handoff.HandleOwnerPage(w, r)
+			return
+		case "/v1/owner/claim-codes":
+			handoff.HandleMint(w, r)
+			return
+		case "/v1/owner/claim-code-exchanges":
+			handoff.HandleExchange(w, r)
+			return
 		case "/v1/owner/claim-authorizations":
-			// Product composition hard-cuts the older bootstrap-only handler inside
-			// ownerauth.Service.Handler: authorization must bind bootstrap + device.
+			// Keep the reviewed opaque-authorization endpoint as a technical/HIL
+			// fallback. Production-v1 human onboarding uses the one-code handoff.
 			service.HandleBoundClaimAuthorization(w, r)
 			return
 		case "/v1/owner/device-claims":
