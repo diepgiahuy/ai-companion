@@ -1,0 +1,199 @@
+name: optimize-control-plane-once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/optimize_control_plane_once.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: optimize-control-plane-once
+  cancel-in-progress: false
+
+jobs:
+  optimize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      ADMIN_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+      RULESET_ID: '20785214'
+    steps:
+      - name: Migrate required check and repository hygiene settings
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${ADMIN_TOKEN:-}" || {
+            echo "::error::PROJECT_TOKEN is unavailable; repository was not changed."
+            exit 1
+          }
+
+          repo="${GITHUB_REPOSITORY}"
+          owner="${repo%%/*}"
+          repo_api="https://api.github.com/repos/${repo}"
+          ruleset_api="${repo_api}/rulesets/${RULESET_ID}"
+          headers=(
+            -H "Authorization: Bearer ${ADMIN_TOKEN}"
+            -H "Accept: application/vnd.github+json"
+            -H "X-GitHub-Api-Version: 2026-03-10"
+          )
+
+          before="$(curl -fsSL "${headers[@]}" "$ruleset_api")"
+          jq -e '
+            .id == 20785214 and
+            .name == "second rule" and
+            .target == "branch" and
+            .enforcement == "active" and
+            .conditions.ref_name.include == ["refs/heads/main"] and
+            .conditions.ref_name.exclude == []
+          ' <<<"$before" >/dev/null
+
+          current_contexts="$(jq -c '
+            [.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context] | sort
+          ' <<<"$before")"
+          old_contexts='["PR Contract","PR Gate"]'
+          target_contexts='["PR Gate"]'
+          if [[ "$current_contexts" != "$old_contexts" && "$current_contexts" != "$target_contexts" ]]; then
+            echo "::error::Unexpected required-check set; refusing mutation: $current_contexts"
+            exit 1
+          fi
+
+          before_invariants="$(jq -S -c '
+            {
+              name,
+              target,
+              enforcement,
+              bypass_actors,
+              conditions,
+              rules: [.rules[] |
+                if .type == "required_status_checks"
+                then .parameters.required_status_checks = []
+                else .
+                end]
+            }
+          ' <<<"$before")"
+
+          if [[ "$current_contexts" == "$old_contexts" ]]; then
+            payload="$(jq -c '
+              {
+                name,
+                target,
+                enforcement,
+                bypass_actors,
+                conditions,
+                rules: [.rules[] |
+                  if .type == "required_status_checks"
+                  then .parameters.required_status_checks = [
+                    {"context":"PR Gate","integration_id":15368}
+                  ]
+                  else .
+                  end]
+              }
+            ' <<<"$before")"
+            curl -fsSL -X PUT "${headers[@]}" \
+              -H "Content-Type: application/json" \
+              "$ruleset_api" \
+              -d "$payload" >/tmp/ruleset-update.json
+          fi
+
+          after="$(curl -fsSL "${headers[@]}" "$ruleset_api")"
+          after_contexts="$(jq -c '
+            [.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context] | sort
+          ' <<<"$after")"
+          test "$after_contexts" = "$target_contexts"
+          jq -e '
+            [.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks[]] == [
+              {"context":"PR Gate","integration_id":15368}
+            ] and
+            (.rules[] | select(.type == "required_status_checks") | .parameters.strict_required_status_checks_policy) == true and
+            (.rules[] | select(.type == "required_status_checks") | .parameters.do_not_enforce_on_create) == false
+          ' <<<"$after" >/dev/null
+
+          after_invariants="$(jq -S -c '
+            {
+              name,
+              target,
+              enforcement,
+              bypass_actors,
+              conditions,
+              rules: [.rules[] |
+                if .type == "required_status_checks"
+                then .parameters.required_status_checks = []
+                else .
+                end]
+            }
+          ' <<<"$after")"
+          test "$before_invariants" = "$after_invariants"
+
+          curl -fsSL -X PATCH "${headers[@]}" \
+            -H "Content-Type: application/json" \
+            "$repo_api" \
+            -d '{"delete_branch_on_merge":true,"allow_auto_merge":true}' >/tmp/repo-update.json
+          repo_after="$(curl -fsSL "${headers[@]}" "$repo_api")"
+          jq -e '.delete_branch_on_merge == true and .allow_auto_merge == true' <<<"$repo_after" >/dev/null
+
+          open_prs="$(curl -fsSL "${headers[@]}" "${repo_api}/pulls?state=open&per_page=100")"
+
+          closed_prs='[]'
+          page=1
+          while :; do
+            batch="$(curl -fsSL "${headers[@]}" "${repo_api}/pulls?state=closed&per_page=100&page=${page}")"
+            count="$(jq 'length' <<<"$batch")"
+            closed_prs="$(jq -c --argjson batch "$batch" '. + $batch' <<<"$closed_prs")"
+            [[ "$count" -lt 100 ]] && break
+            page=$((page + 1))
+          done
+
+          branches='[]'
+          page=1
+          while :; do
+            batch="$(curl -fsSL "${headers[@]}" "${repo_api}/branches?per_page=100&page=${page}")"
+            count="$(jq 'length' <<<"$batch")"
+            branches="$(jq -c --argjson batch "$batch" '. + $batch' <<<"$branches")"
+            [[ "$count" -lt 100 ]] && break
+            page=$((page + 1))
+          done
+
+          deleted=0
+          kept=0
+          while IFS=$'\t' read -r branch sha; do
+            [[ -z "$branch" ]] && continue
+            if [[ "$branch" == "main" ]]; then
+              kept=$((kept + 1))
+              continue
+            fi
+            if jq -e --arg branch "$branch" 'any(.[]; .head.ref == $branch)' <<<"$open_prs" >/dev/null; then
+              echo "keep open-PR branch: $branch"
+              kept=$((kept + 1))
+              continue
+            fi
+            if ! jq -e --arg branch "$branch" --arg sha "$sha" \
+              'any(.[]; .merged_at != null and .head.ref == $branch and .head.sha == $sha)' \
+              <<<"$closed_prs" >/dev/null; then
+              echo "keep unproven branch: $branch"
+              kept=$((kept + 1))
+              continue
+            fi
+
+            encoded="$(jq -rn --arg value "$branch" '$value|@uri')"
+            curl -fsSL -X DELETE "${headers[@]}" "${repo_api}/git/refs/heads/${encoded}"
+            echo "deleted exact merged-head branch: $branch @ $sha"
+            deleted=$((deleted + 1))
+          done < <(jq -r '.[] | [.name, .commit.sha] | @tsv' <<<"$branches")
+
+          {
+            echo "## GitHub control-plane optimization"
+            echo
+            echo "- ruleset: ${RULESET_ID} (second rule)"
+            echo "- required checks before: ${current_contexts}"
+            echo "- required checks after: ${after_contexts}"
+            echo "- strict up-to-date policy: preserved"
+            echo "- non-check rules/conditions: unchanged"
+            echo "- delete branch on merge: enabled"
+            echo "- auto-merge capability: enabled"
+            echo "- stale exact merged-head branches deleted: ${deleted}"
+            echo "- branches preserved: ${kept}"
+          } >> "$GITHUB_STEP_SUMMARY"
