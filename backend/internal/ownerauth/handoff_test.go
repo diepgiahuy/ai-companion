@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -88,7 +89,7 @@ func TestHumanClaimCodeBoundOneTimeExpiryAndRateLimit(t *testing.T) {
 	}
 }
 
-func TestOwnerHandoffHTTPRequiresSessionCSRFAndNeverRendersCredential(t *testing.T) {
+func TestOwnerHandoffHTTPRequiresLoginCSRFAndNeverRendersCredential(t *testing.T) {
 	service, session, csrf, now := handoffTestService(t)
 	handoff, err := NewHandoff(service)
 	if err != nil {
@@ -97,12 +98,44 @@ func TestOwnerHandoffHTTPRequiresSessionCSRFAndNeverRendersCredential(t *testing
 	handoff.now = func() time.Time { return *now }
 
 	unauthorized := httptest.NewRecorder()
-	handoff.HandleOwnerPage(unauthorized, httptest.NewRequest(http.MethodGet, "https://companion.example/v1/owner/device-claim", nil))
-	if unauthorized.Code != http.StatusUnauthorized {
+	unauthorizedRequest := httptest.NewRequest(http.MethodGet, "https://companion.example/v1/owner/device-claim?bootstrap_id=boot&device_id=dev", nil)
+	handoff.HandleOwnerPage(unauthorized, unauthorizedRequest)
+	if unauthorized.Code != http.StatusFound {
 		t.Fatalf("unauthorized page status=%d", unauthorized.Code)
 	}
+	loginLocation := unauthorized.Header().Get("Location")
+	if !strings.HasPrefix(loginLocation, "/v1/owner/auth/login?") || !strings.Contains(loginLocation, "bootstrap_id=boot") || !strings.Contains(loginLocation, "device_id=dev") {
+		t.Fatalf("login redirect=%q", loginLocation)
+	}
 
-	pageRequest := httptest.NewRequest(http.MethodGet, "https://companion.example/v1/owner/device-claim", nil)
+	login := httptest.NewRecorder()
+	loginRequest := httptest.NewRequest(http.MethodGet, "https://companion.example"+loginLocation, nil)
+	handoff.HandleLogin(login, loginRequest)
+	if login.Code != http.StatusFound {
+		t.Fatalf("login status=%d body=%s", login.Code, login.Body.String())
+	}
+	providerTarget, err := url.Parse(login.Header().Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := providerTarget.Query().Get("state")
+	if providerTarget.Host != "owner.example" || state == "" {
+		t.Fatalf("provider login target=%q", providerTarget.String())
+	}
+	handoff.mu.Lock()
+	ret := handoff.returns[state]
+	handoff.mu.Unlock()
+	if ret.Path != "/v1/owner/device-claim?bootstrap_id=boot&device_id=dev" || !ret.ExpiresAt.After(*now) {
+		t.Fatalf("stored login return=%+v", ret)
+	}
+
+	badLogin := httptest.NewRecorder()
+	handoff.HandleLogin(badLogin, httptest.NewRequest(http.MethodGet, "https://companion.example/v1/owner/auth/login?bootstrap_id=boot", nil))
+	if badLogin.Code != http.StatusBadRequest {
+		t.Fatalf("partial claim reference status=%d", badLogin.Code)
+	}
+
+	pageRequest := httptest.NewRequest(http.MethodGet, "https://companion.example/v1/owner/device-claim?bootstrap_id=boot&device_id=dev", nil)
 	pageRequest.AddCookie(&http.Cookie{Name: sessionCookieName, Value: session})
 	page := httptest.NewRecorder()
 	handoff.HandleOwnerPage(page, pageRequest)
