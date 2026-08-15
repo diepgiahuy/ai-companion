@@ -73,8 +73,8 @@ After the same unexplained failure twice, stop retrying and inspect the root cau
 ### Final local verification
 
 Run the risk-matched final local gate once against the final local diff. Record command,
-result, and tested commit SHA in the PR. Rerun only when later edits can affect that
-oracle.
+result, and tested commit SHA in the PR when local proof actually ran. Rerun only when
+later edits can affect that oracle.
 
 Local proof is diagnostic evidence. Required GitHub Checks are the exact-head hosted
 merge oracle.
@@ -88,11 +88,16 @@ only for L3/release-critical changes or when the first review exposes systemic r
 
 ### Hosted proof and merge
 
-Required GitHub Checks at current PR HEAD are authoritative hosted proof. Do not copy
-hosted check lists or a synthetic `hosted-proven` status into the PR body.
+The repository ruleset-required `PR Gate` at current PR HEAD is the authoritative hosted
+merge gate. Domain-specific workflows may provide additional required-by-process evidence
+for the affected boundary; do not claim that evidence until the corresponding check
+actually succeeds on the tested head.
 
-After merge, delete/supersede the implementation branch unless it still contains unique
-reviewed work. Do not accumulate `-v2`, `-v3`, `-final-v2` branches as project state.
+Do not copy hosted check lists or a synthetic `hosted-proven` status into the PR body.
+After merge, the repository automatically deletes the implementation branch when GitHub
+can identify it as the merged PR head. Preserve a branch only when it still contains
+unique reviewed work. Do not accumulate `-v2`, `-v3`, `-final-v2` branches as project
+state.
 
 ### Human-only completion
 
@@ -106,7 +111,7 @@ If an issue itself still requires the human gate, use `Refs #N`, not `Closes #N`
 
 | Risk | Typical change | Local loop | Final local gate | Extra proof |
 |---|---|---|---|---|
-| L0 | docs/comments/metadata | syntax/link/contract check | relevant validator | normal PR CI |
+| L0 | docs/comments/metadata | syntax/link check | relevant validator | normal PR CI |
 | L1 | pure logic/isolated UI/tooling | nearest unit/host test | touched package/tool tests | normal PR CI |
 | L2 | API/protocol/auth/persistence/firmware FSM | unit + focused integration | affected packages + one boundary E2E | exact-head CI + final diff review |
 | L3 | migration/destructive data/concurrency runtime/credential/security/release | focused failure/recovery tests | full relevant race/integration/recovery gate | independent review + immutable evidence only where it proves a distinct property |
@@ -157,26 +162,20 @@ workflow frameworks.
 ## PR execution record
 
 The PR description is the canonical execution explanation for the change. It should be
-compact and current, not a raw activity log.
+compact and current, not a raw activity log or a second CI database.
 
-Required core:
+Default useful content:
 
-- linked issue;
-- risk L0-L3;
-- local tested head SHA or `not-run`;
-- human gate;
-- summary and scope/non-goals;
-- verification table with direct oracles;
-- evidence boundary: what the PR proves and does not prove;
-- risk/rollback;
-- remaining PR blockers, issue work, and human action;
-- `Refs` versus `Closes` semantics consistent with remaining work.
+- link the owning issue and state the outcome/why;
+- list local verification only when it actually ran; GitHub Checks own exact-head proof;
+- state meaningful risk and a concrete rollback when the change has one;
+- state remaining PR work, issue work, or human/hardware/provider gates;
+- use `Refs` versus `Closes` consistently with whether the issue is actually complete.
 
-Optional only when useful: decision rationale, review map, or execution summary. Do not
-copy every hosted CI check, raw logs, or per-agent activity into the PR body.
-
-`scripts/check_pr_contract.py` enforces mechanical structure only. It must never decide
-whether architecture is good, tests are sufficient, or an issue is semantically done.
+Add scope/non-goals, evidence boundaries, decisions, or a review map only when they help
+a reviewer make a decision. The PR template is guidance, not a prose correctness gate.
+Mechanical prose wording must not block a technically valid merge; repeated objective
+mistakes belong in code/test/CI linters instead.
 
 ## Test and evidence rules
 

@@ -124,6 +124,11 @@ def issue_info(number: int) -> dict[str, Any]:
     return api_json(f"repos/{REPO}/issues/{number}")
 
 
+def dependency_numbers(number: int, relation: str) -> set[int]:
+    items = api_json(f"repos/{REPO}/issues/{number}/dependencies/{relation}?per_page=100") or []
+    return {int(item["number"]) for item in items}
+
+
 def open_blockers(number: int) -> list[int]:
     items = api_json(f"repos/{REPO}/issues/{number}/dependencies/blocked_by?per_page=100") or []
     return [int(item["number"]) for item in items if item.get("state") != "closed"]
@@ -161,8 +166,17 @@ def ensure_item(project_data: dict[str, Any], project_snapshot: dict[str, Any], 
     }
     """
     data = graphql(mutation, {"projectId": project_data["id"], "contentId": issue["node_id"]})
+    item_id = data["addProjectV2ItemById"]["item"]["id"]
+    project_snapshot["items"]["nodes"].append({
+        "id": item_id,
+        "content": {
+            "__typename": "Issue",
+            "number": number,
+            "repository": {"nameWithOwner": REPO},
+        },
+    })
     print(f"Added issue #{number} to Project")
-    return data["addProjectV2ItemById"]["item"]["id"]
+    return item_id
 
 
 def set_status(project_id: str, item_id: str, field_id: str, option_id: str) -> None:
@@ -182,16 +196,17 @@ def set_status(project_id: str, item_id: str, field_id: str, option_id: str) -> 
     })
 
 
-def sync_one(project_data: dict[str, Any], number: int) -> None:
-    issue = issue_info(number)
-    if "pull_request" in issue:
-        return
-    snap = snapshot(project_data["number"])
+def sync_numbers(project_data: dict[str, Any], numbers: set[int], project_snapshot: dict[str, Any] | None = None) -> None:
+    snap = project_snapshot or snapshot(project_data["number"])
     field, options = status_field(snap)
-    item_id = ensure_item(project_data, snap, issue)
-    desired = derive_status(issue)
-    set_status(project_data["id"], item_id, field["id"], options[desired])
-    print(f"Synced issue #{number}: Status={desired}")
+    for number in sorted(numbers):
+        issue = issue_info(number)
+        if "pull_request" in issue:
+            continue
+        item_id = ensure_item(project_data, snap, issue)
+        desired = derive_status(issue)
+        set_status(project_data["id"], item_id, field["id"], options[desired])
+        print(f"Synced issue #{number}: Status={desired}")
 
 
 def list_issue_numbers(state: str) -> set[int]:
@@ -200,6 +215,11 @@ def list_issue_numbers(state: str) -> set[int]:
         "--limit", "200", "--json", "number",
     ])
     return {int(item["number"]) for item in json.loads(proc.stdout or "[]")}
+
+
+def sync_one_with_dependents(project_data: dict[str, Any], number: int) -> None:
+    numbers = {number} | dependency_numbers(number, "blocking")
+    sync_numbers(project_data, numbers)
 
 
 def sync_all(project_data: dict[str, Any]) -> None:
@@ -213,22 +233,21 @@ def sync_all(project_data: dict[str, Any]) -> None:
             and content.get("number") is not None
         ):
             numbers.add(int(content["number"]))
-    for number in sorted(numbers):
-        sync_one(project_data, number)
+    sync_numbers(project_data, numbers, project_snapshot=snap)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--sync-issue", type=int)
-    group.add_argument("--sync-all", action="store_true")
+    group.add_argument("--sync-issue", type=int, help="Sync this issue and direct dependents")
+    group.add_argument("--sync-all", action="store_true", help="Full drift-repair sync")
     args = parser.parse_args()
 
     if not PROJECT_TOKEN:
         die("PROJECT_TOKEN is not configured")
     data = project()
     if args.sync_issue is not None:
-        sync_one(data, args.sync_issue)
+        sync_one_with_dependents(data, args.sync_issue)
     else:
         sync_all(data)
 

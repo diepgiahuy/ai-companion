@@ -2,6 +2,13 @@ name: project-management
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '23 3 * * *'
+  pull_request:
+    paths:
+      - scripts/bootstrap_github_project.py
+      - scripts/reconcile_github_issue_status.py
+      - .github/workflows/project-management.yml
   issues:
     types:
       - opened
@@ -10,8 +17,6 @@ on:
       - closed
       - labeled
       - unlabeled
-      - assigned
-      - unassigned
   push:
     branches:
       - main
@@ -22,16 +27,30 @@ on:
 
 permissions:
   contents: read
-  issues: write
 
 concurrency:
-  group: project-management-${{ github.event_name }}-${{ github.event.issue.number || github.ref || github.run_id }}
+  group: project-management-${{ github.event_name }}-${{ github.event.pull_request.number || github.event.issue.number || github.ref || github.run_id }}
   cancel-in-progress: true
 
 jobs:
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Compile Project control-plane scripts
+        run: python3 -m py_compile scripts/bootstrap_github_project.py scripts/reconcile_github_issue_status.py
+
   sync:
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
     env:
       PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}
       REPO_TOKEN: ${{ github.token }}
@@ -39,7 +58,7 @@ jobs:
       PROJECT_REPOSITORY: diepgiahuy/ai-companion
       PROJECT_TITLE: AI Companion — Production v1
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
 
@@ -50,15 +69,15 @@ jobs:
           test -n "${REPO_TOKEN:-}" || { echo "::error::REPO_TOKEN is unavailable"; exit 1; }
           test -n "${PROJECT_TOKEN:-}" || { echo "::error::PROJECT_TOKEN is not configured"; exit 1; }
 
-      - name: Reconcile compatibility execution labels from native relationships
-        run: python3 scripts/reconcile_github_issue_status.py
-
-      - name: Sync Project item membership and deterministic Status
+      - name: Reconcile execution labels and Project status
         shell: bash
         run: |
           set -euo pipefail
           if [[ "${{ github.event_name }}" == "issues" ]]; then
-            python3 scripts/bootstrap_github_project.py --sync-issue "${{ github.event.issue.number }}"
+            issue="${{ github.event.issue.number }}"
+            python3 scripts/reconcile_github_issue_status.py --issue "$issue"
+            python3 scripts/bootstrap_github_project.py --sync-issue "$issue"
           else
+            python3 scripts/reconcile_github_issue_status.py --all
             python3 scripts/bootstrap_github_project.py --sync-all
           fi
