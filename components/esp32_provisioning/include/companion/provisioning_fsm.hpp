@@ -40,14 +40,16 @@ struct PendingClaimView {
 };
 
 constexpr bool valid_wss_url(std::string_view value) {
-  if (!value.starts_with("wss://") || value.size() <= 6 || value.size() > 512) {
+  if (!value.starts_with("wss://") || value.size() <= 6 || value.size() > 512 ||
+      value.find('?') != std::string_view::npos ||
+      value.find('#') != std::string_view::npos ||
+      value.find('@') != std::string_view::npos) {
     return false;
   }
   const auto authority = value.substr(6);
   const auto slash = authority.find('/');
   const auto host = authority.substr(0, slash);
-  return !host.empty() && host.find('@') == std::string_view::npos &&
-         value.find('#') == std::string_view::npos;
+  return !host.empty();
 }
 
 constexpr bool valid_wifi(std::string_view ssid, std::string_view password) {
