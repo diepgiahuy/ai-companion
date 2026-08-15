@@ -43,6 +43,12 @@ target_compile_features(reconnect_backoff_tests PRIVATE cxx_std_20)
 target_compile_options(reconnect_backoff_tests PRIVATE -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
 add_test(NAME reconnect_backoff_tests COMMAND reconnect_backoff_tests)
 
+add_executable(provisioning_fsm_tests tests/provisioning_fsm.cpp)
+target_include_directories(provisioning_fsm_tests PRIVATE ../components/esp32_provisioning/include)
+target_compile_features(provisioning_fsm_tests PRIVATE cxx_std_20)
+target_compile_options(provisioning_fsm_tests PRIVATE -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
+add_test(NAME provisioning_fsm_tests COMMAND provisioning_fsm_tests)
+
 add_executable(protocol_vectors tests/protocol_vectors.cpp)
 target_link_libraries(protocol_vectors PRIVATE companion_app)
 target_compile_options(protocol_vectors PRIVATE -Wall -Wextra -Wpedantic -Werror -UNDEBUG)

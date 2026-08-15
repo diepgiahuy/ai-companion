@@ -1,26 +1,7 @@
 menu "Companion network"
 
-config COMPANION_WIFI_SSID
-    string "Development Wi-Fi SSID"
-    default ""
-
-config COMPANION_WIFI_PASSWORD
-    string "Development Wi-Fi password"
-    default ""
-
 config COMPANION_TZ_RULE
     string "POSIX timezone rule for device clock"
     default "ICT-7"
-
-config COMPANION_SERVER_URL
-    string "Production backend WSS URL"
-    default ""
-    help
-        Flashed product firmware accepts only wss:// endpoints. Host and
-        software-device development harnesses own any plaintext ws:// testing.
-
-config COMPANION_DEVICE_CREDENTIAL
-    string "Enrolled per-device bearer credential"
-    default ""
 
 endmenu

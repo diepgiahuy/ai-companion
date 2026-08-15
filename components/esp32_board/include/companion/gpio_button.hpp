@@ -8,6 +8,7 @@ class GpioButton final : public Button {
 public:
   bool initialize();
   bool consume_press(uint64_t now_ms) override;
+  bool is_pressed() const;
 
 private:
   static constexpr uint32_t debounce_ms_{30};

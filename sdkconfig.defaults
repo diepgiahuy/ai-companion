@@ -10,6 +10,7 @@ CONFIG_SPIRAM=y
 CONFIG_SPIRAM_MODE_OCT=y
 CONFIG_SPIRAM_SPEED_80M=y
 CONFIG_SPIRAM_USE_MALLOC=y
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
 
 # ESP-SR POC baseline. This is a reproducible development wake phrase, not the
 # final product phrase/threshold decision.
