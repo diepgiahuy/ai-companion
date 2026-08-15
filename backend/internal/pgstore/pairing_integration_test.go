@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"companion-server/internal/idempotency"
 	"companion-server/internal/pairing"
 )
 
@@ -62,6 +63,18 @@ func TestPostgresPairingBilateralConfirmationCreatesOneRelationshipAndOutbox(t *
 		t.Fatalf("confirmation replay=%+v err=%v", secondReplay, err)
 	}
 
+	// Reconstruct the store/service as a process restart would. Durable
+	// idempotency must return the already-committed relationship, not rotate or
+	// duplicate it.
+	restartedStore, err := New(pool)
+	if err != nil { t.Fatal(err) }
+	restartedService, err := pairing.New(restartedStore)
+	if err != nil { t.Fatal(err) }
+	restartReplay, err := restartedService.Confirm(ctx, pairing.Participant{UserID:userB, DeviceID:deviceB}, created.ID, created.PeerNonce, prefix+"-confirm-b")
+	if err != nil || !restartReplay.Replayed || restartReplay.RelationshipID != second.RelationshipID {
+		t.Fatalf("restart replay=%+v err=%v, want relationship %q", restartReplay, err, second.RelationshipID)
+	}
+
 	var relationships, events int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM device_relationships WHERE relationship_id=$1`, second.RelationshipID).Scan(&relationships); err != nil { t.Fatal(err) }
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM outbox WHERE event_type='pairing.relationship.created' AND subject=$1`, "relationship/"+second.RelationshipID).Scan(&events); err != nil { t.Fatal(err) }
@@ -87,15 +100,54 @@ func TestPostgresPairingReversedSessionsConvergeOnOneCanonicalRelationship(t *te
 	s2, _, err := service.Create(ctx, pairing.Participant{UserID:userB,DeviceID:deviceB}, deviceA, "rf-b", prefix+"-c2")
 	if err != nil { t.Fatal(err) }
 	if _, err := service.Confirm(ctx, pairing.Participant{UserID:userA,DeviceID:deviceA}, s1.ID, s1.InitiatorNonce, prefix+"-s1a"); err != nil { t.Fatal(err) }
-	r1, err := service.Confirm(ctx, pairing.Participant{UserID:userB,DeviceID:deviceB}, s1.ID, s1.PeerNonce, prefix+"-s1b")
-	if err != nil { t.Fatal(err) }
 	if _, err := service.Confirm(ctx, pairing.Participant{UserID:userB,DeviceID:deviceB}, s2.ID, s2.InitiatorNonce, prefix+"-s2b"); err != nil { t.Fatal(err) }
-	r2, err := service.Confirm(ctx, pairing.Participant{UserID:userA,DeviceID:deviceA}, s2.ID, s2.PeerNonce, prefix+"-s2a")
-	if err != nil { t.Fatal(err) }
-	if r1.RelationshipID != r2.RelationshipID { t.Fatalf("relationship IDs diverged: %q != %q", r1.RelationshipID, r2.RelationshipID) }
+
+	type confirmResult struct {
+		outcome pairing.ConfirmationOutcome
+		err     error
+	}
+	results := make(chan confirmResult, 2)
+	go func() {
+		outcome, err := service.Confirm(ctx, pairing.Participant{UserID:userB,DeviceID:deviceB}, s1.ID, s1.PeerNonce, prefix+"-s1b")
+		results <- confirmResult{outcome: outcome, err: err}
+	}()
+	go func() {
+		outcome, err := service.Confirm(ctx, pairing.Participant{UserID:userA,DeviceID:deviceA}, s2.ID, s2.PeerNonce, prefix+"-s2a")
+		results <- confirmResult{outcome: outcome, err: err}
+	}()
+	r1, r2 := <-results, <-results
+	if r1.err != nil || r2.err != nil {
+		t.Fatalf("concurrent reversed confirmation errors: %v / %v", r1.err, r2.err)
+	}
+	if !r1.outcome.Completed || !r2.outcome.Completed || r1.outcome.RelationshipID == "" || r1.outcome.RelationshipID != r2.outcome.RelationshipID {
+		t.Fatalf("concurrent relationships diverged: %+v / %+v", r1.outcome, r2.outcome)
+	}
 	var count int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM device_relationships WHERE (device_a_id=$1 AND device_b_id=$2) OR (device_a_id=$2 AND device_b_id=$1)`, deviceA, deviceB).Scan(&count); err != nil { t.Fatal(err) }
 	if count != 1 { t.Fatalf("canonical relationship count=%d, want 1", count) }
+}
+
+func TestPostgresPairingConflictingCreateIdempotencyIsRejected(t *testing.T) {
+	pool := postgresTestPool(t)
+	store, err := New(pool)
+	if err != nil { t.Fatal(err) }
+	service, err := pairing.New(store)
+	if err != nil { t.Fatal(err) }
+	ctx := context.Background()
+	prefix := fmt.Sprintf("pair-conflict-%d", time.Now().UnixNano())
+	userA, deviceA := prefix+"-ua", prefix+"-da"
+	userB, deviceB := prefix+"-ub", prefix+"-db"
+	enrollPairingDevice(t, store, userA, deviceA, "secret-a")
+	enrollPairingDevice(t, store, userB, deviceB, "secret-b")
+	cleanupPairingPrefix(t, store, prefix)
+
+	key := prefix+"-create"
+	if _, _, err := service.Create(ctx, pairing.Participant{UserID:userA,DeviceID:deviceA}, deviceB, "rf-original", key); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := service.Create(ctx, pairing.Participant{UserID:userA,DeviceID:deviceA}, deviceB, "rf-conflicting", key); !idempotency.IsConflict(err) {
+		t.Fatalf("conflicting create err=%v, want %s", err, idempotency.ConflictCode)
+	}
 }
 
 func TestPostgresPairingRejectIsDurableAndIdempotent(t *testing.T) {
