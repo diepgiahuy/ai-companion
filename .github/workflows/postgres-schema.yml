@@ -33,6 +33,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
 
       - name: Start disposable PostgreSQL 18.4
         run: |
@@ -162,7 +165,32 @@ jobs:
             golang:1.26.6-bookworm \
             sh -c 'set -eu; go test -tags="apppge2e,compilecheck" ./internal/pgstore -run "^(TestPostgresApplicationServerToolRestartNoSQLite|TestVoiceMailAuthenticatedApplicationLifecycle)$" -count=1 -timeout=2m'
 
+      - name: Detect recovery-sensitive changes
+        id: recovery
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          recovery=false
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            recovery=true
+          else
+            git diff --name-only "$BASE_SHA" "$HEAD_SHA" > /tmp/postgres-recovery-files.txt
+            while IFS= read -r file; do
+              case "$file" in
+                db/postgres/*|backend/internal/pgstore/migrate/*|backend/cmd/companion-migrate/*|backend/go.mod|backend/go.sum|.github/workflows/postgres-schema.yml)
+                  recovery=true
+                  ;;
+              esac
+            done < /tmp/postgres-recovery-files.txt
+          fi
+          echo "run=$recovery" >> "$GITHUB_OUTPUT"
+          echo "PostgreSQL recovery lane: $recovery" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Build fresh migration-parity database
+        if: steps.recovery.outputs.run == 'true'
         run: |
           set -euo pipefail
           docker exec companion-pg createdb -U companion companion_migration
@@ -173,6 +201,7 @@ jobs:
             --url 'postgres://companion:companion@companion-pg:5432/companion_migration?sslmode=disable'
 
       - name: Prove full SQLite to PostgreSQL semantic parity
+        if: steps.recovery.outputs.run == 'true'
         run: |
           set -euo pipefail
           docker run --rm --network host \
@@ -183,6 +212,7 @@ jobs:
             sh -c 'set -eu; go test ./internal/pgstore/migrate -count=1 -timeout=3m'
 
       - name: Exercise pg_dump restore and compare canonical state digest
+        if: steps.recovery.outputs.run == 'true'
         run: |
           set -euo pipefail
           digest() {
@@ -204,6 +234,7 @@ jobs:
           printf '{"postgres":"18.4","restore_ms":%d,"restored_db_bytes":%s,"digest_match":true}\n' "$restore_ms" "$db_bytes" | tee .tmp-postgres-restore-evidence.json
 
       - name: Exercise PostgreSQL to SQLite rollback round trip
+        if: steps.recovery.outputs.run == 'true'
         run: |
           set -euo pipefail
           rm -f .tmp-recovered.sqlite .tmp-recovered.sqlite-wal .tmp-recovered.sqlite-shm
@@ -251,7 +282,7 @@ jobs:
           test "$before_outbox" = "$after_outbox"
 
       - name: Collect PostgreSQL recovery evidence
-        if: always()
+        if: always() && steps.recovery.outputs.run == 'true'
         run: |
           mkdir -p artifacts/postgres-river
           cp .tmp-postgres-restore-evidence.json artifacts/postgres-river/restore-evidence.json
