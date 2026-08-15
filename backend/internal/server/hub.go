@@ -9,6 +9,7 @@ import (
 
 	"companion-server/internal/devicecap"
 	"companion-server/internal/domain"
+	"companion-server/internal/pairing"
 	"companion-server/internal/protocol"
 )
 
@@ -19,6 +20,9 @@ type sessionHub struct {
 	capabilityMu     sync.RWMutex
 	capabilityRouter *devicecap.Router
 	capabilityStates map[*session]*sessionCapabilityState
+
+	pairingMu      sync.RWMutex
+	pairingService *pairing.Service
 }
 
 func newSessionHub() *sessionHub {
@@ -54,6 +58,24 @@ func (h *sessionHub) setCapabilityRouter(router *devicecap.Router) {
 	h.capabilityMu.Lock()
 	h.capabilityRouter = router
 	h.capabilityMu.Unlock()
+}
+
+func (h *sessionHub) setPairingService(service *pairing.Service) {
+	if h == nil {
+		return
+	}
+	h.pairingMu.Lock()
+	h.pairingService = service
+	h.pairingMu.Unlock()
+}
+
+func (h *sessionHub) pairing() *pairing.Service {
+	if h == nil {
+		return nil
+	}
+	h.pairingMu.RLock()
+	defer h.pairingMu.RUnlock()
+	return h.pairingService
 }
 
 func (h *sessionHub) capabilityState(s *session, create bool) *sessionCapabilityState {
@@ -179,7 +201,7 @@ func (h *sessionHub) pushSchedule(ctx context.Context, userID, deviceID, summary
 }
 
 // oledText degrades Vietnamese diacritics to ASCII because the current 5x7 OLED
-// font is ASCII-only. Keep the original title in SQLite for voice/query use.
+// font is ASCII-only. Keep the original title in the durable backend store for voice/query use.
 func oledText(value string) string {
 	replacer := strings.NewReplacer(
 		"à", "a", "á", "a", "ạ", "a", "ả", "a", "ã", "a", "â", "a", "ầ", "a", "ấ", "a", "ậ", "a", "ẩ", "a", "ẫ", "a", "ă", "a", "ằ", "a", "ắ", "a", "ặ", "a", "ẳ", "a", "ẵ", "a",

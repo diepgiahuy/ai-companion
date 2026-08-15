@@ -214,7 +214,7 @@ func main() {
 		server.WithIdentityResolver(server.HeaderIdentityResolver{DefaultUserID: value("COMPANION_DEFAULT_USER_ID", "default")}),
 		server.WithControlPlane(control), server.WithFirmwareService(firmwareService), server.WithPrivacyService(privacyService), server.WithFeatureCatalog(featureCatalog), server.WithAdminToken(os.Getenv("COMPANION_ADMIN_TOKEN")),
 		server.WithDeviceCredentialManager(data), server.WithEntitlementManager(data), server.WithDeviceAuthenticator(data),
-		server.WithDeviceCapabilities(deviceCapabilities), server.WithObservabilityRecorder(observer), server.WithJobControl(jobRuntime),
+		server.WithDeviceCapabilities(deviceCapabilities), server.WithPairingRepository(data), server.WithObservabilityRecorder(observer), server.WithJobControl(jobRuntime),
 		server.WithVoiceMail(voiceMailService),
 	}
 	service := server.New(components, logger, serverOptions...)
