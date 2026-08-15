@@ -26,6 +26,7 @@ SCAN_ROOTS = [
     "backend/internal/server",
     "main",
     "components/esp32_network",
+    "components/esp32_provisioning",
     "host/companion_software_device",
     "Makefile",
     ".github/workflows",
@@ -38,6 +39,12 @@ FORBIDDEN_TOKENS = [
     "COMPANION_DEVICE_TOKEN",
     "CONFIG_COMPANION_USE_WEBSOCKET",
     "CONFIG_COMPANION_DEVICE_TOKEN",
+    # Production-v1 owner/device secrets are provisioned into the Companion NVS
+    # state machine. They must not return as build-time/menuconfig product paths.
+    "CONFIG_COMPANION_WIFI_SSID",
+    "CONFIG_COMPANION_WIFI_PASSWORD",
+    "CONFIG_COMPANION_SERVER_URL",
+    "CONFIG_COMPANION_DEVICE_CREDENTIAL",
     "QWEN_BASE_URL",
     "QWEN_API_KEY",
     "QWEN_MODEL",
@@ -98,7 +105,19 @@ for rel in SCAN_ROOTS:
 # removed while legacy markers remain absent.
 required = {
     "backend/config.example.env": ["ADK_OPENAI_BASE_URL", "ADK_MODEL"],
-    "components/esp32_network/Kconfig.projbuild": ["COMPANION_DEVICE_CREDENTIAL"],
+    "components/esp32_network/Kconfig.projbuild": ["COMPANION_TZ_RULE"],
+    "components/esp32_provisioning/include/companion/provisioning_store.hpp": [
+        "class ProvisioningStore",
+        "load_runtime",
+        "commit_runtime",
+        "update_wifi",
+    ],
+    "main/app_main.cpp": [
+        "ProvisioningStore",
+        "load_runtime(runtime)",
+        "runtime.server_url.view()",
+        "runtime.device_credential.view()",
+    ],
     "backend/cmd/companiond/main.go": ["WithDeviceAuthenticator(data)", "ADK_OPENAI_BASE_URL", "ADK_MODEL"],
 }
 for rel, needles in required.items():
@@ -117,4 +136,4 @@ if failures:
         print(f"- {failure}", file=sys.stderr)
     raise SystemExit(1)
 
-print(f"SINGLE PATH GATE PASS: scanned {len(seen)} active files; no legacy runtime/auth/transport path remains")
+print(f"SINGLE PATH GATE PASS: scanned {len(seen)} active files; no legacy runtime/auth/transport/provisioning path remains")
