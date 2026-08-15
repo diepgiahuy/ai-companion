@@ -13,7 +13,7 @@ namespace companion::provisioning {
 
 class SetupPortal final {
 public:
-  bool start(std::string_view device_suffix);
+  bool start(std::string_view device_suffix, std::string_view device_id);
   bool start_wifi_only(std::string_view device_suffix);
   bool configured() const { return configured_.load(); }
   bool take_pending(PendingConfig& out);
@@ -23,10 +23,13 @@ public:
   std::string_view password() const;
 
 private:
-  bool start_impl(std::string_view device_suffix, bool wifi_only);
+  bool start_impl(std::string_view device_suffix, std::string_view device_id,
+                  bool wifi_only);
   static esp_err_t handle_index(httpd_req_t* request);
   static esp_err_t handle_nonce(httpd_req_t* request);
+  static esp_err_t handle_info(httpd_req_t* request);
   static esp_err_t handle_configure(httpd_req_t* request);
+  esp_err_t setup_info(httpd_req_t* request) const;
   esp_err_t configure(httpd_req_t* request);
 
   httpd_handle_t server_{};
@@ -35,6 +38,9 @@ private:
   std::array<char, 33> ssid_{};
   std::array<char, 17> password_{};
   std::array<char, 33> session_nonce_{};
+  std::array<char, 33> bootstrap_id_{};
+  std::array<char, 33> idempotency_key_{};
+  std::array<char, 129> device_id_{};
   bool wifi_only_{};
   std::atomic<bool> configured_{false};
 };
