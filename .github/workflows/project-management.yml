@@ -47,6 +47,7 @@ jobs:
           test -n "${PROJECT_TOKEN:-}" || { echo "::error::PROJECT_TOKEN is not configured"; exit 1; }
 
       - name: Ensure canonical Project fields exist
+        id: project
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
@@ -57,6 +58,7 @@ jobs:
           if [[ -z "${project_number}" ]]; then
             project_number="$(gh project create --owner "${PROJECT_OWNER}" --title "${PROJECT_TITLE}" --format json --jq '.number')"
           fi
+          echo "number=${project_number}" >> "${GITHUB_OUTPUT}"
 
           field_json="$(gh project field-list "${project_number}" --owner "${PROJECT_OWNER}" --limit 100 --format json)"
           has_field() {
@@ -88,8 +90,68 @@ jobs:
           create_date "Target Date"
           echo "Canonical Project fields exist on Project #${project_number}."
 
-      - name: Bootstrap/reconcile GitHub Project
-        run: python3 scripts/bootstrap_github_project.py --bootstrap
+      - name: Ensure canonical Project views exist
+        id: views
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          PROJECT_NUMBER: ${{ steps.project.outputs.number }}
+        run: |
+          set -euo pipefail
+          view_names="$(gh api graphql \
+            -f query='query($login:String!,$number:Int!){user(login:$login){projectV2(number:$number){views(first:100){nodes{name}}}}}' \
+            -f login="${PROJECT_OWNER}" -F number="${PROJECT_NUMBER}" \
+            --jq '.data.user.projectV2.views.nodes[].name')"
+
+          create_view() {
+            local name="$1" layout="$2" filter="$3"
+            if grep -Fxq "${name}" <<<"${view_names}"; then
+              return 0
+            fi
+            local body
+            body="$(jq -cn --arg name "${name}" --arg layout "${layout}" --arg filter "${filter}" \
+              '{name:$name,layout:$layout,filter:$filter}')"
+            for identity in "${PROJECT_OWNER_DATABASE_ID}" "${PROJECT_OWNER}"; do
+              if printf '%s' "${body}" | gh api --method POST \
+                -H 'Accept: application/vnd.github+json' \
+                -H 'X-GitHub-Api-Version: 2026-03-10' \
+                "users/${identity}/projectsV2/${PROJECT_NUMBER}/views" --input - >/tmp/project-view.json 2>/tmp/project-view.err; then
+                echo "Created Project view: ${name} (identity=${identity})"
+                view_names="${view_names}"$'\n'"${name}"
+                return 0
+              fi
+            done
+            echo "::warning::GitHub user-owned Project view endpoint unavailable for '${name}': $(tail -1 /tmp/project-view.err)"
+            return 1
+          }
+
+          views_ok=true
+          create_view "01 — Command Center" table 'is:issue -status:Done' || views_ok=false
+          create_view "02 — Execution" board 'is:issue -status:Backlog -status:Done' || views_ok=false
+          create_view "03 — Critical Path" table 'is:issue priority:P0 -status:Done' || views_ok=false
+          create_view "04 — Physical / Evidence" table 'is:issue -status:Done' || views_ok=false
+          create_view "05 — Product Roadmap" roadmap 'is:issue' || views_ok=false
+          echo "available=${views_ok}" >> "${GITHUB_OUTPUT}"
+
+      - name: Reconcile Project items and native issue relationships
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ steps.views.outputs.available }}" != "true" ]]; then
+            # GitHub's new user-owned view endpoint can be unavailable even while the
+            # Project GraphQL/CLI surface works. Do not let presentation block state.
+            python3 - <<'PY'
+          from pathlib import Path
+          path = Path("scripts/bootstrap_github_project.py")
+          text = path.read_text()
+          text = text.replace(
+              "    ensure_views(project, snapshot)\n",
+              "    print('::warning::Skipping view creation; workflow probe reported endpoint unavailable.')\n",
+          )
+          path.write_text(text)
+          PY
+          fi
+          python3 scripts/bootstrap_github_project.py --bootstrap
 
   sync-issue:
     if: github.event_name == 'issues'
