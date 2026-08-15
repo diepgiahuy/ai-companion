@@ -90,12 +90,15 @@ func (s *Store) ConfirmPairingSession(ctx context.Context, mutation pairing.Conf
 		}
 		if isInitiator {
 			initiatorConfirmed = &mutation.ConfirmedAt
-			_, err = tx.Exec(ctx, `UPDATE pairing_sessions SET initiator_confirmed_at=$2,updated_at=now() WHERE session_id=$1`, session.ID, mutation.ConfirmedAt)
+			if _, err := tx.Exec(ctx, `UPDATE pairing_sessions SET initiator_confirmed_at=$2,updated_at=now() WHERE session_id=$1`, session.ID, mutation.ConfirmedAt); err != nil {
+				return nil, fmt.Errorf("record pairing confirmation: %w", err)
+			}
 		} else {
 			peerConfirmed = &mutation.ConfirmedAt
-			_, err = tx.Exec(ctx, `UPDATE pairing_sessions SET peer_confirmed_at=$2,updated_at=now() WHERE session_id=$1`, session.ID, mutation.ConfirmedAt)
+			if _, err := tx.Exec(ctx, `UPDATE pairing_sessions SET peer_confirmed_at=$2,updated_at=now() WHERE session_id=$1`, session.ID, mutation.ConfirmedAt); err != nil {
+				return nil, fmt.Errorf("record pairing confirmation: %w", err)
+			}
 		}
-		if err != nil { return nil, fmt.Errorf("record pairing confirmation: %w", err) }
 		session.InitiatorConfirmedAt = initiatorConfirmed
 		session.PeerConfirmedAt = peerConfirmed
 		if initiatorConfirmed == nil || peerConfirmed == nil {
