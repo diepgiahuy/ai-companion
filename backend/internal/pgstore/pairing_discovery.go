@@ -33,8 +33,9 @@ func (s *Store) ResolvePairingCandidate(ctx context.Context, discoveryID string,
 			return pairing.Participant{}, fmt.Errorf("scan pairing candidate: %w", err)
 		}
 		match := false
-		for _, offset := range []time.Duration{-pairing.DiscoverySlotDuration, 0, pairing.DiscoverySlotDuration} {
-			expected, err := pairing.DiscoveryIDFromCredentialHash(tokenSHA256, now.Add(offset))
+		for slotOffset := -pairing.DiscoveryPastSlots; slotOffset <= pairing.DiscoveryFutureSlots; slotOffset++ {
+			expected, err := pairing.DiscoveryIDFromCredentialHash(
+				tokenSHA256, now.Add(time.Duration(slotOffset)*pairing.DiscoverySlotDuration))
 			if err != nil {
 				return pairing.Participant{}, fmt.Errorf("derive pairing discovery id: %w", err)
 			}
