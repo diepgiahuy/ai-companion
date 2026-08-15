@@ -59,6 +59,12 @@ func ownerAuthFromEnvironment(next http.Handler, claimRepository controlplane.De
 			// ownerauth.Service.Handler: authorization must bind bootstrap + device.
 			service.HandleBoundClaimAuthorization(w, r)
 			return
+		case "/v1/owner/device-claim-code":
+			service.HandleHumanClaimCode(w, r)
+			return
+		case "/v1/owner/device-claim-codes/redeem":
+			service.HandleHumanClaimCodeRedeem(w, r)
+			return
 		case "/v1/owner/device-claims":
 			if claims == nil {
 				http.Error(w, "device claim bootstrap unavailable", http.StatusServiceUnavailable)

@@ -7,6 +7,7 @@ using companion::provisioning::PendingClaimView;
 using companion::provisioning::RuntimeConfigView;
 using companion::provisioning::State;
 using companion::provisioning::transition;
+using companion::provisioning::valid_human_claim_code;
 using companion::provisioning::valid_pending_claim;
 using companion::provisioning::valid_runtime_config;
 
@@ -58,15 +59,36 @@ int main() {
       .device_credential = "device-token",
   }));
 
+  assert(valid_human_claim_code("ABCDE23456"));
+  assert(!valid_human_claim_code("abcde23456"));
+  assert(!valid_human_claim_code("ABCDE-23456"));
+  assert(!valid_human_claim_code("ABCDE12345")); // 1 is intentionally excluded.
+
   assert(valid_pending_claim(PendingClaimView{
       .bootstrap_id = "boot-123",
+      .claim_code = "ABCDE23456",
+      .claim_authorization = "",
+      .idempotency_key = "claim-idem-123",
+      .server_url = "wss://companion.example/v2/device",
+  }));
+  assert(valid_pending_claim(PendingClaimView{
+      .bootstrap_id = "boot-123",
+      .claim_code = "",
       .claim_authorization = "short-lived-authorization",
       .idempotency_key = "claim-idem-123",
       .server_url = "wss://companion.example/v2/device",
   }));
   assert(!valid_pending_claim(PendingClaimView{
       .bootstrap_id = "boot-123",
+      .claim_code = "ABCDE23456",
       .claim_authorization = "short-lived-authorization",
+      .idempotency_key = "claim-idem-123",
+      .server_url = "wss://companion.example/v2/device",
+  }));
+  assert(!valid_pending_claim(PendingClaimView{
+      .bootstrap_id = "boot-123",
+      .claim_code = "ABCDE23456",
+      .claim_authorization = "",
       .idempotency_key = "short",
       .server_url = "wss://companion.example/v2/device",
   }));

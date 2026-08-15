@@ -34,6 +34,7 @@ struct PendingConfig {
   FixedSecret<64> wifi_password;
   FixedSecret<513> server_url;
   FixedSecret<129> bootstrap_id;
+  FixedSecret<17> claim_code;
   FixedSecret<1025> claim_authorization;
   FixedSecret<129> idempotency_key;
 };
@@ -53,7 +54,9 @@ public:
 
   // save_pending and commit_runtime write all phase fields plus the phase marker
   // under one NVS handle and call nvs_commit once. A reboot therefore observes
-  // either the previous committed phase or the new complete phase.
+  // either the previous committed phase or the new complete phase. Pending may
+  // contain either the one-time human code or, after redemption, only the opaque
+  // short-lived claim authorization.
   bool save_pending(const PendingConfig& pending) const;
   bool commit_runtime(const PendingConfig& pending,
                       std::string_view device_credential) const;
