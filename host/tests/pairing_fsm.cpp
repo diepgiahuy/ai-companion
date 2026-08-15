@@ -34,6 +34,17 @@ int main() {
   assert(fsm.state() == State::idle);
   assert(fsm.last_stop_reason() == StopReason::success);
 
+  // The peer receives pairing.session_created while it is still advertising
+  // and scanning. It must converge directly from discovery to confirmation.
+  PairingFsm peer;
+  assert(peer.begin(2'500, "CP-PPPPPPPPPPPPPPPP"));
+  assert(peer.state() == State::discovering);
+  assert(peer.session_created(2'600, "peer-session",
+                              "peer-participant-nonce", 30'000));
+  assert(peer.state() == State::awaiting_confirmation);
+  assert(peer.confirm(2'700, "peer-session"));
+  assert(peer.state() == State::confirming);
+
   PairingFsm ambiguous;
   assert(ambiguous.begin(3'000, "CP-EEEEEEEEEEEEEEEE"));
   assert(ambiguous.observe_candidate(3'100, "CP-FFFFFFFFFFFFFFFF", "evidence-a"));
