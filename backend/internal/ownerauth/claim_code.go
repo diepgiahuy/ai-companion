@@ -101,11 +101,7 @@ func (s *Service) MintBoundHumanClaimCode(rawSession, csrf, bootstrapID, deviceI
 	}
 	binding := claimBinding(bootstrapID, deviceID)
 	now := s.now()
-	claim := ClaimAuthorization{
-		UserID:      session.UserID,
-		BootstrapID: humanClaimMarker + binding,
-		ExpiresAt:   now.Add(s.humanClaimTTL()),
-	}
+	claim := ClaimAuthorization{UserID: session.UserID, BootstrapID: humanClaimMarker + binding, ExpiresAt: now.Add(s.humanClaimTTL())}
 
 	for attempt := 0; attempt < 4; attempt++ {
 		code, codeErr := randomHumanClaimCode()
@@ -158,11 +154,7 @@ func rememberRedemption(s *Service, codeKey, redemptionID, rawAuthorization stri
 		serviceEntries = make(map[string]claimCodeRedemption)
 		claimCodeRedemptions.entries[s] = serviceEntries
 	}
-	serviceEntries[codeKey] = claimCodeRedemption{
-		redemptionKey:    tokenKey(redemptionID),
-		rawAuthorization: rawAuthorization,
-		claim:            claim,
-	}
+	serviceEntries[codeKey] = claimCodeRedemption{redemptionKey: tokenKey(redemptionID), rawAuthorization: rawAuthorization, claim: claim}
 }
 
 // RedeemBoundHumanClaimCode consumes a human code once. A retry carrying the
@@ -173,8 +165,7 @@ func (s *Service) RedeemBoundHumanClaimCode(rawCode, bootstrapID, deviceID, rede
 	bootstrapID = strings.TrimSpace(bootstrapID)
 	deviceID = strings.TrimSpace(deviceID)
 	redemptionID = strings.TrimSpace(redemptionID)
-	if code == "" || bootstrapID == "" || len(bootstrapID) > 128 || deviceID == "" || len(deviceID) > 128 ||
-		len(redemptionID) < 8 || len(redemptionID) > 128 {
+	if code == "" || bootstrapID == "" || len(bootstrapID) > 128 || deviceID == "" || len(deviceID) > 128 || len(redemptionID) < 8 || len(redemptionID) > 128 {
 		return "", ClaimAuthorization{}, ErrInvalidClaim
 	}
 	key := tokenKey(code)
@@ -193,6 +184,11 @@ func (s *Service) RedeemBoundHumanClaimCode(rawCode, bootstrapID, deviceID, rede
 	}
 	if !ok || claim.BootstrapID != humanClaimMarker+binding {
 		s.mu.Unlock()
+		// A concurrent first redemption may have consumed the code after our
+		// initial cache read. Recheck after the claim lock is released.
+		if raw, replayed, found := redemptionReplay(s, key, binding, redemptionID, now); found {
+			return raw, replayed, nil
+		}
 		return "", ClaimAuthorization{}, ErrInvalidClaim
 	}
 	rawAuthorization, err := randomToken(32)
@@ -203,8 +199,10 @@ func (s *Service) RedeemBoundHumanClaimCode(rawCode, bootstrapID, deviceID, rede
 	delete(s.claims, key)
 	claim.BootstrapID = binding
 	s.claims[tokenKey(rawAuthorization)] = claim
-	s.mu.Unlock()
+	// Publish retry state before releasing the claim lock. A concurrent caller
+	// that waited on s.mu can then find the same redemption on its second lookup.
 	rememberRedemption(s, key, redemptionID, rawAuthorization, claim)
+	s.mu.Unlock()
 	return rawAuthorization, claim, nil
 }
 
