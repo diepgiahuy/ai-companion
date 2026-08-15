@@ -61,14 +61,20 @@ func (s *session) handlePairingControl(ctx context.Context, data []byte) (bool, 
 		if value.Initiator != authenticated {
 			return true, pairing.ErrUnauthorized
 		}
-		// The peer must have an authenticated active Companion session to receive
-		// its participant-specific confirmation nonce. Enrollment/ownership is
-		// rechecked transactionally by the pairing repository.
-		if len(s.hub.targets("", value.CandidateDeviceID)) == 0 {
+		// Privacy boundary: CandidateDeviceID is deliberately interpreted as the
+		// peer's opaque active WebSocket session_id, not as a stable device ID.
+		// Firmware advertises that connection-scoped alias over BLE. Only the
+		// authenticated hub resolves it back to a stable device identity before
+		// entering the authoritative pairing service.
+		peerSession := s.hub.pairingDiscoveryTarget(value.CandidateDeviceID)
+		if peerSession == nil {
 			return true, pairing.ErrDeviceUnavailable
 		}
+		if peerSession == s || peerSession.deviceID == s.deviceID {
+			return true, pairing.ErrUnauthorized
+		}
 		return true, s.processInbound(envelope.MessageID, data, func() error {
-			created, _, err := service.Create(ctx, sessionPairingParticipant(s), value.CandidateDeviceID, value.ProximityEvidenceID, envelope.IdempotencyKey)
+			created, _, err := service.Create(ctx, sessionPairingParticipant(s), peerSession.deviceID, value.ProximityEvidenceID, envelope.IdempotencyKey)
 			if err != nil {
 				return err
 			}
