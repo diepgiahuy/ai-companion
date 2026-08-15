@@ -143,10 +143,13 @@ def retire_project_fields() -> None:
     if project is None:
         die(f"Project {TITLE!r} not found")
 
+    # `projectV2Field` is the ProjectV2FieldConfiguration union. This mutation
+    # only needs acknowledgement, so request the scalar payload field instead
+    # of selecting object fields directly on the union.
     mutation = """
     mutation($fieldId:ID!) {
       deleteProjectV2Field(input:{fieldId:$fieldId}) {
-        projectV2Field { id }
+        clientMutationId
       }
     }
     """
