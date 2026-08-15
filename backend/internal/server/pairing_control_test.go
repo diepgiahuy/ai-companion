@@ -11,11 +11,16 @@ import (
 )
 
 type pairingControlRepository struct {
-	create func(pairing.CreateMutation) (pairing.Session, bool, error)
+	resolve func(string, time.Time) (pairing.Participant, error)
+	create  func(pairing.CreateMutation) (pairing.Session, bool, error)
 	confirm func(pairing.ConfirmMutation) (pairing.ConfirmationOutcome, error)
-	reject func(pairing.RejectMutation) (pairing.Session, bool, error)
+	reject  func(pairing.RejectMutation) (pairing.Session, bool, error)
 }
 
+func (r pairingControlRepository) ResolvePairingCandidate(_ context.Context, discoveryID string, at time.Time) (pairing.Participant, error) {
+	if r.resolve != nil { return r.resolve(discoveryID, at) }
+	return pairing.Participant{}, pairing.ErrDeviceUnavailable
+}
 func (r pairingControlRepository) CreatePairingSession(_ context.Context, m pairing.CreateMutation) (pairing.Session, bool, error) {
 	if r.create != nil { return r.create(m) }
 	return pairing.Session{}, false, errors.New("unexpected create")
@@ -107,6 +112,46 @@ func TestPairingControlDeliversParticipantSpecificNonceAsMessageID(t *testing.T)
 	createdB := peerPayload.(*protocol.PairingSessionCreated)
 	if createdA.SessionID == "" || createdA.SessionID != createdB.SessionID || createdA.Peer.DeviceID != peer.deviceID {
 		t.Fatalf("created payloads diverged: %+v %+v", createdA, createdB)
+	}
+}
+
+func TestPairingControlResolvesRotatingBLECandidateBeforeStableLookup(t *testing.T) {
+	hub := newSessionHub()
+	const discoveryID = "CP-ABCDEFGHIJKLMNOP"
+	resolved := pairing.Participant{UserID:"user-b", DeviceID:"device-b"}
+	repo := pairingControlRepository{
+		resolve: func(got string, _ time.Time) (pairing.Participant, error) {
+			if got != discoveryID { t.Fatalf("discovery id=%q", got) }
+			return resolved, nil
+		},
+		create: func(m pairing.CreateMutation) (pairing.Session, bool, error) {
+			if m.Peer.DeviceID != resolved.DeviceID || m.ProximityEvidenceID != discoveryID {
+				t.Fatalf("resolved create mutation=%+v", m)
+			}
+			m.Peer.UserID = resolved.UserID
+			return m.Session, false, nil
+		},
+	}
+	service, err := pairing.New(repo)
+	if err != nil { t.Fatal(err) }
+	hub.setPairingService(service)
+	initiator := pairingTestSession(hub, "session-a", "user-a", "device-a")
+	peer := pairingTestSession(hub, "session-b", resolved.UserID, resolved.DeviceID)
+	hub.register(initiator.deviceID, initiator)
+	hub.register(peer.deviceID, peer)
+
+	data := pairingInteraction(t, initiator.id, "msg-create-ble", "idem-create-ble", protocol.PairingSessionCreateType,
+		protocol.PairingSessionCreate{
+			Initiator: protocol.PairingParticipant{OwnerUserID:initiator.userID, DeviceID:initiator.deviceID},
+			CandidateDeviceID:discoveryID, ProximityEvidenceID:discoveryID,
+		})
+	handled, err := initiator.handlePairingControl(context.Background(), data)
+	if err != nil || !handled { t.Fatalf("handled=%v err=%v", handled, err) }
+	_, initiatorPayload := decodePairingOutbound(t, <-initiator.controlWrites)
+	_, peerPayload := decodePairingOutbound(t, <-peer.controlWrites)
+	if initiatorPayload.(*protocol.PairingSessionCreated).Peer.DeviceID != resolved.DeviceID ||
+		peerPayload.(*protocol.PairingSessionCreated).Peer.DeviceID != resolved.DeviceID {
+		t.Fatalf("stable peer not restored to both participants")
 	}
 }
 
