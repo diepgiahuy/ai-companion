@@ -25,6 +25,9 @@ jobs:
       e2e: ${{ steps.classify.outputs.e2e }}
       backend: ${{ steps.classify.outputs.backend }}
       codeql: ${{ steps.classify.outputs.codeql }}
+      postgres: ${{ steps.classify.outputs.postgres }}
+      protocol: ${{ steps.classify.outputs.protocol }}
+      tier1: ${{ steps.classify.outputs.tier1 }}
       full: ${{ steps.classify.outputs.full }}
     steps:
       - name: Checkout for classification and evidence
@@ -47,6 +50,9 @@ jobs:
           e2e=false
           backend=false
           codeql=false
+          postgres=false
+          protocol=false
+          tier1=false
           full=true
 
           if [[ "$EVENT_NAME" == "pull_request" && "$PR_DRAFT" == "true" ]]; then
@@ -59,10 +65,16 @@ jobs:
             e2e=true
             backend=true
             codeql=true
+            postgres=true
+            protocol=true
+            tier1=true
           elif [[ -z "${BASE_SHA:-}" || "$BASE_SHA" =~ ^0+$ ]]; then
             e2e=true
             backend=true
             codeql=true
+            postgres=true
+            protocol=true
+            tier1=true
           else
             git diff --name-only "$BASE_SHA" "$HEAD_SHA" > /tmp/ci-changed-files.txt
             cat /tmp/ci-changed-files.txt
@@ -82,6 +94,21 @@ jobs:
                   codeql=true
                   ;;
               esac
+              case "$file" in
+                db/postgres/*|ops/postgres/*|backend/internal/pgstore/*|backend/internal/jobs/*|backend/cmd/companiond/*|backend/cmd/companion-river-migrate/*|backend/cmd/companion-migrate/*|backend/go.mod|backend/go.sum|.github/workflows/postgres-schema.yml|.github/workflows/ci.yml)
+                  postgres=true
+                  ;;
+              esac
+              case "$file" in
+                backend/internal/protocol/*|backend/internal/server/*|components/companion_app/*|components/esp32_network/*|host/*|testdata/protocol/*|CMakeLists.txt|sdkconfig.defaults|partitions.csv|main/*|Dockerfile.esp-idf|.github/workflows/protocol_v2.yml|.github/workflows/ci.yml)
+                  protocol=true
+                  ;;
+              esac
+              case "$file" in
+                host/companion_software_device/*|components/companion_app/*|backend/*|db/postgres/*|ops/postgres/*|testdata/scenarios/*|.github/workflows/software-device-e2e.yml|.github/workflows/ci.yml)
+                  tier1=true
+                  ;;
+              esac
             done < /tmp/ci-changed-files.txt
           fi
 
@@ -89,6 +116,9 @@ jobs:
             echo "e2e=$e2e"
             echo "backend=$backend"
             echo "codeql=$codeql"
+            echo "postgres=$postgres"
+            echo "protocol=$protocol"
+            echo "tier1=$tier1"
             echo "full=$full"
           } >> "$GITHUB_OUTPUT"
 
@@ -99,6 +129,9 @@ jobs:
             echo "- host e2e: $e2e"
             echo "- backend quality: $backend"
             echo "- CodeQL Go: $codeql"
+            echo "- PostgreSQL/River: $postgres"
+            echo "- Protocol v2: $protocol"
+            echo "- Tier-1 software device: $tier1"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Validate production evidence claims
@@ -278,9 +311,39 @@ jobs:
         with:
           category: /language:go
 
+  postgres-gate:
+    name: PostgreSQL / River integration
+    needs: prepare
+    if: >-
+      github.event_name != 'schedule' &&
+      needs.prepare.result == 'success' &&
+      needs.prepare.outputs.full == 'true' &&
+      needs.prepare.outputs.postgres == 'true'
+    uses: ./.github/workflows/postgres-schema.yml
+
+  protocol-gate:
+    name: Protocol v2 firmware compile
+    needs: prepare
+    if: >-
+      github.event_name != 'schedule' &&
+      needs.prepare.result == 'success' &&
+      needs.prepare.outputs.full == 'true' &&
+      needs.prepare.outputs.protocol == 'true'
+    uses: ./.github/workflows/protocol_v2.yml
+
+  tier1-gate:
+    name: Tier-1 software-device orchestration
+    needs: prepare
+    if: >-
+      github.event_name != 'schedule' &&
+      needs.prepare.result == 'success' &&
+      needs.prepare.outputs.full == 'true' &&
+      needs.prepare.outputs.tier1 == 'true'
+    uses: ./.github/workflows/software-device-e2e.yml
+
   pr-gate:
     name: PR Gate
-    needs: [prepare, e2e, backend-quality, codeql-go]
+    needs: [prepare, e2e, backend-quality, codeql-go, postgres-gate, protocol-gate, tier1-gate]
     if: github.event_name != 'schedule' && always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -292,9 +355,15 @@ jobs:
           E2E_RESULT: ${{ needs.e2e.result }}
           BACKEND_RESULT: ${{ needs.backend-quality.result }}
           CODEQL_RESULT: ${{ needs.codeql-go.result }}
+          POSTGRES_RESULT: ${{ needs.postgres-gate.result }}
+          PROTOCOL_RESULT: ${{ needs.protocol-gate.result }}
+          TIER1_RESULT: ${{ needs.tier1-gate.result }}
           E2E_REQUIRED: ${{ needs.prepare.outputs.e2e }}
           BACKEND_REQUIRED: ${{ needs.prepare.outputs.backend }}
           CODEQL_REQUIRED: ${{ needs.prepare.outputs.codeql }}
+          POSTGRES_REQUIRED: ${{ needs.prepare.outputs.postgres }}
+          PROTOCOL_REQUIRED: ${{ needs.prepare.outputs.protocol }}
+          TIER1_REQUIRED: ${{ needs.prepare.outputs.tier1 }}
           FULL_MODE: ${{ needs.prepare.outputs.full }}
         run: |
           set -euo pipefail
@@ -317,6 +386,15 @@ jobs:
           if [[ "$CODEQL_REQUIRED" == "true" && "$FULL_MODE" == "true" ]]; then
             require_success "CodeQL Go" "$CODEQL_RESULT"
           fi
+          if [[ "$POSTGRES_REQUIRED" == "true" && "$FULL_MODE" == "true" ]]; then
+            require_success "PostgreSQL / River integration" "$POSTGRES_RESULT"
+          fi
+          if [[ "$PROTOCOL_REQUIRED" == "true" && "$FULL_MODE" == "true" ]]; then
+            require_success "Protocol v2 firmware compile" "$PROTOCOL_RESULT"
+          fi
+          if [[ "$TIER1_REQUIRED" == "true" && "$FULL_MODE" == "true" ]]; then
+            require_success "Tier-1 software-device orchestration" "$TIER1_RESULT"
+          fi
 
           {
             echo "## PR Gate"
@@ -326,4 +404,7 @@ jobs:
             echo "- e2e: $E2E_RESULT"
             echo "- backend: $BACKEND_RESULT"
             echo "- CodeQL: $CODEQL_RESULT"
+            echo "- PostgreSQL/River: $POSTGRES_RESULT"
+            echo "- Protocol v2: $PROTOCOL_RESULT"
+            echo "- Tier-1 software device: $TIER1_RESULT"
           } >> "$GITHUB_STEP_SUMMARY"

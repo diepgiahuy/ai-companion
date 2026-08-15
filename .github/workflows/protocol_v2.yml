@@ -1,40 +1,8 @@
 name: Protocol v2 contract
 
 on:
-  pull_request:
-    paths:
-      - "backend/internal/protocol/**"
-      - "backend/internal/server/**"
-      - "components/companion_app/**"
-      - "components/esp32_network/**"
-      - "host/**"
-      - "testdata/protocol/**"
-      - "CMakeLists.txt"
-      - "sdkconfig.defaults"
-      - "partitions.csv"
-      - "main/**"
-      - "Dockerfile.esp-idf"
-      - ".github/workflows/protocol_v2.yml"
-  push:
-    branches: [main]
-    paths:
-      - "backend/internal/protocol/**"
-      - "backend/internal/server/**"
-      - "components/companion_app/**"
-      - "components/esp32_network/**"
-      - "host/**"
-      - "testdata/protocol/**"
-      - "CMakeLists.txt"
-      - "sdkconfig.defaults"
-      - "partitions.csv"
-      - "main/**"
-      - "Dockerfile.esp-idf"
-      - ".github/workflows/protocol_v2.yml"
+  workflow_call:
   workflow_dispatch:
-
-concurrency:
-  group: protocol-v2-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
 
 permissions:
   contents: read
