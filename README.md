@@ -67,6 +67,14 @@ The product is intentionally a **modular monolith + firmware**, not a microservi
 - Transactional outbox semantics are used when durable state and event delivery must be atomic.
 - River provides durable retention/background jobs after the PostgreSQL hard cut.
 
+### Provisioning and owner recovery
+
+- An unprovisioned Companion uses the local WPA2 setup portal. The device generates its bootstrap reference and idempotency key; the human supplies only normal Wi-Fi/backend settings plus one short claim code.
+- The owner claim page uses the existing OIDC/PKCE session and CSRF boundary. A human claim code is short-lived, one-time, rate-limited and bound to the exact `(bootstrap_id, device_id)` intent; it is never a device credential.
+- Firmware exchanges that code for the existing opaque short-lived claim authorization, persists the authorization before use, and obtains the long-lived per-device credential only through the canonical `/v1/owner/device-claims` path. The human-facing browser pages never render that credential.
+- Local factory reset does not transfer backend ownership. The same authenticated owner may atomically rotate the lost/revoked device credential; a different owner remains a deterministic conflict.
+- These are software/security-contract facts. Physical captive-portal usability, reset/reboot/radio recovery and end-to-end consumer timing remain separate HIL evidence.
+
 ### Voice mail
 
 - Voice-mail metadata is PostgreSQL-authoritative and media is stored through a replaceable blob boundary; the current adapter is local filesystem Ogg Opus.
