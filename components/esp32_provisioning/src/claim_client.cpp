@@ -1,5 +1,7 @@
 #include "companion/claim_client.hpp"
 
+#include "companion/provisioning_fsm.hpp"
+
 #include "cJSON.h"
 #include "esp_crt_bundle.h"
 #include "esp_http_client.h"
@@ -38,13 +40,36 @@ ClaimStatus classify_status(int status) {
   return ClaimStatus::setup_required;
 }
 
-HttpResult post_claim(std::string_view url, std::string_view authorization,
-                      std::string_view idempotency_key, std::string_view body) {
+bool owner_endpoint_url(std::string_view websocket_url, std::string_view path,
+                        std::array<char, 640>& output) {
+  output.fill('\0');
+  constexpr std::string_view prefix = "wss://";
+  if (!websocket_url.starts_with(prefix) || websocket_url.find('@') != std::string_view::npos ||
+      websocket_url.find('?') != std::string_view::npos || websocket_url.find('#') != std::string_view::npos) {
+    return false;
+  }
+  const size_t authority_begin = prefix.size();
+  const size_t slash = websocket_url.find('/', authority_begin);
+  const std::string_view authority = slash == std::string_view::npos
+      ? websocket_url.substr(authority_begin)
+      : websocket_url.substr(authority_begin, slash - authority_begin);
+  if (authority.empty()) return false;
+  const std::string value = "https://" + std::string(authority) + std::string(path);
+  if (value.size() >= output.size()) return false;
+  std::memcpy(output.data(), value.data(), value.size());
+  return true;
+}
+
+HttpResult post_json(std::string_view url, std::string_view body,
+                     std::string_view authorization = {},
+                     std::string_view idempotency_key = {}) {
   HttpResult result;
   const std::string owned_url(url);
-  const std::string bearer = "Bearer " + std::string(authorization);
-  const std::string idem(idempotency_key);
   const std::string payload(body);
+  const std::string bearer = authorization.empty()
+      ? std::string{}
+      : "Bearer " + std::string(authorization);
+  const std::string idem(idempotency_key);
 
   esp_http_client_config_t config{};
   config.url = owned_url.c_str();
@@ -56,8 +81,8 @@ HttpResult post_claim(std::string_view url, std::string_view authorization,
   if (client == nullptr) return result;
 
   esp_http_client_set_method(client, HTTP_METHOD_POST);
-  esp_http_client_set_header(client, "Authorization", bearer.c_str());
-  esp_http_client_set_header(client, "Idempotency-Key", idem.c_str());
+  if (!bearer.empty()) esp_http_client_set_header(client, "Authorization", bearer.c_str());
+  if (!idem.empty()) esp_http_client_set_header(client, "Idempotency-Key", idem.c_str());
   esp_http_client_set_header(client, "Content-Type", "application/json");
   esp_http_client_set_header(client, "Accept", "application/json");
   if (esp_http_client_open(client, payload.size()) != ESP_OK) {
@@ -95,6 +120,39 @@ HttpResult post_claim(std::string_view url, std::string_view authorization,
   esp_http_client_cleanup(client);
   return result;
 }
+
+std::string make_claim_body(std::string_view device_id, std::string_view bootstrap_id) {
+  cJSON* request = cJSON_CreateObject();
+  if (request == nullptr) return {};
+  const std::string owned_device(device_id);
+  const std::string owned_bootstrap(bootstrap_id);
+  cJSON_AddStringToObject(request, "device_id", owned_device.c_str());
+  cJSON_AddStringToObject(request, "bootstrap_id", owned_bootstrap.c_str());
+  char* encoded = cJSON_PrintUnformatted(request);
+  cJSON_Delete(request);
+  if (encoded == nullptr) return {};
+  const std::string body(encoded);
+  cJSON_free(encoded);
+  return body;
+}
+
+std::string make_exchange_body(std::string_view code, std::string_view device_id,
+                               std::string_view bootstrap_id) {
+  cJSON* request = cJSON_CreateObject();
+  if (request == nullptr) return {};
+  const std::string owned_code(code);
+  const std::string owned_device(device_id);
+  const std::string owned_bootstrap(bootstrap_id);
+  cJSON_AddStringToObject(request, "claim_code", owned_code.c_str());
+  cJSON_AddStringToObject(request, "device_id", owned_device.c_str());
+  cJSON_AddStringToObject(request, "bootstrap_id", owned_bootstrap.c_str());
+  char* encoded = cJSON_PrintUnformatted(request);
+  cJSON_Delete(request);
+  if (encoded == nullptr) return {};
+  const std::string body(encoded);
+  cJSON_free(encoded);
+  return body;
+}
 } // namespace
 
 std::string_view ClaimResult::credential_view() const {
@@ -105,45 +163,60 @@ std::string_view ClaimResult::credential_view() const {
 
 bool owner_claim_url(std::string_view websocket_url,
                      std::array<char, 640>& output) {
-  output.fill('\0');
-  constexpr std::string_view prefix = "wss://";
-  if (!websocket_url.starts_with(prefix) || websocket_url.find('@') != std::string_view::npos ||
-      websocket_url.find('?') != std::string_view::npos || websocket_url.find('#') != std::string_view::npos) {
-    return false;
+  return owner_endpoint_url(websocket_url, "/v1/owner/device-claims", output);
+}
+
+bool owner_claim_code_exchange_url(std::string_view websocket_url,
+                                   std::array<char, 640>& output) {
+  return owner_endpoint_url(websocket_url, "/v1/owner/claim-code-exchanges", output);
+}
+
+ClaimStatus ClaimClient::exchange_claim_code(PendingConfig& pending,
+                                              std::string_view device_id) const {
+  const std::string_view code = pending.claim_authorization.view();
+  if (!valid_human_claim_code(code) || device_id.empty() || device_id.size() > 128) {
+    return ClaimStatus::setup_required;
   }
-  const size_t authority_begin = prefix.size();
-  const size_t slash = websocket_url.find('/', authority_begin);
-  const std::string_view authority = slash == std::string_view::npos
-      ? websocket_url.substr(authority_begin)
-      : websocket_url.substr(authority_begin, slash - authority_begin);
-  if (authority.empty()) return false;
-  const std::string value = "https://" + std::string(authority) + "/v1/owner/device-claims";
-  if (value.size() >= output.size()) return false;
-  std::memcpy(output.data(), value.data(), value.size());
-  return true;
+  std::array<char, 640> url{};
+  if (!owner_claim_code_exchange_url(pending.server_url.view(), url)) {
+    return ClaimStatus::setup_required;
+  }
+  const std::string body = make_exchange_body(code, device_id, pending.bootstrap_id.view());
+  if (body.empty()) return ClaimStatus::retryable;
+  const HttpResult response = post_json(url.data(), body);
+  const ClaimStatus status = classify_status(response.status);
+  if (status != ClaimStatus::success) return status;
+
+  cJSON* root = cJSON_ParseWithLength(response.body.data(), response.body.size());
+  if (root == nullptr) return ClaimStatus::retryable;
+  const cJSON* authorization = cJSON_GetObjectItemCaseSensitive(root, "claim_authorization");
+  const bool ok = cJSON_IsString(authorization) && authorization->valuestring != nullptr &&
+                  copy_fixed(authorization->valuestring,
+                             pending.claim_authorization.value.data(),
+                             pending.claim_authorization.value.size());
+  cJSON_Delete(root);
+  if (!ok || valid_human_claim_code(pending.claim_authorization.view())) {
+    pending.claim_authorization.value.fill('\0');
+    return ClaimStatus::retryable;
+  }
+  return ClaimStatus::success;
 }
 
 ClaimStatus ClaimClient::claim(const PendingConfig& pending, std::string_view device_id,
                                ClaimResult& result) const {
   result = {};
-  if (device_id.empty() || device_id.size() > 128) return ClaimStatus::setup_required;
+  if (device_id.empty() || device_id.size() > 128 ||
+      valid_human_claim_code(pending.claim_authorization.view())) {
+    // A human code is never a Bearer credential. It must be exchanged first.
+    return ClaimStatus::setup_required;
+  }
   std::array<char, 640> url{};
   if (!owner_claim_url(pending.server_url.view(), url)) return ClaimStatus::setup_required;
 
-  cJSON* request = cJSON_CreateObject();
-  if (request == nullptr) return ClaimStatus::retryable;
-  const std::string owned_device(device_id);
-  const std::string owned_bootstrap(pending.bootstrap_id.view());
-  cJSON_AddStringToObject(request, "device_id", owned_device.c_str());
-  cJSON_AddStringToObject(request, "bootstrap_id", owned_bootstrap.c_str());
-  char* encoded = cJSON_PrintUnformatted(request);
-  cJSON_Delete(request);
-  if (encoded == nullptr) return ClaimStatus::retryable;
-  const std::string body(encoded);
-  cJSON_free(encoded);
-
-  const HttpResult response = post_claim(url.data(), pending.claim_authorization.view(),
-                                         pending.idempotency_key.view(), body);
+  const std::string body = make_claim_body(device_id, pending.bootstrap_id.view());
+  if (body.empty()) return ClaimStatus::retryable;
+  const HttpResult response = post_json(url.data(), body, pending.claim_authorization.view(),
+                                        pending.idempotency_key.view());
   const ClaimStatus status = classify_status(response.status);
   if (status != ClaimStatus::success) return status;
 
