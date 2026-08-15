@@ -79,7 +79,9 @@ PersistedState ProvisioningStore::state() const {
   size_t size = sizeof(raw);
   const esp_err_t err = nvs_get_str(handle, kState, raw, &size);
   nvs_close(handle);
-  if (err == ESP_ERR_NVS_NOT_FOUND) return PersistedState::unprovisioned;
+  // If the namespace already exists but its phase marker disappeared, other
+  // credential/config keys may still exist. Fail closed rather than treating
+  // that partial/corrupt state as a factory-new device.
   if (err != ESP_OK || size == 0 || size > sizeof(raw)) return PersistedState::invalid;
   return parse_state(raw);
 }
