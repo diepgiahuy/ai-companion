@@ -25,19 +25,35 @@
 
 namespace {
 constexpr char kTag[] = "companion";
-constexpr uint64_t kFactoryResetHoldMs = 3'000;
+constexpr uint64_t kWifiReprovisionHoldMs = 3'000;
+constexpr uint64_t kFactoryResetHoldMs = 8'000;
 uint64_t now_ms() { return static_cast<uint64_t>(esp_timer_get_time() / 1000); }
 
-bool factory_reset_requested(companion::GpioButton& button,
-                             companion::Ssd1306Display& display) {
-  if (!button.is_pressed()) return false;
-  display.show(companion::UiState::error, "HOLD RESET 3S");
+enum class BootGesture {
+  none,
+  wifi_reprovision,
+  factory_reset,
+};
+
+BootGesture boot_gesture(companion::GpioButton& button,
+                         companion::Ssd1306Display& display) {
+  if (!button.is_pressed()) return BootGesture::none;
   const uint64_t started = now_ms();
-  while (now_ms() - started < kFactoryResetHoldMs) {
-    if (!button.is_pressed()) return false;
+  display.show(companion::UiState::connecting, "HOLD 3S WIFI");
+  while (button.is_pressed()) {
+    const uint64_t elapsed = now_ms() - started;
+    if (elapsed >= kFactoryResetHoldMs) {
+      display.show(companion::UiState::error, "FACTORY RESET");
+      return BootGesture::factory_reset;
+    }
+    if (elapsed >= kWifiReprovisionHoldMs) {
+      display.show(companion::UiState::connecting, "RELEASE WIFI / 8S RESET");
+    }
     vTaskDelay(pdMS_TO_TICKS(50));
   }
-  return button.is_pressed();
+  return now_ms() - started >= kWifiReprovisionHoldMs
+      ? BootGesture::wifi_reprovision
+      : BootGesture::none;
 }
 
 [[noreturn]] void restart_after_message(companion::Ssd1306Display& display,
@@ -46,6 +62,25 @@ bool factory_reset_requested(companion::GpioButton& button,
   vTaskDelay(pdMS_TO_TICKS(750));
   esp_restart();
   while (true) vTaskDelay(portMAX_DELAY);
+}
+
+void show_portal_access(companion::Ssd1306Display& display,
+                        const companion::provisioning::SetupPortal& portal,
+                        uint32_t& frame, uint64_t now) {
+  std::array<char, 24> line{};
+  switch (frame++ % 3) {
+  case 0:
+    std::snprintf(line.data(), line.size(), "AP %.*s", static_cast<int>(portal.ssid().size()), portal.ssid().data());
+    break;
+  case 1:
+    std::snprintf(line.data(), line.size(), "PASS %.*s", static_cast<int>(portal.password().size()), portal.password().data());
+    break;
+  default:
+    std::snprintf(line.data(), line.size(), "GO 192.168.4.1");
+    break;
+  }
+  (void)now;
+  display.show(companion::UiState::connecting, line.data());
 }
 
 [[noreturn]] void run_setup_portal(companion::Ssd1306Display& display,
@@ -61,19 +96,7 @@ bool factory_reset_requested(companion::GpioButton& button,
   while (true) {
     const uint64_t now = now_ms();
     if (now >= next_render) {
-      std::array<char, 24> line{};
-      switch (frame++ % 3) {
-      case 0:
-        std::snprintf(line.data(), line.size(), "AP %.*s", static_cast<int>(portal.ssid().size()), portal.ssid().data());
-        break;
-      case 1:
-        std::snprintf(line.data(), line.size(), "PASS %.*s", static_cast<int>(portal.password().size()), portal.password().data());
-        break;
-      default:
-        std::snprintf(line.data(), line.size(), "GO 192.168.4.1");
-        break;
-      }
-      display.show(companion::UiState::connecting, line.data());
+      show_portal_access(display, portal, frame, now);
       next_render = now + 2'000;
     }
     companion::provisioning::PendingConfig pending{};
@@ -83,6 +106,35 @@ bool factory_reset_requested(companion::GpioButton& button,
         while (true) vTaskDelay(portMAX_DELAY);
       }
       restart_after_message(display, "SETUP SAVED");
+    }
+    vTaskDelay(pdMS_TO_TICKS(50));
+  }
+}
+
+[[noreturn]] void run_wifi_reprovision_portal(
+    companion::Ssd1306Display& display,
+    const companion::provisioning::ProvisioningStore& store,
+    std::string_view device_suffix) {
+  companion::provisioning::SetupPortal portal;
+  if (!portal.start_wifi_only(device_suffix)) {
+    display.show(companion::UiState::error, "WIFI SETUP ERROR");
+    while (true) vTaskDelay(portMAX_DELAY);
+  }
+  uint32_t frame = 0;
+  uint64_t next_render = 0;
+  while (true) {
+    const uint64_t now = now_ms();
+    if (now >= next_render) {
+      show_portal_access(display, portal, frame, now);
+      next_render = now + 2'000;
+    }
+    companion::provisioning::WifiConfig wifi{};
+    if (portal.take_wifi(wifi)) {
+      if (!store.update_wifi(wifi)) {
+        display.show(companion::UiState::error, "WIFI SAVE ERROR");
+        while (true) vTaskDelay(portMAX_DELAY);
+      }
+      restart_after_message(display, "WIFI SAVED");
     }
     vTaskDelay(pdMS_TO_TICKS(50));
   }
@@ -155,14 +207,16 @@ extern "C" void app_main() {
     return;
   }
 
+  const BootGesture gesture = boot_gesture(button, display);
+
   // Product identity now lives in NVS. Never auto-erase an initialized product
   // identity merely because NVS reports a version/space problem. If NVS cannot
-  // mount, only an explicit boot-held factory-reset gesture may erase the full
-  // partition so recovery stays possible without silently losing identity.
+  // mount, only the explicit long factory-reset gesture may erase the full
+  // partition; the shorter Wi-Fi gesture cannot destroy identity.
   const esp_err_t nvs_result = nvs_flash_init();
   if (nvs_result != ESP_OK) {
     ESP_LOGE(kTag, "NVS initialization failed: %s", esp_err_to_name(nvs_result));
-    if (factory_reset_requested(button, display)) {
+    if (gesture == BootGesture::factory_reset) {
       if (nvs_flash_erase() != ESP_OK) {
         display.show(UiState::error, "RESET ERROR");
         return;
@@ -181,7 +235,7 @@ extern "C" void app_main() {
   std::array<char, 8> device_suffix{};
   std::snprintf(device_suffix.data(), device_suffix.size(), "%02X%02X", mac[4], mac[5]);
 
-  if (factory_reset_requested(button, display)) {
+  if (gesture == BootGesture::factory_reset) {
     if (!provisioning_store.clear()) {
       display.show(UiState::error, "RESET ERROR");
       return;
@@ -192,9 +246,23 @@ extern "C" void app_main() {
   provisioning::PersistedState persisted = provisioning_store.state();
   if (persisted == provisioning::PersistedState::invalid) {
     display.show(UiState::error, "CONFIG CORRUPT");
-    ESP_LOGE(kTag, "provisioning state invalid; boot with button held to clear local provisioning");
+    ESP_LOGE(kTag, "provisioning state invalid; hold the boot button 8 seconds to clear local provisioning");
     return;
   }
+
+  // A short boot gesture changes only Wi-Fi for an already-enrolled device.
+  // Backend origin, device ID and long-lived device credential remain intact.
+  if (gesture == BootGesture::wifi_reprovision &&
+      (persisted == provisioning::PersistedState::ready ||
+       persisted == provisioning::PersistedState::validating)) {
+    provisioning::RuntimeConfig existing{};
+    if (!provisioning_store.load_runtime(existing)) {
+      display.show(UiState::error, "RUNTIME CORRUPT");
+      return;
+    }
+    run_wifi_reprovision_portal(display, provisioning_store, device_suffix.data());
+  }
+
   if (persisted == provisioning::PersistedState::unprovisioned) {
     run_setup_portal(display, provisioning_store, device_suffix.data());
   }
