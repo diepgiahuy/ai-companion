@@ -17,7 +17,6 @@ on:
       - main
     paths:
       - scripts/bootstrap_github_project.py
-      - scripts/migrate_project_control_plane_126.py
       - scripts/reconcile_github_issue_status.py
       - .github/workflows/project-management.yml
 
@@ -50,10 +49,6 @@ jobs:
           set -euo pipefail
           test -n "${REPO_TOKEN:-}" || { echo "::error::REPO_TOKEN is unavailable"; exit 1; }
           test -n "${PROJECT_TOKEN:-}" || { echo "::error::PROJECT_TOKEN is not configured"; exit 1; }
-
-      - name: Apply one-shot #126 native graph and Project schema migration
-        if: github.event_name == 'push'
-        run: python3 scripts/migrate_project_control_plane_126.py
 
       - name: Reconcile compatibility execution labels from native relationships
         run: python3 scripts/reconcile_github_issue_status.py
