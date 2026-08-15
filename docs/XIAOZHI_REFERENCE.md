@@ -1,51 +1,58 @@
 # Xiaozhi architectural and testing reference
 
-The project borrows some useful ideas from Xiaozhi, especially WebSocket control and raw-Opus binary media, but **does not implement Xiaozhi wire compatibility**. Backend and firmware communicate only through the canonical Companion protocol v2 documented in [`ADR-002`](ADR-002-INTERACTION-PROTOCOL-CONTRACTS.md).
+This document records **patterns** Companion learned from Xiaozhi; it is not a compatibility target or a live feature matrix for either project. Companion backend/firmware communicate only through the canonical Companion Protocol v2.
 
-| Capability | Xiaozhi reference | Companion current path |
+## Pattern comparison
+
+| Concern | Reference pattern | Companion durable choice |
 |---|---|---|
-| WebSocket control | JSON messages | Typed `Envelope` version 2 |
-| Audio media | WebSocket binary Opus | WebSocket binary raw Opus |
-| Session startup | hello exchange | `session.hello` / `session.ready` |
-| Turn control | listen / abort | `turn.listen` / `turn.abort` |
-| Speech lifecycle | STT / TTS messages | `transcript.final` / `tts.lifecycle` |
-| Device auth | transport-level identity/auth | Companion credential/policy boundary |
-| MQTT + UDP | available | not implemented |
-| MCP device tools | available | backend capability boundary only |
-| AEC / full duplex | board-dependent | future hardware/audio gate |
+| Realtime device transport | JSON control + binary Opus over WebSocket is a useful reference pattern | secure WebSocket + typed Protocol-v2 control + binary Opus |
+| Session/turn lifecycle | explicit hello/listen/abort/speech lifecycle | `session.hello` / `session.ready`, canonical turn/generation cancellation |
+| Device auth | transport/device identity boundary | database-enrolled unique revocable device credential + backend-owned identity claims |
+| Additional MQTT/UDP transport | exists in the reference ecosystem | **not a Companion Production-v1 path** |
+| Device-side MCP tools | exists in the reference ecosystem | **not used**; Companion uses backend ToolRegistry + Protocol-v2 device capabilities |
+| External MCP/integrations | backend/cloud integration pattern | backend-side official MCP Go SDK behind ToolRegistry/policy |
+| AEC / wake / full-duplex behavior | board/acoustic dependent | ESP-SR AFE/WakeNet/VAD/AEC **software path implemented**; enclosure/self-trigger/false-interruption quality remains physical #17 evidence |
+| Broad board support | reference project supports many boards | Companion intentionally keeps a narrow selected Production-v1 hardware path |
 
-The current audio profile retains 60 ms Opus uplink framing, 16 kHz mono uplink and 24 kHz mono downlink. Sharing an audio profile does not make the JSON protocol compatible. A Xiaozhi client or former Companion v1 client cannot connect without implementing Companion protocol v2; this repository intentionally contains no compatibility adapter.
+Sharing transport/audio concepts does not imply wire compatibility. A Xiaozhi client or former Companion-v1 client cannot connect without implementing Companion Protocol v2; this repository intentionally maintains no compatibility adapter.
 
-## Hardware-free testing lessons
+## Testing lessons retained
 
-Xiaozhi provides two useful testing patterns that Companion adopts without copying its implementation:
+Two useful ideas remain:
 
-1. **Firmware host/build validation.** `78/xiaozhi-esp32` contributor guidance runs host-side Python build/unit tests and explicitly separates successful builds from physical hardware validation. This is equivalent to Companion Tier 0: deterministic host tests, protocol vectors, schema checks and representative firmware builds prove logic/build contracts only.
-2. **Software device at the wire seam.** `py-xiaozhi` demonstrates that a desktop client can speak the same server protocol as a hardware device. Its normal voice setup still documents microphone/speaker or virtual-audio requirements, so Companion does not depend on desktop audio hardware for CI.
+1. **Separate build/host proof from physical proof.** Firmware build/unit success cannot prove microphone, speaker, BLE/RF, display timing, current draw or enclosure acoustics.
+2. **Test the real wire/app state machine without hardware.** Companion Tier 1 reuses the production C++ `CompanionApp` and `wire_protocol` against the real Go backend while replacing only physical ports with fixtures/sinks.
 
-Companion's selected approach is stronger for this repository: the Tier-1 software device reuses the **production C++ `CompanionApp` and `wire_protocol`** instead of reimplementing the device FSM in Python or Go. Only physical ports are replaced by recorded-audio fixtures, scripted input and output/event sinks, while the client connects to the real Go backend over `/v2/device`.
-
-The full evidence hierarchy is defined in [`TEST_EVIDENCE_LADDER.md`](TEST_EVIDENCE_LADDER.md):
+Companion's evidence ladder is:
 
 ```text
-Tier 0 deterministic host / cross-runtime contracts
-  -> Tier 1 C++ software device against real Go backend
-  -> Tier 2 targeted ESP32-S3 simulation for supported boot/network behavior
-  -> Tier 3 trusted physical HIL for audio/RF/display/power claims
+Tier 0 — deterministic host / cross-runtime contracts
+  -> Tier 1 — production C++ software device against real Go backend
+  -> Tier 2 — targeted simulation only where supported behavior is represented
+  -> Tier 3 — trusted physical HIL for audio/RF/display/power/OTA/peripheral claims
 ```
 
-Simulation never promotes physical microphone/speaker, AEC, Bluetooth/RF, final display performance or power evidence.
+The classification contract is [`TEST_EVIDENCE_LADDER.md`](TEST_EVIDENCE_LADDER.md).
 
-## ESP-IDF 6
+## Companion-specific non-copy decisions
 
-Current Xiaozhi mainline contributor guidance uses ESP-IDF 6.0.2 as the preferred baseline and reserves older IDF lines for explicitly documented legacy boards. Companion likewise uses one ESP-IDF 6.0.2 firmware baseline and does not maintain a second IDF 5 compatibility toolchain.
+Companion deliberately does **not** copy broad reference-project scope when it adds complexity without a product requirement:
+
+- no permanent MQTT/UDP second business transport;
+- no MCP runtime on ESP32;
+- no unrestricted GPIO/shell/filesystem tool surface;
+- no multi-board framework for Production v1 before hardware/product need exists;
+- no physical/provider PASS inferred from examples or simulator success;
+- no provider-native runtime that bypasses Companion session, ToolRegistry, privacy or durable state.
+
+External/reference projects can inform a Spike or ADR, but merged Companion code and measured Companion evidence decide the product architecture.
 
 ## Primary references
 
-- <https://github.com/78/xiaozhi-esp32/blob/main/AGENTS.md>
+Historical/reference links retained for architectural research:
+
+- <https://github.com/78/xiaozhi-esp32>
 - <https://github.com/78/xiaozhi-esp32/blob/main/docs/websocket.md>
-- <https://github.com/78/xiaozhi-esp32/blob/main/main/application.cc>
-- <https://github.com/78/xiaozhi-esp32/blob/main/main/audio/audio_service.cc>
-- <https://github.com/78/xiaozhi-esp32/blob/main/docs/esp-idf-6-migration.md>
 - <https://github.com/78/xiaozhi-esp32-python>
 - <https://components.espressif.com/component/espressif/esp_websocket_client>

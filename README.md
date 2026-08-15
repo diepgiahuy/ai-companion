@@ -1,223 +1,164 @@
 # AI Companion — Production v1
 
-ESP32-S3 personal voice companion with a Go backend, realtime audio, durable personal tools, typed UI state, replaceable AI/provider boundaries, and an evidence-driven production rollout.
+AI Companion is a single-owner ESP32-S3 voice companion backed by a modular Go service. The product combines realtime Vietnamese/English interaction, durable personal tools, typed device presentation, controlled integrations, and explicit evidence boundaries between software tests, real providers, and physical hardware.
 
-> **Stable checkpoint:** [`CP-SW2.3-20260812`](https://github.com/diepgiahuy/ai-companion/tree/CP-SW2.3-20260812)
-> **Active baseline:** `main` @ `cba131910cf26f5e2ddde1d7f5cfccefefdd546b` — PostgreSQL authoritative hard cut merged in PR #90; status documentation refreshed in PR #92
-> **Updated:** 2026-08-15
-> **Truth rule:** merged code, CI evidence, provider evidence, and physical evidence are separate facts. Mock/synthetic/software-device tests can prove orchestration and invariants, but they cannot promote real-provider or physical-HIL gates.
+> **Immutable historical checkpoint:** [`CP-SW2.3-20260812`](https://github.com/diepgiahuy/ai-companion/tree/CP-SW2.3-20260812)
+>
+> **Truth model:** `main` code/schema/config is merged product truth. GitHub Issues define remaining requirements; PR descriptions explain changes; GitHub Checks/artifacts prove hosted automation; [`evidence/status.json`](evidence/status.json) records promoted evidence claims; README/architecture/ADRs document durable merged behavior and decisions.
 
-This project is intentionally a **modular Go monolith + ESP32 firmware**, not a microservice demo. The LLM is a reasoning/composition component; authoritative personal state stays behind Companion-owned repositories, ToolRegistry policy, and protocol/session boundaries.
+Live branch, open-PR, and execution-queue state intentionally lives in GitHub rather than this document.
 
-## Current status
-
-The current baseline is materially ahead of the last immutable checkpoint tag.
-
-- **PostgreSQL Phase A/B/C is complete on `main`.** `companiond` now requires `COMPANION_DATABASE_URL` and uses PostgreSQL/pgx as the single authoritative product store.
-- **There is no SQLite product fallback, runtime selector, shadow read, or dual write.** SQLite remains only in explicit migration/recovery tooling and isolated tests.
-- **Atlas owns production schema migration.** Runtime startup verifies the exact expected schema revision and rejects incompatible/newer schema state and over-privileged runtime roles.
-- **Application-level PostgreSQL restart/idempotency/conflict behavior, migration parity, backup/restore, PostgreSQL → SQLite recovery, and Tier-1 PostgreSQL orchestration were exercised before PR #90 merged.** The exact PR #90 head passed production E2E, software-device E2E, PostgreSQL schema/integration, quality/security, module-lock, protocol-v2, CodeQL, and Wokwi workflow checks.
-- **Issue #20 is closed after Phase D River PR #93 merged.** Direct and hosted pinned-PostgreSQL 18.4 evidence proves transactional enqueue/uniqueness/retry/crash rescue/cancellation/shutdown, least privilege, operational state, restore and rollback on exact head `f4ae44c67dfc679dd7bbdebc47ffd0b817a15844`; all post-merge workflows passed on `ed6885acaf2c71b92c3a6ea581a781b415f8322b`.
-- **Real ASR/TTS/model selection remains unproven.** Provider-neutral speech contracts and reference adapters exist, and the model benchmark harness exists, but there is no promoted real VN/EN provider/model result yet.
-- **Physical production proof remains unproven.** Software/host/Wokwi-style evidence does not replace ESP32-S3 acoustic, display/power/RF, capability, or soak evidence.
-
-[`evidence/status.json`](evidence/status.json) records the aggregate PostgreSQL/River program as passed using exact-head hard-cut and River runs. This data-plane promotion does not promote any real-provider or physical-HIL gate.
-
-## Evidence / implementation matrix
-
-| Area | Current state | What is still required |
-|---|---:|---|
-| Exact Go 1.26.6 + race/vet/E2E | ✅ passed | Keep exact toolchain and regression gates green |
-| Module reproducibility | ✅ passed | `go mod tidy` zero diff + `go mod verify` must remain blocking |
-| Dependency vulnerability reachability | ✅ passed | Plain symbol-reachability `govulncheck` remains blocking |
-| CodeQL | ✅ passed | Keep traced Go build green |
-| PostgreSQL schema + Atlas migration | ✅ merged + hosted proof | Preserve exact artifact pins, integrity checks and least-privilege runtime role |
-| SQLite → PostgreSQL semantic parity | ✅ merged + hosted proof | Keep canonical 25-table normalization/parity regression, including voice-mail metadata |
-| PostgreSQL app restart + durable conflict semantics | ✅ merged + hosted proof | Keep restart/reconnect/idempotency regression blocking |
-| Backup / restore + reverse recovery rehearsal | ✅ merged + hosted proof | Keep pg_dump restore and PostgreSQL → SQLite → PostgreSQL round-trip regression |
-| PostgreSQL authoritative hard cut | ✅ merged in #90 | No product SQLite fallback/selector may return |
-| River durable jobs | ✅ exact-head hosted proof in PR #93 | Merge and post-merge regression remain |
-| Tier-1 headless software device | 🟡 partial production evidence | Orchestration/restart/tool paths are proven; real provider + physical promotion remains separate |
-| Canonical protocol v2 | 🟡 partial production evidence | Physical-device evidence and remaining final capability/HIL proof |
-| External MCP + device capabilities | 🟡 partial | Official SDK/ToolRegistry contract and software-device capability path landed; final operational/HIL promotion remains |
-| Observability contract (#25) | ✅ completed | River/provider/HIL metrics plug into the same bounded privacy-safe contract |
-| Mic raw signal | ✅ physical signal proven | Does not prove AEC/wake/full voice quality |
-| ESP-SR wake/VAD/AEC software path | 🟡 implemented | Real enclosure acoustic tuning, false wake/interruption, resource and coexistence evidence |
-| Real ASR → LLM → TTS | ⚪ unproven | Real credentials/providers, reproducible VN/EN corpus, p50/p95/error evidence |
-| Model stack selection | ⚪ unproven | Run the #89 benchmark harness against current candidates and select one canonical model per role |
-| Hardware/display platform | ⚪ physical decision unproven | Same-board physical benchmark, sourcing/purchase approval, display/audio/network/power measurements |
-| Security/privacy final promotion | ⚪ unproven | Required adversarial and consent/retention end-to-end evidence |
-| Physical ESP32-S3 HIL / soak | ⚪ unproven | Maintainer-authorized real board runs and long coexistence soak |
-| Wokwi production evidence | ⛔ not promoted | A successful workflow wrapper is not a PASS unless machine evidence proves the simulation actually ran with required credentials/artifacts |
-
-## Work queue after PostgreSQL hard cut
-
-The issue labels are **not** sufficient proof that code is actively being developed. Branch/PR state must agree with the issue state.
-
-| Workstream | What is already on `main` | Next real step | Branch/PR state at 2026-08-15 before this README update |
-|---|---|---|---|
-| #20 Data Plane | PostgreSQL Phase A/B/C plus River Phase D exact-head evidence | Merge and run post-merge regression | `codex/issue-20-river`, draft PR #93 |
-| #48 / #18 Voice baseline | Streaming speech contract + FunASR/EdgeTTS/Xunfei/Huoshan/Qwen Realtime reference adapters + Chat Completions transport | Run normalized real-provider VN/EN evidence; select v1 ASR/TTS | Latest implementation branches were merged via #47/#67/#71; no open PR |
-| #19 Capabilities | MCP/ToolRegistry contract, authenticated device capability routing, software-device volume full-flow and lifecycle fix | Finish remaining production/HIL evidence and close issue truthfully | Merged via #72/#74/#75/#82; no open PR |
-| #17 Firmware audio | ESP-SR 2.4.7 AFE/WakeNet/VAD/AEC software integration | Real ESP32-S3 enclosure acoustic/coexistence evidence | Latest implementation branch merged via #55; no open PR |
-| #8 Hardware spike | ADR/BOM/benchmark harness refreshed on current firmware baseline | Purchase/obtain finalist and run physical same-board benchmark | Latest foundation branch merged via #52; no open PR |
-| #23 Model evaluation | Reproducible benchmark harness merged via #89 | Run real model/runtime/hardware matrix after dependencies are ready | No active benchmark-result PR |
-
-### Branch audit note
-
-Current branch/PR audit:
-
-- **Open PRs: 1 (#93).**
-- **River/Phase-D branch: `codex/issue-20-river` at the exact PR head.**
-- `agent/issue-20-postgres-hard-cut-v2` is historical and tree-equivalent to the merged hard-cut state.
-- `agent/issue-48-reference-providers-v2` → merged PR #67.
-- `agent/issue-48-chat-completions-v3` → merged PR #71.
-- `agent/issue-18-streaming-contract` → merged PR #47.
-- `agent/issue-17-audio-frontend-v3` → merged PR #55.
-- `agent/issue-8-foundation-v3` → merged PR #52.
-- The lingering `agent/issue-19-software-device-capability-v8` ref does not represent new capability work; its tip is an already-merged `main` commit from PR #80.
-
-Old `agent/issue-*` refs may remain in GitHub after their work merged or was superseded. Treat a branch as active only when its tip contains unmerged work and/or it has a current PR or explicit execution checkpoint.
-
-## Architecture
+## Product shape
 
 ```text
 ESP32-S3
-  ├─ mic / speaker / display / button
-  ├─ ESP-SR wake / VAD / AEC software path
+  ├─ microphone / speaker / input / display
+  ├─ ESP-SR audio front-end software path
   ├─ Opus
-  └─ typed UI + bounded device capabilities
+  └─ typed presentation + bounded device capabilities
         │
         ▼
-Companion protocol v2
-  └─ WebSocket v2: typed control + binary Opus
+secure WebSocket / Protocol v2
         │
         ▼
-Session / turn runtime
+Go realtime runtime
   ├─ authenticated device session
   ├─ generation-scoped cancellation / barge-in
-  ├─ ordered media lane
-  ├─ ASR / streaming-ASR boundary
-  └─ TTS boundary
+  ├─ streaming ASR/TTS + realtime provider boundaries
+  └─ Google ADK — sole product agent runtime
         │
         ▼
-Agent runtime
-  └─ ADK anti-corruption layer
-       ├─ Responses-compatible transport
-       ├─ Chat Completions-compatible reference transport
-       └─ canonical ToolRegistry adapters
-        │
-        ▼
-Capability + policy boundary
-  ├─ native/domain tools + resources
+ToolRegistry + policy
+  ├─ native/domain tools
   ├─ authenticated device capabilities
-  ├─ optional backend-side external MCP
-  ├─ destructive confirmation scope
-  └─ entitlement / quota / validation
+  └─ optional backend-side external MCP
         │
         ▼
-Authoritative state
-  ├─ PostgreSQL / pgx — sole product store
-  ├─ Atlas-owned versioned schema migrations
-  ├─ conversation / memory / control / auth / usage repositories
-  ├─ scheduler + outbox state
-  └─ River durable retention jobs — exact-head hosted proof in PR #93
+PostgreSQL / pgx + Atlas
+  ├─ authoritative domain/conversation/memory/control/auth state
+  ├─ transactional outbox
+  └─ River durable jobs
 ```
 
-There is no permanent product `sqlite|postgres` selector and no MCP runtime on ESP32 firmware.
+The product is intentionally a **modular monolith + firmware**, not a microservice showcase. The LLM reasons and composes actions; it is not the authoritative database.
 
-### Replaceable boundaries
+## Durable merged capabilities
 
-Provider/runtime types stay behind Companion-owned contracts:
+### Device and realtime runtime
 
-- LLM / agent transport
-- ASR / streaming ASR
-- TTS / future native-realtime audio seam
-- audio codec / realtime transport
-- memory retrieval / embedding
-- conversation store
-- domain repositories
-- cache
-- native tools/resources
-- authenticated device capabilities
-- external MCP tools/resources
-- prompt bundle/version
+- Companion Protocol v2 is the canonical device wire contract over secure WebSocket, with typed control messages and binary Opus media.
+- Device sessions use unique revocable database-enrolled credentials; client-controlled identity headers cannot override enrolled ownership claims.
+- Session/generation lifecycle, cancellation, stale-output suppression, bounded queues and barge-in orchestration are implemented.
+- The firmware has a portable application boundary plus ESP-SR AFE/WakeNet/VAD/AEC software integration. Physical acoustic quality is a separate evidence gate.
 
-Provider SDK types must not leak into domain/data packages, and provider-native tools must not bypass ToolRegistry/policy.
+### Agent, tools and integrations
+
+- Google ADK is the sole product agent runtime.
+- ToolRegistry/policy is the model-facing authorization/schema boundary.
+- Durable native tools cover expenses, budgets, notes, journal, reminders/timers, voice memos, memory, conversation and related platform behavior.
+- External MCP is backend-side only. The official MCP Go SDK path and policy boundary are implemented; firmware does not run MCP.
+- Authenticated device capabilities use Protocol v2 rather than MCP-on-device. `device.volume.set` is the currently proven software-device example; future hardware capabilities require their own bounded implementation/evidence.
+
+### Data and jobs
+
+- PostgreSQL/pgx is the **sole authoritative product store**; Atlas owns versioned schema migration.
+- There is no product SQLite/PostgreSQL selector, shadow read, dual write or SQLite fallback. SQLite remains only in explicit migration/recovery tooling and isolated tests.
+- Actor-scoped durable idempotency rejects same-key/different-payload conflicts and replays committed equivalent mutations across reconnect/restart.
+- Transactional outbox semantics are used when durable state and event delivery must be atomic.
+- River provides durable retention/background jobs after the PostgreSQL hard cut.
+
+### Voice mail
+
+- Voice-mail metadata is PostgreSQL-authoritative and media is stored through a replaceable blob boundary; the current adapter is local filesystem Ogg Opus.
+- Delivery/recovery is durable, privacy-scoped and idempotent.
+- Receiver UX queues notifications and requires explicit playback; voice mail never auto-plays.
+- Object-store backends such as S3-compatible storage are future deployment adapters, not current product facts.
+
+### Control plane
+
+- Device twins maintain separate desired/reported state and versions.
+- Scoped configuration, feature metadata, entitlements, privacy policy, enrolled credentials and signed firmware manifests are implemented backend/control-plane boundaries.
+- Signed OTA metadata/control-plane support does **not** imply the device-side A/B apply/health/rollback lifecycle is complete.
+
+## Evidence boundaries
+
+Code existence is not proof of provider or physical quality. Use [`docs/TEST_EVIDENCE_LADDER.md`](docs/TEST_EVIDENCE_LADDER.md):
+
+```text
+Tier 0 — deterministic host / contract tests
+    ↓
+Tier 1 — production C++ software device against real Go backend
+    ↓
+Tier 2 — targeted simulation where the simulator represents the behavior
+    ↓
+Tier 3 — trusted physical HIL for RF/audio/display/power/OTA/peripheral claims
+```
+
+Current evidence deliberately keeps these concerns separate:
+
+- PostgreSQL/Atlas/River software/data-plane behavior has hosted evidence.
+- Protocol/session/ToolRegistry/device-capability orchestration has deterministic/Tier-1 evidence.
+- Reference ASR/TTS/realtime/model adapters exist, but Production-v1 real VN/EN provider/model selection still requires measured evidence.
+- ESP-SR software integration exists, while enclosure AEC/wake/false-interruption/resource behavior remains physical qualification work.
+- Hardware/display selection remains purchase/physical-benchmark gated.
+- A successful build, mock, software-device run or simulator cannot be relabeled as physical/provider proof.
+
+Machine-readable promoted claims live in [`evidence/status.json`](evidence/status.json). Conservative `unproven`/`partial` status is preferable to inferring a PASS from implementation alone.
 
 ## Product scope
 
-Production v1 is a **single-owner desk companion** focused on:
+Production v1 focuses on:
 
-- Vietnamese/English voice interaction with interruption.
-- Expenses, budgets, notes, diary, reminders, timers and voice memos.
-- Persistent conversation and long-term personal memory with temporal/conflict semantics.
-- Typed server-driven UI states/assets.
-- Controlled external data/tools through policy-enforced adapters/MCP.
-- OTA/config/feature controls with rollback and auditability.
-- Local/offline-first behavior where the **measured selected** providers/runtime actually support it.
+- Vietnamese/English realtime voice interaction with interruption;
+- expenses and budgets;
+- notes, diary and personal memory;
+- reminders and timers;
+- voice memos and explicit-playback voice mail;
+- typed server-driven presentation state;
+- policy-controlled native/device/external tools;
+- versioned configuration, feature metadata and signed OTA control-plane state;
+- local/offline-first behavior only where the measured selected runtime actually supports it.
 
-Non-goals include premature Kubernetes/microservices, permanent duplicate production runtimes for fallback, arbitrary backend code hot-loading, direct unrestricted Internet access from the LLM, MCP on ESP32, and treating chat history as authoritative application state.
+Non-goals include premature Kubernetes/microservices, direct unrestricted Internet/tool access from the LLM, MCP on firmware, arbitrary executable remote UI, and permanent duplicate product runtimes kept only as fallback.
 
-## Development / verification
+## Development and verification
 
-Exact backend production toolchain: **Go 1.26.6**.
+Backend production toolchain: **Go 1.26.6**.
 
-`companiond` now requires an Atlas-migrated PostgreSQL database through `COMPANION_DATABASE_URL`.
+`companiond` requires an Atlas-migrated PostgreSQL database via `COMPANION_DATABASE_URL`.
 
 ```bash
 # Full containerized host + backend regression
 make e2e-container
 
-# Exact backend quality gates used by CI
+# Backend quality gates
 cd backend
 go mod verify
 go vet -tags "adk,mcp,nolibopusfile" ./...
 go test -tags "adk,mcp,nolibopusfile" -race -count=1 ./...
 ```
 
-PostgreSQL CI separately proves schema integrity, real PostgreSQL repository semantics, migration parity, application restart behavior, backup/restore, reverse recovery, and authoritative Tier-1 state. `companion-migrate` exists only for explicit offline migration/recovery operations; it is not a runtime storage selector.
+Use the nearest direct oracle during implementation and broader exact-head CI only when the change crosses the corresponding boundary. Physical HIL runs only on trusted refs through the manually authorized HIL workflow.
 
-Physical HIL is a separate maintainer-authorized gate. Host tests, software-device E2E, deterministic providers, and simulation must never be relabeled as acoustic/power/RF/real-provider proof.
+AI-assisted engineering follows [`ai_development_workflow.md`](ai_development_workflow.md): one accountable lead by default, small coherent PRs, bounded delegation, PR descriptions as execution records, and GitHub Checks as hosted proof.
 
-## Production definition of done
+## Where to look
 
-A capability is not `passed` merely because its code exists. The required chain is:
-
-```text
-requirement
-  → current upstream/reference research where needed
-  → benchmark/design decision
-  → implementation
-  → deterministic tests
-  → real dependency/provider/HIL test where applicable
-  → measured machine-readable evidence
-  → independent static review
-  → exact-head + post-merge regression
-  → checkpoint/tag + rollback plan
-```
-
-If required real-world evidence is missing, the corresponding production gate remains `partial`, `blocked`, or `unproven`.
-
-## Repository map
-
-- [`evidence/status.json`](evidence/status.json) — machine-verifiable production gate status.
-- [`docs/COMMERCIAL_ARCHITECTURE.md`](docs/COMMERCIAL_ARCHITECTURE.md) — commercial architecture and milestone contract.
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — implementation architecture.
-- [`docs/ADR-001-REPLACEABLE-PROVIDERS.md`](docs/ADR-001-REPLACEABLE-PROVIDERS.md) — provider/adapter boundaries.
-- [`docs/STATIC_REVIEW_GATE.md`](docs/STATIC_REVIEW_GATE.md) — mandatory independent review dimensions.
-- [`docs/TEST_PLAN.md`](docs/TEST_PLAN.md) — test tiers and verification plan.
+- **Live requirements / work state:** GitHub Issues and PRs. Durable docs do not mirror open-branch queues.
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — implementation architecture and runtime boundaries.
+- [`docs/COMMERCIAL_ARCHITECTURE.md`](docs/COMMERCIAL_ARCHITECTURE.md) — durable commercial/evolution architecture.
 - [`docs/TEST_EVIDENCE_LADDER.md`](docs/TEST_EVIDENCE_LADDER.md) — evidence classes and promotion limits.
-- [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md) — metric/event naming, correlation, cardinality/privacy and exporter contract.
-- [`docs/VERIFICATION.md`](docs/VERIFICATION.md) — verification procedures/evidence.
-- [`docs/checkpoints/README.md`](docs/checkpoints/README.md) — checkpoint/tag index and rollback history.
-- [`ai_development_workflow.md`](ai_development_workflow.md) — AI-assisted engineering workflow.
-- [`docs/LEGACY_POC_README_20260811.md`](docs/LEGACY_POC_README_20260811.md) — archived POC documentation.
+- [`evidence/status.json`](evidence/status.json) — machine-readable promoted evidence claims.
+- [`docs/ADR-001-REPLACEABLE-PROVIDERS.md`](docs/ADR-001-REPLACEABLE-PROVIDERS.md) — provider/adapter boundaries.
+- [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md) — bounded privacy-safe telemetry contract.
+- [`docs/checkpoints/README.md`](docs/checkpoints/README.md) — immutable checkpoint/tag history.
+- [`ai_development_workflow.md`](ai_development_workflow.md) — implementation/review/delegation workflow.
+- [`.agents/rules/github_issue_generation.md`](.agents/rules/github_issue_generation.md) — ready-issue specification contract.
+
+Historical audit/readiness/execution-plan files are retained only as historical context and must not be used as live backlog or current-state truth.
 
 ## Checkpoints and rollback
 
-Latest immutable software checkpoint is still **`CP-SW2.3-20260812`**. Current checkpoint lineage includes:
+The latest immutable historical software checkpoint remains **`CP-SW2.3-20260812`**. `main` has moved substantially beyond it. New immutable checkpoints should be created only when the intended scope, exact-head/post-merge gates, independent review and every promoted evidence claim are coherent.
 
-`CP0-20260812` → `CP-SW1-20260812` → `CP-SW2.1-20260812` → `CP-SW2.2-20260812` → **`CP-SW2.3-20260812`**
-
-`main` is substantially ahead of that tag after the ADK/auth, observability, speech/audio, capability, PostgreSQL and evaluation slices. Create the next immutable production checkpoint only after the intended remaining scope is reviewed, exact-head and post-merge gates pass, independent static review is recorded, and every promoted production claim has matching evidence.
+Rollback uses stable interfaces plus Git revert, database restore/versioned migration recovery, provider/config artifact rollback, and ESP-IDF OTA rollback where implemented. Obsolete product runtimes are not retained indefinitely solely as rollback mechanisms.
