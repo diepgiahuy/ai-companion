@@ -34,6 +34,7 @@ struct RuntimeConfigView {
 
 struct PendingClaimView {
   std::string_view bootstrap_id;
+  std::string_view claim_code;
   std::string_view claim_authorization;
   std::string_view idempotency_key;
   std::string_view server_url;
@@ -56,15 +57,33 @@ constexpr bool valid_wifi(std::string_view ssid, std::string_view password) {
   return !ssid.empty() && ssid.size() <= 32 && password.size() <= 63;
 }
 
+constexpr bool valid_human_claim_code(std::string_view value) {
+  if (value.size() != 10) return false;
+  constexpr std::string_view alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  for (const char c : value) {
+    if (alphabet.find(c) == std::string_view::npos) return false;
+  }
+  return true;
+}
+
 constexpr bool valid_runtime_config(const RuntimeConfigView &config) {
   return valid_wifi(config.wifi_ssid, config.wifi_password) &&
          valid_wss_url(config.server_url) && !config.device_credential.empty() &&
          config.device_credential.size() <= 512;
 }
 
+// Before human-code redemption exactly claim_code is present. After successful
+// one-time redemption the code is erased and only the existing opaque
+// claim_authorization is persisted. Both phases keep the same bootstrap,
+// idempotency and backend origin so a reboot cannot invent a second claim.
 constexpr bool valid_pending_claim(const PendingClaimView &claim) {
+  const bool code_phase = valid_human_claim_code(claim.claim_code) &&
+                          claim.claim_authorization.empty();
+  const bool authorization_phase = claim.claim_code.empty() &&
+                                   !claim.claim_authorization.empty() &&
+                                   claim.claim_authorization.size() <= 1024;
   return !claim.bootstrap_id.empty() && claim.bootstrap_id.size() <= 128 &&
-         !claim.claim_authorization.empty() && claim.claim_authorization.size() <= 1024 &&
+         (code_phase || authorization_phase) &&
          claim.idempotency_key.size() >= 8 && claim.idempotency_key.size() <= 128 &&
          valid_wss_url(claim.server_url);
 }

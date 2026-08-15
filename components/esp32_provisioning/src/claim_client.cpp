@@ -1,5 +1,7 @@
 #include "companion/claim_client.hpp"
 
+#include "companion/provisioning_fsm.hpp"
+
 #include "cJSON.h"
 #include "esp_crt_bundle.h"
 #include "esp_http_client.h"
@@ -26,25 +28,34 @@ bool copy_fixed(std::string_view source, char* destination, size_t capacity) {
   return true;
 }
 
-ClaimStatus classify_status(int status) {
+ClaimStatus classify_claim_status(int status) {
   if (status >= 200 && status < 300) return ClaimStatus::success;
   if (status == 400 || status == 401 || status == 403) return ClaimStatus::setup_required;
   if (status == 409 || status == 410) return ClaimStatus::owner_recovery_required;
   if (status < 0 || status == 408 || status == 425 || status == 429 || status >= 500) {
     return ClaimStatus::retryable;
   }
-  // Redirects and unrecognized client errors are configuration/protocol failures,
-  // not safe reasons to keep transmitting a short-lived authorization forever.
   return ClaimStatus::setup_required;
 }
 
-HttpResult post_claim(std::string_view url, std::string_view authorization,
-                      std::string_view idempotency_key, std::string_view body) {
+ClaimStatus classify_redemption_status(int status) {
+  if (status >= 200 && status < 300) return ClaimStatus::success;
+  if (status == 400 || status == 401 || status == 403 || status == 404 || status == 410) {
+    return ClaimStatus::setup_required;
+  }
+  if (status < 0 || status == 408 || status == 425 || status == 429 || status >= 500) {
+    return ClaimStatus::retryable;
+  }
+  return ClaimStatus::setup_required;
+}
+
+HttpResult post_json(std::string_view url, std::string_view authorization,
+                     std::string_view idempotency_key, std::string_view body) {
   HttpResult result;
   const std::string owned_url(url);
-  const std::string bearer = "Bearer " + std::string(authorization);
-  const std::string idem(idempotency_key);
   const std::string payload(body);
+  const std::string bearer = authorization.empty() ? std::string{} : "Bearer " + std::string(authorization);
+  const std::string idem(idempotency_key);
 
   esp_http_client_config_t config{};
   config.url = owned_url.c_str();
@@ -56,8 +67,8 @@ HttpResult post_claim(std::string_view url, std::string_view authorization,
   if (client == nullptr) return result;
 
   esp_http_client_set_method(client, HTTP_METHOD_POST);
-  esp_http_client_set_header(client, "Authorization", bearer.c_str());
-  esp_http_client_set_header(client, "Idempotency-Key", idem.c_str());
+  if (!bearer.empty()) esp_http_client_set_header(client, "Authorization", bearer.c_str());
+  if (!idem.empty()) esp_http_client_set_header(client, "Idempotency-Key", idem.c_str());
   esp_http_client_set_header(client, "Content-Type", "application/json");
   esp_http_client_set_header(client, "Accept", "application/json");
   if (esp_http_client_open(client, payload.size()) != ESP_OK) {
@@ -95,20 +106,14 @@ HttpResult post_claim(std::string_view url, std::string_view authorization,
   esp_http_client_cleanup(client);
   return result;
 }
-} // namespace
 
-std::string_view ClaimResult::credential_view() const {
-  size_t length = 0;
-  while (length < device_credential.size() && device_credential[length] != '\0') ++length;
-  return {device_credential.data(), length};
-}
-
-bool owner_claim_url(std::string_view websocket_url,
-                     std::array<char, 640>& output) {
+bool owner_endpoint_url(std::string_view websocket_url, std::string_view path,
+                        std::array<char, 640>& output) {
   output.fill('\0');
   constexpr std::string_view prefix = "wss://";
   if (!websocket_url.starts_with(prefix) || websocket_url.find('@') != std::string_view::npos ||
-      websocket_url.find('?') != std::string_view::npos || websocket_url.find('#') != std::string_view::npos) {
+      websocket_url.find('?') != std::string_view::npos || websocket_url.find('#') != std::string_view::npos ||
+      !path.starts_with('/')) {
     return false;
   }
   const size_t authority_begin = prefix.size();
@@ -117,23 +122,113 @@ bool owner_claim_url(std::string_view websocket_url,
       ? websocket_url.substr(authority_begin)
       : websocket_url.substr(authority_begin, slash - authority_begin);
   if (authority.empty()) return false;
-  const std::string value = "https://" + std::string(authority) + "/v1/owner/device-claims";
+  const std::string value = "https://" + std::string(authority) + std::string(path);
   if (value.size() >= output.size()) return false;
   std::memcpy(output.data(), value.data(), value.size());
   return true;
+}
+} // namespace
+
+std::string_view ClaimResult::credential_view() const {
+  size_t length = 0;
+  while (length < device_credential.size() && device_credential[length] != '\0') ++length;
+  return {device_credential.data(), length};
+}
+
+std::string_view ClaimAuthorizationResult::authorization_view() const {
+  size_t length = 0;
+  while (length < claim_authorization.size() && claim_authorization[length] != '\0') ++length;
+  return {claim_authorization.data(), length};
+}
+
+bool owner_claim_url(std::string_view websocket_url,
+                     std::array<char, 640>& output) {
+  return owner_endpoint_url(websocket_url, "/v1/owner/device-claims", output);
+}
+
+bool owner_claim_code_redeem_url(std::string_view websocket_url,
+                                 std::array<char, 640>& output) {
+  return owner_endpoint_url(websocket_url, "/v1/owner/device-claim-codes/redeem", output);
+}
+
+ClaimStatus ClaimClient::redeem_code(const PendingConfig& pending, std::string_view device_id,
+                                     ClaimAuthorizationResult& result) const {
+  result = {};
+  if (device_id.empty() || device_id.size() > 128 ||
+      !valid_human_claim_code(pending.claim_code.view()) ||
+      !pending.claim_authorization.view().empty() || pending.idempotency_key.view().size() < 8) {
+    return ClaimStatus::setup_required;
+  }
+  std::array<char, 640> url{};
+  if (!owner_claim_code_redeem_url(pending.server_url.view(), url)) return ClaimStatus::setup_required;
+
+  cJSON* request = cJSON_CreateObject();
+  if (request == nullptr) return ClaimStatus::retryable;
+  const std::string owned_code(pending.claim_code.view());
+  const std::string owned_bootstrap(pending.bootstrap_id.view());
+  const std::string owned_device(device_id);
+  const std::string owned_redemption(pending.idempotency_key.view());
+  cJSON_AddStringToObject(request, "claim_code", owned_code.c_str());
+  cJSON_AddStringToObject(request, "bootstrap_id", owned_bootstrap.c_str());
+  cJSON_AddStringToObject(request, "device_id", owned_device.c_str());
+  cJSON_AddStringToObject(request, "redemption_id", owned_redemption.c_str());
+  char* encoded = cJSON_PrintUnformatted(request);
+  cJSON_Delete(request);
+  if (encoded == nullptr) return ClaimStatus::retryable;
+  const std::string body(encoded);
+  cJSON_free(encoded);
+
+  const HttpResult response = post_json(url.data(), {}, {}, body);
+  const ClaimStatus status = classify_redemption_status(response.status);
+  if (status != ClaimStatus::success) return status;
+
+  cJSON* root = cJSON_ParseWithLength(response.body.data(), response.body.size());
+  if (root == nullptr) return ClaimStatus::retryable;
+  const cJSON* authorization = cJSON_GetObjectItemCaseSensitive(root, "claim_authorization");
+  const bool ok = cJSON_IsString(authorization) && authorization->valuestring != nullptr &&
+                  copy_fixed(authorization->valuestring, result.claim_authorization.data(),
+                             result.claim_authorization.size());
+  cJSON_Delete(root);
+  if (!ok) {
+    result = {};
+    return ClaimStatus::retryable;
+  }
+  return ClaimStatus::success;
 }
 
 ClaimStatus ClaimClient::claim(const PendingConfig& pending, std::string_view device_id,
                                ClaimResult& result) const {
   result = {};
   if (device_id.empty() || device_id.size() > 128) return ClaimStatus::setup_required;
+
+  PendingConfig effective = pending;
+  ProvisioningStore persistence;
+  PendingConfig persisted{};
+  if (persistence.load_pending(persisted)) effective = persisted;
+
+  if (!effective.claim_code.view().empty()) {
+    ClaimAuthorizationResult authorization{};
+    const ClaimStatus redemption = redeem_code(effective, device_id, authorization);
+    if (redemption != ClaimStatus::success) return redemption;
+    effective.claim_authorization.value.fill('\0');
+    if (!copy_fixed(authorization.authorization_view(), effective.claim_authorization.value.data(),
+                    effective.claim_authorization.value.size())) {
+      return ClaimStatus::retryable;
+    }
+    effective.claim_code.value.fill('\0');
+    if (!persistence.save_pending(effective)) return ClaimStatus::retryable;
+  }
+
+  if (!effective.claim_code.view().empty() || effective.claim_authorization.view().empty()) {
+    return ClaimStatus::setup_required;
+  }
   std::array<char, 640> url{};
-  if (!owner_claim_url(pending.server_url.view(), url)) return ClaimStatus::setup_required;
+  if (!owner_claim_url(effective.server_url.view(), url)) return ClaimStatus::setup_required;
 
   cJSON* request = cJSON_CreateObject();
   if (request == nullptr) return ClaimStatus::retryable;
   const std::string owned_device(device_id);
-  const std::string owned_bootstrap(pending.bootstrap_id.view());
+  const std::string owned_bootstrap(effective.bootstrap_id.view());
   cJSON_AddStringToObject(request, "device_id", owned_device.c_str());
   cJSON_AddStringToObject(request, "bootstrap_id", owned_bootstrap.c_str());
   char* encoded = cJSON_PrintUnformatted(request);
@@ -142,9 +237,9 @@ ClaimStatus ClaimClient::claim(const PendingConfig& pending, std::string_view de
   const std::string body(encoded);
   cJSON_free(encoded);
 
-  const HttpResult response = post_claim(url.data(), pending.claim_authorization.view(),
-                                         pending.idempotency_key.view(), body);
-  const ClaimStatus status = classify_status(response.status);
+  const HttpResult response = post_json(url.data(), effective.claim_authorization.view(),
+                                        effective.idempotency_key.view(), body);
+  const ClaimStatus status = classify_claim_status(response.status);
   if (status != ClaimStatus::success) return status;
 
   cJSON* root = cJSON_ParseWithLength(response.body.data(), response.body.size());

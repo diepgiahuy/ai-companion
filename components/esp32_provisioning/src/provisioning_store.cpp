@@ -16,6 +16,7 @@ constexpr char kWifiPass[] = "wifi_pass";
 constexpr char kServerUrl[] = "server_url";
 constexpr char kDeviceCred[] = "device_cred";
 constexpr char kBootstrap[] = "bootstrap";
+constexpr char kClaimCode[] = "claim_code";
 constexpr char kClaimAuth[] = "claim_auth";
 constexpr char kIdemKey[] = "idem_key";
 
@@ -47,6 +48,24 @@ bool get_fixed(nvs_handle_t handle, const char* key, FixedSecret<N>& out) {
   return get_string(handle, key, out.value.data(), out.value.size());
 }
 
+template <size_t N>
+bool get_optional_fixed(nvs_handle_t handle, const char* key, FixedSecret<N>& out) {
+  out.value.fill('\0');
+  size_t required = out.value.size();
+  const esp_err_t err = nvs_get_str(handle, key, out.value.data(), &required);
+  if (err == ESP_ERR_NVS_NOT_FOUND) return true;
+  if (err != ESP_OK || required == 0 || required > out.value.size()) {
+    out.value.fill('\0');
+    return false;
+  }
+  out.value.back() = '\0';
+  return true;
+}
+
+bool write_optional(nvs_handle_t handle, const char* key, std::string_view value) {
+  return value.empty() ? erase_optional(handle, key) : set_string(handle, key, value);
+}
+
 PersistedState parse_state(const char* raw) {
   if (raw == nullptr) return PersistedState::unprovisioned;
   if (std::strcmp(raw, "pending") == 0) return PersistedState::pending_claim;
@@ -58,8 +77,9 @@ PersistedState parse_state(const char* raw) {
 bool valid_pending_config(const PendingConfig& pending) {
   return valid_wifi(pending.wifi_ssid.view(), pending.wifi_password.view()) &&
          valid_pending_claim(PendingClaimView{
-             pending.bootstrap_id.view(), pending.claim_authorization.view(),
-             pending.idempotency_key.view(), pending.server_url.view()});
+             pending.bootstrap_id.view(), pending.claim_code.view(),
+             pending.claim_authorization.view(), pending.idempotency_key.view(),
+             pending.server_url.view()});
 }
 
 bool valid_runtime(const RuntimeConfig& runtime) {
@@ -94,7 +114,8 @@ bool ProvisioningStore::load_pending(PendingConfig& out) const {
                   get_fixed(handle, kWifiPass, out.wifi_password) &&
                   get_fixed(handle, kServerUrl, out.server_url) &&
                   get_fixed(handle, kBootstrap, out.bootstrap_id) &&
-                  get_fixed(handle, kClaimAuth, out.claim_authorization) &&
+                  get_optional_fixed(handle, kClaimCode, out.claim_code) &&
+                  get_optional_fixed(handle, kClaimAuth, out.claim_authorization) &&
                   get_fixed(handle, kIdemKey, out.idempotency_key);
   nvs_close(handle);
   return ok && valid_pending_config(out);
@@ -120,7 +141,8 @@ bool ProvisioningStore::save_pending(const PendingConfig& pending) const {
                   set_string(handle, kWifiPass, pending.wifi_password.view()) &&
                   set_string(handle, kServerUrl, pending.server_url.view()) &&
                   set_string(handle, kBootstrap, pending.bootstrap_id.view()) &&
-                  set_string(handle, kClaimAuth, pending.claim_authorization.view()) &&
+                  write_optional(handle, kClaimCode, pending.claim_code.view()) &&
+                  write_optional(handle, kClaimAuth, pending.claim_authorization.view()) &&
                   set_string(handle, kIdemKey, pending.idempotency_key.view()) &&
                   erase_optional(handle, kDeviceCred) &&
                   set_string(handle, kState, "pending") && nvs_commit(handle) == ESP_OK;
@@ -149,8 +171,8 @@ bool ProvisioningStore::commit_runtime(const PendingConfig& pending,
                   set_string(handle, kWifiPass, runtime.wifi_password.view()) &&
                   set_string(handle, kServerUrl, runtime.server_url.view()) &&
                   set_string(handle, kDeviceCred, runtime.device_credential.view()) &&
-                  erase_optional(handle, kBootstrap) && erase_optional(handle, kClaimAuth) &&
-                  erase_optional(handle, kIdemKey) &&
+                  erase_optional(handle, kBootstrap) && erase_optional(handle, kClaimCode) &&
+                  erase_optional(handle, kClaimAuth) && erase_optional(handle, kIdemKey) &&
                   set_string(handle, kState, "validating") && nvs_commit(handle) == ESP_OK;
   nvs_close(handle);
   return ok;
