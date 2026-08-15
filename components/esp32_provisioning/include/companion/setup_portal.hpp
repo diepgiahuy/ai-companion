@@ -14,13 +14,16 @@ namespace companion::provisioning {
 class SetupPortal final {
 public:
   bool start(std::string_view device_suffix);
+  bool start_wifi_only(std::string_view device_suffix);
   bool configured() const { return configured_.load(); }
   bool take_pending(PendingConfig& out);
+  bool take_wifi(WifiConfig& out);
 
   std::string_view ssid() const;
   std::string_view password() const;
 
 private:
+  bool start_impl(std::string_view device_suffix, bool wifi_only);
   static esp_err_t handle_index(httpd_req_t* request);
   static esp_err_t handle_nonce(httpd_req_t* request);
   static esp_err_t handle_configure(httpd_req_t* request);
@@ -28,9 +31,11 @@ private:
 
   httpd_handle_t server_{};
   PendingConfig pending_{};
+  WifiConfig wifi_{};
   std::array<char, 33> ssid_{};
   std::array<char, 17> password_{};
   std::array<char, 33> session_nonce_{};
+  bool wifi_only_{};
   std::atomic<bool> configured_{false};
 };
 
