@@ -73,6 +73,7 @@ type ConfirmationOutcome struct {
 }
 
 type Repository interface {
+	ResolvePairingCandidate(context.Context, string, time.Time) (Participant, error)
 	CreatePairingSession(context.Context, CreateMutation) (Session, bool, error)
 	ConfirmPairingSession(context.Context, ConfirmMutation) (ConfirmationOutcome, error)
 	RejectPairingSession(context.Context, RejectMutation) (Session, bool, error)
@@ -88,6 +89,26 @@ func New(repository Repository) (*Service, error) {
 		return nil, fmt.Errorf("pairing repository is required")
 	}
 	return &Service{repository: repository, now: func() time.Time { return time.Now().UTC() }}, nil
+}
+
+// ResolveCandidate converts a rotating BLE discovery pseudonym into the active
+// authenticated participant it currently represents. This is discovery only;
+// the resolved stable identity never travels over BLE and is re-authorized by
+// CreatePairingSession before durable mutation.
+func (s *Service) ResolveCandidate(ctx context.Context, discoveryID string) (Participant, error) {
+	discoveryID = strings.TrimSpace(discoveryID)
+	if !ValidDiscoveryID(discoveryID) {
+		return Participant{}, ErrDeviceUnavailable
+	}
+	candidate, err := s.repository.ResolvePairingCandidate(ctx, discoveryID, s.now())
+	if err != nil {
+		return Participant{}, err
+	}
+	candidate = normalizeParticipant(candidate)
+	if candidate.UserID == "" || candidate.DeviceID == "" {
+		return Participant{}, ErrDeviceUnavailable
+	}
+	return candidate, nil
 }
 
 // Create establishes a short-lived backend session. The authenticated initiator
