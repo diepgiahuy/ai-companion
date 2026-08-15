@@ -36,7 +36,7 @@ func deviceClaimMutation(t *testing.T, prefix, userID, deviceID, rawCredential, 
 	}
 }
 
-func TestPostgresDeviceClaimReplayConflictAndCanonicalAuthentication(t *testing.T) {
+func TestPostgresDeviceClaimReplayRecoveryConflictAndCanonicalAuthentication(t *testing.T) {
 	pool := postgresTestPool(t)
 	store, err := New(pool)
 	if err != nil {
@@ -91,18 +91,139 @@ func TestPostgresDeviceClaimReplayConflictAndCanonicalAuthentication(t *testing.
 		t.Fatalf("same idempotency key with different request err=%v, want conflict", err)
 	}
 
-	alreadyOwned := firstMutation
-	alreadyOwned.IdempotencyKey = prefix + "-other-idem"
-	if _, err := store.ClaimDevice(ctx, alreadyOwned); !errors.Is(err, controlplane.ErrDeviceAlreadyClaimed) {
-		t.Fatalf("already-owned device err=%v, want ErrDeviceAlreadyClaimed", err)
+	// A fresh authorization for the same authoritative owner is recovery, not
+	// ownership transfer. It rotates the verifier and creates one new delivery.
+	recoveredCredential := prefix + "-credential-recovered"
+	recoveryKey := prefix + "-recovery-idem"
+	recoveryMutation := deviceClaimMutation(t, prefix+"-recovery", userID, deviceID, recoveredCredential, recoveryKey, "bootstrap-recovery")
+	recovery, err := store.ClaimDevice(ctx, recoveryMutation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovery.Replayed || recovery.DeliveryID != recoveryMutation.DeliveryID {
+		t.Fatalf("recovery outcome=%+v", recovery)
+	}
+	if _, ok, err := store.AuthenticateDevice(ctx, deviceID, rawCredential); err != nil || ok {
+		t.Fatalf("old credential remained valid after recovery: ok=%v err=%v", ok, err)
+	}
+	identity, ok, err = store.AuthenticateDevice(ctx, deviceID, recoveredCredential)
+	if err != nil || !ok || identity.UserID != userID {
+		t.Fatalf("recovered credential identity=%+v ok=%v err=%v", identity, ok, err)
 	}
 
-	delivery, err := store.DeviceClaimDelivery(ctx, userID, first.DeliveryID)
-	if err != nil || delivery.DeviceID != deviceID || delivery.UserID != userID {
-		t.Fatalf("delivery=%+v err=%v", delivery, err)
+	// A retry generates fresh random delivery material at the service layer, but
+	// durable idempotency must return the committed delivery without rotating a
+	// second time.
+	retryGeneratedCredential := prefix + "-credential-must-not-win"
+	retryDigest := sha256.Sum256([]byte(retryGeneratedCredential))
+	recoveryReplayMutation := recoveryMutation
+	recoveryReplayMutation.CredentialHash = hex.EncodeToString(retryDigest[:])
+	recoveryReplayMutation.DeliveryID = prefix + "-recovery-generated-retry"
+	recoveryReplayMutation.CredentialCiphertext = []byte("recovery-generated-ciphertext")
+	recoveryReplayMutation.CredentialNonce = []byte("recovery-generated-nonce")
+	recoveryReplay, err := store.ClaimDevice(ctx, recoveryReplayMutation)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, err := store.DeviceClaimDelivery(ctx, userID+"-other", first.DeliveryID); !errors.Is(err, controlplane.ErrClaimDeliveryUnavailable) {
+	if !recoveryReplay.Replayed || recoveryReplay.DeliveryID != recovery.DeliveryID {
+		t.Fatalf("recovery replay=%+v recovery=%+v", recoveryReplay, recovery)
+	}
+	if _, ok, err := store.AuthenticateDevice(ctx, deviceID, retryGeneratedCredential); err != nil || ok {
+		t.Fatalf("retry-generated credential unexpectedly became valid: ok=%v err=%v", ok, err)
+	}
+	if _, ok, err := store.AuthenticateDevice(ctx, deviceID, recoveredCredential); err != nil || !ok {
+		t.Fatalf("committed recovery credential lost after replay: ok=%v err=%v", ok, err)
+	}
+
+	// Process restart preserves the same recovery outcome and verifier.
+	restartedStore, err := New(pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restartReplay, err := restartedStore.ClaimDevice(ctx, recoveryReplayMutation)
+	if err != nil || !restartReplay.Replayed || restartReplay.DeliveryID != recovery.DeliveryID {
+		t.Fatalf("restart replay=%+v err=%v recovery=%+v", restartReplay, err, recovery)
+	}
+	if _, ok, err := restartedStore.AuthenticateDevice(ctx, deviceID, recoveredCredential); err != nil || !ok {
+		t.Fatalf("recovered credential invalid after restart replay: ok=%v err=%v", ok, err)
+	}
+
+	// A different owner can never use recovery to transfer ownership.
+	otherOwnerMutation := deviceClaimMutation(t, prefix+"-other", userID+"-other", deviceID, prefix+"-other-secret", prefix+"-other-idem", "bootstrap-other")
+	if _, err := store.ClaimDevice(ctx, otherOwnerMutation); !errors.Is(err, controlplane.ErrDeviceAlreadyClaimed) {
+		t.Fatalf("different-owner recovery err=%v, want ErrDeviceAlreadyClaimed", err)
+	}
+	if _, ok, err := store.AuthenticateDevice(ctx, deviceID, recoveredCredential); err != nil || !ok {
+		t.Fatalf("different-owner attempt changed current credential: ok=%v err=%v", ok, err)
+	}
+
+	delivery, err := store.DeviceClaimDelivery(ctx, userID, recovery.DeliveryID)
+	if err != nil || delivery.DeviceID != deviceID || delivery.UserID != userID {
+		t.Fatalf("recovery delivery=%+v err=%v", delivery, err)
+	}
+	if _, err := store.DeviceClaimDelivery(ctx, userID+"-other", recovery.DeliveryID); !errors.Is(err, controlplane.ErrClaimDeliveryUnavailable) {
 		t.Fatalf("cross-owner delivery err=%v, want unavailable", err)
+	}
+}
+
+func TestPostgresDeviceClaimConcurrentSameOwnerRecoveryRotatesExactlyOnce(t *testing.T) {
+	pool := postgresTestPool(t)
+	store, err := New(pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	prefix := fmt.Sprintf("pg-recovery-race-%d", time.Now().UnixNano())
+	userID := prefix + "-owner"
+	deviceID := prefix + "-device"
+	initialCredential := prefix + "-initial"
+
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM device_credentials WHERE device_id LIKE $1`, prefix+"%")
+		_, _ = pool.Exec(context.Background(), `DELETE FROM idempotency_records WHERE actor_id LIKE $1 AND operation='device.claim'`, prefix+"%")
+	})
+
+	if _, err := store.ClaimDevice(ctx, deviceClaimMutation(t, prefix+"-initial", userID, deviceID, initialCredential, prefix+"-initial-idem", "bootstrap-initial")); err != nil {
+		t.Fatal(err)
+	}
+
+	idemKey := prefix + "-recovery-idem"
+	requestVariant := "bootstrap-recovery"
+	credentialA := prefix + "-recovery-a"
+	credentialB := prefix + "-recovery-b"
+	mutationA := deviceClaimMutation(t, prefix+"-a", userID, deviceID, credentialA, idemKey, requestVariant)
+	mutationB := deviceClaimMutation(t, prefix+"-b", userID, deviceID, credentialB, idemKey, requestVariant)
+
+	type result struct {
+		out controlplane.DeviceClaimOutcome
+		err error
+	}
+	results := make(chan result, 2)
+	go func() {
+		out, claimErr := store.ClaimDevice(ctx, mutationA)
+		results <- result{out: out, err: claimErr}
+	}()
+	go func() {
+		out, claimErr := store.ClaimDevice(ctx, mutationB)
+		results <- result{out: out, err: claimErr}
+	}()
+	r1, r2 := <-results, <-results
+	if r1.err != nil || r2.err != nil {
+		t.Fatalf("same-owner recovery errors: %v / %v", r1.err, r2.err)
+	}
+	if r1.out.DeliveryID == "" || r1.out.DeliveryID != r2.out.DeliveryID {
+		t.Fatalf("concurrent recovery outcomes diverged: %+v / %+v", r1.out, r2.out)
+	}
+	if r1.out.Replayed == r2.out.Replayed {
+		t.Fatalf("want one first execution and one replay: %+v / %+v", r1.out, r2.out)
+	}
+	if _, ok, err := store.AuthenticateDevice(ctx, deviceID, initialCredential); err != nil || ok {
+		t.Fatalf("initial credential survived recovery: ok=%v err=%v", ok, err)
+	}
+	_, aOK, aErr := store.AuthenticateDevice(ctx, deviceID, credentialA)
+	_, bOK, bErr := store.AuthenticateDevice(ctx, deviceID, credentialB)
+	if aErr != nil || bErr != nil || aOK == bOK {
+		t.Fatalf("exactly one generated recovery credential must win: a=%v/%v b=%v/%v", aOK, aErr, bOK, bErr)
 	}
 }
 
