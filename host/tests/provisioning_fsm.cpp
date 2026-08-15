@@ -7,6 +7,7 @@ using companion::provisioning::PendingClaimView;
 using companion::provisioning::RuntimeConfigView;
 using companion::provisioning::State;
 using companion::provisioning::transition;
+using companion::provisioning::valid_human_claim_code;
 using companion::provisioning::valid_pending_claim;
 using companion::provisioning::valid_runtime_config;
 
@@ -70,6 +71,13 @@ int main() {
       .idempotency_key = "short",
       .server_url = "wss://companion.example/v2/device",
   }));
+
+  assert(valid_human_claim_code("ABCDE-23456"));
+  assert(valid_human_claim_code("abcde23456"));
+  assert(!valid_human_claim_code("ABCD-23456"));
+  assert(!valid_human_claim_code("ABCDE-2345O"));
+  assert(!valid_human_claim_code("ABCDE-23451"));
+  assert(!valid_human_claim_code("ABCDE_23456"));
 
   return 0;
 }
