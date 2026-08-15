@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-08-14T22:24:58+07:00",
+  "updated_at": "2026-08-15T09:14:11+07:00",
   "rules": {
     "allowed_statuses": [
       "passed",
@@ -144,9 +144,37 @@
       "reason": "Current persistence semantics do not yet prove actor-scoped same-key/same-payload replay, same-key/different-payload conflict detection and concurrency/restart behavior. Issue #27 owns this gate."
     },
     "postgres_migrations_jobs": {
-      "status": "unproven",
-      "evidence": [],
-      "reason": "PostgreSQL/Atlas/pgx/River migration, crash/restart and backup/restore gates are not yet complete on main."
+      "status": "passed",
+      "evidence": [
+        {
+          "kind": "github_actions",
+          "workflow": "postgres-schema",
+          "run_id": 31819036769,
+          "commit": "b11ab90143ede112f66381254674db9aac7dc115",
+          "assertion": "PR #90 exact head passed pinned PostgreSQL 18.4 Atlas migration, least-privilege pgx repository integration, application restart, 24-table parity, pg_dump restore, reverse SQLite recovery round trip and no-op reapply before the PostgreSQL-only hard cut merged."
+        },
+        {
+          "kind": "github_actions",
+          "workflow": "software-device-e2e",
+          "run_id": 31819036758,
+          "commit": "b11ab90143ede112f66381254674db9aac7dc115",
+          "artifact_id": 9226247574,
+          "artifact_digest": "sha256:355d73744d9be7616396ed2d120bf694011e214254c8eabaa58f8b732cd6cb34",
+          "assertion": "PR #90 exact head ran actual companiond against the authoritative PostgreSQL store across restart with database-enrolled credentials and representative ToolRegistry mutations."
+        },
+        {
+          "kind": "github_actions",
+          "workflow": "postgres-schema",
+          "run_id": 31858248403,
+          "commit": "f4ae44c67dfc679dd7bbdebc47ffd0b817a15844",
+          "tested_merge_commit": "69444f776492d94549221e5a6a88e062d92974cc",
+          "artifact_id": 9239788633,
+          "artifact_digest": "sha256:110683082b472b269db4e10dd9ea3603d68f78b344e91033a2cfc965b45ba650",
+          "postgres": "18.4",
+          "runtime_role": "companion_app",
+          "assertion": "PR #93 exact head passed River schema migration/validation, DML-only runtime access, transactional rollback/commit enqueue, uniqueness, retry, simulated stuck-job restart rescue, cancellation, graceful stop, operational state capture, restore digest and 24-table rollback round trip."
+        }
+      ]
     },
     "mcp_external_integration": {
       "status": "unproven",

@@ -17,11 +17,11 @@ The current baseline is materially ahead of the last immutable checkpoint tag.
 - **There is no SQLite product fallback, runtime selector, shadow read, or dual write.** SQLite remains only in explicit migration/recovery tooling and isolated tests.
 - **Atlas owns production schema migration.** Runtime startup verifies the exact expected schema revision and rejects incompatible/newer schema state and over-privileged runtime roles.
 - **Application-level PostgreSQL restart/idempotency/conflict behavior, migration parity, backup/restore, PostgreSQL → SQLite recovery, and Tier-1 PostgreSQL orchestration were exercised before PR #90 merged.** The exact PR #90 head passed production E2E, software-device E2E, PostgreSQL schema/integration, quality/security, module-lock, protocol-v2, CodeQL, and Wokwi workflow checks.
-- **Issue #20 remains open because Phase D River is in PR #93 and not yet merged/promoted.** Direct least-privilege PostgreSQL integration proves transactional enqueue/uniqueness/retry/crash rescue/cancellation/shutdown locally; pinned PostgreSQL 18.4 exact-head evidence remains required.
+- **Issue #20 remains open only until Phase D River PR #93 merges.** Direct and hosted pinned-PostgreSQL 18.4 evidence proves transactional enqueue/uniqueness/retry/crash rescue/cancellation/shutdown, least privilege, operational state, restore and rollback on exact head `f4ae44c67dfc679dd7bbdebc47ffd0b817a15844`.
 - **Real ASR/TTS/model selection remains unproven.** Provider-neutral speech contracts and reference adapters exist, and the model benchmark harness exists, but there is no promoted real VN/EN provider/model result yet.
 - **Physical production proof remains unproven.** Software/host/Wokwi-style evidence does not replace ESP32-S3 acoustic, display/power/RF, capability, or soak evidence.
 
-At this snapshot, [`evidence/status.json`](evidence/status.json) still groups the PostgreSQL/River program into an aggregate production gate. That aggregate remains `unproven` until PR #93 passes exact-head hosted gates and merges, even though PostgreSQL Phase C itself has landed and passed its hosted cutover gates.
+[`evidence/status.json`](evidence/status.json) records the aggregate PostgreSQL/River program as passed using exact-head hard-cut and River runs. This data-plane promotion does not promote any real-provider or physical-HIL gate.
 
 ## Evidence / implementation matrix
 
@@ -36,7 +36,7 @@ At this snapshot, [`evidence/status.json`](evidence/status.json) still groups th
 | PostgreSQL app restart + durable conflict semantics | ✅ merged + hosted proof | Keep restart/reconnect/idempotency regression blocking |
 | Backup / restore + reverse recovery rehearsal | ✅ merged + hosted proof | Keep pg_dump restore and PostgreSQL → SQLite → PostgreSQL round-trip regression |
 | PostgreSQL authoritative hard cut | ✅ merged in #90 | No product SQLite fallback/selector may return |
-| River durable jobs | 🟡 implemented in PR #93, not promoted | Exact-head PostgreSQL 18.4 CI, artifact review, merge and post-merge regression remain |
+| River durable jobs | ✅ exact-head hosted proof in PR #93 | Merge and post-merge regression remain |
 | Tier-1 headless software device | 🟡 partial production evidence | Orchestration/restart/tool paths are proven; real provider + physical promotion remains separate |
 | Canonical protocol v2 | 🟡 partial production evidence | Physical-device evidence and remaining final capability/HIL proof |
 | External MCP + device capabilities | 🟡 partial | Official SDK/ToolRegistry contract and software-device capability path landed; final operational/HIL promotion remains |
@@ -56,7 +56,7 @@ The issue labels are **not** sufficient proof that code is actively being develo
 
 | Workstream | What is already on `main` | Next real step | Branch/PR state at 2026-08-15 before this README update |
 |---|---|---|---|
-| #20 Data Plane | PostgreSQL Phase A/B/C, hard cut, rollback/restart/Tier-1 evidence | Finish hosted proof and merge River Phase D | `codex/issue-20-river`, draft PR #93 |
+| #20 Data Plane | PostgreSQL Phase A/B/C plus River Phase D exact-head evidence | Merge and run post-merge regression | `codex/issue-20-river`, draft PR #93 |
 | #48 / #18 Voice baseline | Streaming speech contract + FunASR/EdgeTTS/Xunfei/Huoshan/Qwen Realtime reference adapters + Chat Completions transport | Run normalized real-provider VN/EN evidence; select v1 ASR/TTS | Latest implementation branches were merged via #47/#67/#71; no open PR |
 | #19 Capabilities | MCP/ToolRegistry contract, authenticated device capability routing, software-device volume full-flow and lifecycle fix | Finish remaining production/HIL evidence and close issue truthfully | Merged via #72/#74/#75/#82; no open PR |
 | #17 Firmware audio | ESP-SR 2.4.7 AFE/WakeNet/VAD/AEC software integration | Real ESP32-S3 enclosure acoustic/coexistence evidence | Latest implementation branch merged via #55; no open PR |
@@ -121,7 +121,7 @@ Authoritative state
   ├─ Atlas-owned versioned schema migrations
   ├─ conversation / memory / control / auth / usage repositories
   ├─ scheduler + outbox state
-  └─ River durable retention jobs — implemented in PR #93, not yet promoted
+  └─ River durable retention jobs — exact-head hosted proof in PR #93
 ```
 
 There is no permanent product `sqlite|postgres` selector and no MCP runtime on ESP32 firmware.
