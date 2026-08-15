@@ -37,6 +37,12 @@ target_compile_features(transport_policy_tests PRIVATE cxx_std_20)
 target_compile_options(transport_policy_tests PRIVATE -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
 add_test(NAME transport_policy_tests COMMAND transport_policy_tests)
 
+add_executable(reconnect_backoff_tests tests/reconnect_backoff.cpp)
+target_include_directories(reconnect_backoff_tests PRIVATE ../components/esp32_network/include)
+target_compile_features(reconnect_backoff_tests PRIVATE cxx_std_20)
+target_compile_options(reconnect_backoff_tests PRIVATE -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
+add_test(NAME reconnect_backoff_tests COMMAND reconnect_backoff_tests)
+
 add_executable(protocol_vectors tests/protocol_vectors.cpp)
 target_link_libraries(protocol_vectors PRIVATE companion_app)
 target_compile_options(protocol_vectors PRIVATE -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
