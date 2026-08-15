@@ -13,16 +13,10 @@ type pairingCreateRequest struct {
 }
 
 func (p pairingCreateRequest) Validate() error {
-	p.CandidateDiscoveryID = strings.TrimSpace(p.CandidateDiscoveryID)
+	if !validPairingDiscoveryID(p.CandidateDiscoveryID) {
+		return fmt.Errorf("candidate_discovery_id is not a valid rotating pairing alias")
+	}
 	p.ProximityEvidenceID = strings.TrimSpace(p.ProximityEvidenceID)
-	if len(p.CandidateDiscoveryID) != 32 {
-		return fmt.Errorf("candidate_discovery_id must be a 32-byte session alias")
-	}
-	for _, r := range p.CandidateDiscoveryID {
-		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
-			return fmt.Errorf("candidate_discovery_id must be hexadecimal")
-		}
-	}
 	if p.ProximityEvidenceID == "" || len(p.ProximityEvidenceID) > 256 {
 		return fmt.Errorf("proximity_evidence_id must be 1..256 bytes")
 	}
