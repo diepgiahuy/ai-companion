@@ -13,7 +13,7 @@
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_random.h"
-#include "mbedtls/sha256.h"
+#include "psa/crypto.h"
 
 namespace companion {
 namespace {
@@ -1796,9 +1796,10 @@ bool WebSocketVoiceBackend::download_voice_mail(const MediaJob& job, bool decode
   OggOpusParser parser(decode ? packet_handler : nullptr,
                        decode ? &decode_context : nullptr);
   ok = ok && parser.ready();
-  mbedtls_sha256_context sha{};
-  mbedtls_sha256_init(&sha);
-  ok = ok && mbedtls_sha256_starts_ret(&sha, 0) == 0;
+  psa_hash_operation_t sha = PSA_HASH_OPERATION_INIT;
+  const bool hash_started = ok && psa_crypto_init() == PSA_SUCCESS &&
+                            psa_hash_setup(&sha, PSA_ALG_SHA_256) == PSA_SUCCESS;
+  ok = ok && hash_started;
   std::array<uint8_t, 2'048> buffer{};
   size_t total = 0;
   while (ok && voice_mail_job_current(job)) {
@@ -1811,17 +1812,23 @@ bool WebSocketVoiceBackend::download_voice_mail(const MediaJob& job, bool decode
     if (count == 0) break;
     total += static_cast<size_t>(count);
     if (total > job.voice_mail.size_bytes || total > kMaximumVoiceMailBytes ||
-        mbedtls_sha256_update_ret(&sha, buffer.data(), count) != 0 ||
+        psa_hash_update(&sha, buffer.data(), static_cast<size_t>(count)) !=
+            PSA_SUCCESS ||
         !parser.feed(std::span<const uint8_t>(buffer.data(), count))) {
       ok = false;
     }
   }
   unsigned char digest[32]{};
+  size_t digest_size = 0;
+  const bool hash_finished = hash_started &&
+                             psa_hash_finish(&sha, digest, sizeof(digest),
+                                             &digest_size) == PSA_SUCCESS &&
+                             digest_size == sizeof(digest);
   ok = ok && voice_mail_job_current(job) &&
        total == job.voice_mail.size_bytes && parser.finish() &&
-       mbedtls_sha256_finish_ret(&sha, digest) == 0 &&
+       hash_finished &&
        sha256_matches(digest, job.voice_mail.checksum_sha256.data());
-  mbedtls_sha256_free(&sha);
+  if (!hash_finished) (void)psa_hash_abort(&sha);
   esp_http_client_close(client);
   esp_http_client_cleanup(client);
 
