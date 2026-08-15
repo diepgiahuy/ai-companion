@@ -4,6 +4,10 @@ on:
   pull_request_target:
     types: [opened, edited, synchronize, reopened, ready_for_review]
 
+concurrency:
+  group: pr-contract-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   pull-requests: read
@@ -15,51 +19,37 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
-      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       STATUS_URL: https://api.github.com/repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }}
       RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
-      - name: Publish pending status on PR head
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -eu
-          curl -fsSL -X POST \
-            -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "$STATUS_URL" \
-            -d "{\"state\":\"pending\",\"context\":\"PR Contract\",\"description\":\"Validating PR execution record from trusted main\",\"target_url\":\"${RUN_URL}\"}"
-
       - name: Checkout trusted default branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
-      - name: Validate PR metadata contract
-        id: contract
-        continue-on-error: true
-        run: python3 scripts/check_pr_contract.py --event "$GITHUB_EVENT_PATH"
-
-      - name: Publish final status on PR head
-        if: always()
+      - name: Validate contract and publish final PR-head status
         env:
           GH_TOKEN: ${{ github.token }}
-          CONTRACT_OUTCOME: ${{ steps.contract.outcome }}
         run: |
-          set -eu
-          if [ "$CONTRACT_OUTCOME" = "success" ]; then
+          set +e
+          python3 scripts/check_pr_contract.py --event "$GITHUB_EVENT_PATH"
+          contract_rc=$?
+          set -e
+
+          if [ "$contract_rc" -eq 0 ]; then
             state=success
             description="PR execution record satisfies repository contract"
           else
             state=failure
             description="PR execution record violates repository contract"
           fi
+
           curl -fsSL -X POST \
             -H "Authorization: Bearer ${GH_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "$STATUS_URL" \
             -d "{\"state\":\"${state}\",\"context\":\"PR Contract\",\"description\":\"${description}\",\"target_url\":\"${RUN_URL}\"}"
-          test "$state" = success
+
+          exit "$contract_rc"
