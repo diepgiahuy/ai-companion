@@ -1,0 +1,169 @@
+#include "companion/setup_portal.hpp"
+
+#include "companion/provisioning_fsm.hpp"
+
+#include "cJSON.h"
+#include "esp_event.h"
+#include "esp_random.h"
+#include "esp_wifi.h"
+
+#include <array>
+#include <cstdio>
+#include <cstring>
+#include <string_view>
+
+namespace companion::provisioning {
+namespace {
+constexpr size_t kMaximumBodyBytes = 4 * 1024;
+constexpr char kHtml[] = R"HTML(<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>Companion Setup</title><style>body{font-family:sans-serif;max-width:34rem;margin:2rem auto;padding:0 1rem}label{display:block;margin:.8rem 0}input{width:100%;padding:.6rem;box-sizing:border-box}button{padding:.7rem 1rem}</style><h1>Companion Setup</h1><form id=f><label>Wi-Fi SSID<input name=wifi_ssid required maxlength=32></label><label>Wi-Fi password<input name=wifi_password type=password maxlength=63></label><label>Companion WSS URL<input name=server_url required placeholder="wss://..." maxlength=512></label><label>Bootstrap ID<input name=bootstrap_id required maxlength=128></label><label>Claim authorization<input name=claim_authorization type=password required maxlength=1024></label><label>Idempotency key<input name=idempotency_key required minlength=8 maxlength=128></label><button>Save and reboot</button></form><pre id=o></pre><script>f.onsubmit=async e=>{e.preventDefault();o.textContent='Saving...';const x=Object.fromEntries(new FormData(f));const r=await fetch('/configure',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(x)});o.textContent=r.ok?'Saved. Companion will reboot.':'Invalid setup data.'}</script>)HTML";
+
+template <size_t N>
+bool copy_json_string(const cJSON* root, const char* name, FixedSecret<N>& output) {
+  const cJSON* item = cJSON_GetObjectItemCaseSensitive(root, name);
+  if (!cJSON_IsString(item) || item->valuestring == nullptr) return false;
+  const std::string_view value(item->valuestring);
+  if (value.size() >= output.value.size()) return false;
+  output.value.fill('\0');
+  std::memcpy(output.value.data(), value.data(), value.size());
+  return true;
+}
+
+bool validate_pending(const PendingConfig& pending) {
+  return valid_wifi(pending.wifi_ssid.view(), pending.wifi_password.view()) &&
+         valid_pending_claim(PendingClaimView{
+             pending.bootstrap_id.view(), pending.claim_authorization.view(),
+             pending.idempotency_key.view(), pending.server_url.view()});
+}
+
+void random_password(std::array<char, 17>& output) {
+  static constexpr char alphabet[] = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+  output.fill('\0');
+  for (size_t i = 0; i < 12; ++i) {
+    output[i] = alphabet[esp_random() % (sizeof(alphabet) - 1)];
+  }
+}
+} // namespace
+
+std::string_view SetupPortal::ssid() const {
+  return {ssid_.data(), std::strlen(ssid_.data())};
+}
+
+std::string_view SetupPortal::password() const {
+  return {password_.data(), std::strlen(password_.data())};
+}
+
+bool SetupPortal::start(std::string_view device_suffix) {
+  if (device_suffix.empty()) return false;
+  configured_.store(false);
+  pending_ = {};
+  ssid_.fill('\0');
+  password_.fill('\0');
+  const std::string_view suffix = device_suffix.substr(device_suffix.size() > 4 ? device_suffix.size() - 4 : 0);
+  std::snprintf(ssid_.data(), ssid_.size(), "Companion-%.*s", static_cast<int>(suffix.size()), suffix.data());
+  random_password(password_);
+
+  esp_err_t err = esp_netif_init();
+  if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) return false;
+  err = esp_event_loop_create_default();
+  if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) return false;
+  if (esp_netif_create_default_wifi_ap() == nullptr) return false;
+
+  wifi_init_config_t init = WIFI_INIT_CONFIG_DEFAULT();
+  if (esp_wifi_init(&init) != ESP_OK || esp_wifi_set_storage(WIFI_STORAGE_RAM) != ESP_OK ||
+      esp_wifi_set_mode(WIFI_MODE_AP) != ESP_OK) {
+    return false;
+  }
+  wifi_config_t config{};
+  std::memcpy(config.ap.ssid, ssid_.data(), std::strlen(ssid_.data()));
+  config.ap.ssid_len = static_cast<uint8_t>(std::strlen(ssid_.data()));
+  std::memcpy(config.ap.password, password_.data(), std::strlen(password_.data()));
+  config.ap.channel = 1;
+  config.ap.max_connection = 2;
+  config.ap.authmode = WIFI_AUTH_WPA2_PSK;
+  config.ap.pmf_cfg.capable = true;
+  config.ap.pmf_cfg.required = true;
+  if (esp_wifi_set_config(WIFI_IF_AP, &config) != ESP_OK || esp_wifi_start() != ESP_OK) {
+    return false;
+  }
+
+  httpd_config_t http = HTTPD_DEFAULT_CONFIG();
+  http.max_uri_handlers = 4;
+  http.lru_purge_enable = true;
+  if (httpd_start(&server_, &http) != ESP_OK) return false;
+
+  httpd_uri_t index{};
+  index.uri = "/";
+  index.method = HTTP_GET;
+  index.handler = &SetupPortal::handle_index;
+  index.user_ctx = this;
+  httpd_uri_t configure_uri{};
+  configure_uri.uri = "/configure";
+  configure_uri.method = HTTP_POST;
+  configure_uri.handler = &SetupPortal::handle_configure;
+  configure_uri.user_ctx = this;
+  return httpd_register_uri_handler(server_, &index) == ESP_OK &&
+         httpd_register_uri_handler(server_, &configure_uri) == ESP_OK;
+}
+
+bool SetupPortal::take_pending(PendingConfig& out) {
+  if (!configured_.exchange(false)) return false;
+  out = pending_;
+  pending_ = {};
+  return true;
+}
+
+esp_err_t SetupPortal::handle_index(httpd_req_t* request) {
+  httpd_resp_set_type(request, "text/html; charset=utf-8");
+  httpd_resp_set_hdr(request, "Cache-Control", "no-store");
+  return httpd_resp_send(request, kHtml, HTTPD_RESP_USE_STRLEN);
+}
+
+esp_err_t SetupPortal::handle_configure(httpd_req_t* request) {
+  if (request == nullptr || request->user_ctx == nullptr) return ESP_FAIL;
+  return static_cast<SetupPortal*>(request->user_ctx)->configure(request);
+}
+
+esp_err_t SetupPortal::configure(httpd_req_t* request) {
+  if (configured_.load() || request->content_len <= 0 ||
+      request->content_len > static_cast<int>(kMaximumBodyBytes)) {
+    httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST, "invalid setup data");
+    return ESP_OK;
+  }
+  std::array<char, kMaximumBodyBytes + 1> body{};
+  size_t total = 0;
+  while (total < static_cast<size_t>(request->content_len)) {
+    const int read = httpd_req_recv(request, body.data() + total,
+                                    static_cast<size_t>(request->content_len) - total);
+    if (read <= 0) {
+      httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST, "invalid setup data");
+      return ESP_OK;
+    }
+    total += static_cast<size_t>(read);
+  }
+  cJSON* root = cJSON_ParseWithLength(body.data(), total);
+  if (root == nullptr || !cJSON_IsObject(root)) {
+    if (root != nullptr) cJSON_Delete(root);
+    httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST, "invalid setup data");
+    return ESP_OK;
+  }
+  PendingConfig candidate{};
+  const bool ok = copy_json_string(root, "wifi_ssid", candidate.wifi_ssid) &&
+                  copy_json_string(root, "wifi_password", candidate.wifi_password) &&
+                  copy_json_string(root, "server_url", candidate.server_url) &&
+                  copy_json_string(root, "bootstrap_id", candidate.bootstrap_id) &&
+                  copy_json_string(root, "claim_authorization", candidate.claim_authorization) &&
+                  copy_json_string(root, "idempotency_key", candidate.idempotency_key) &&
+                  validate_pending(candidate);
+  cJSON_Delete(root);
+  if (!ok) {
+    httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST, "invalid setup data");
+    return ESP_OK;
+  }
+  pending_ = candidate;
+  configured_.store(true);
+  httpd_resp_set_hdr(request, "Cache-Control", "no-store");
+  httpd_resp_sendstr(request, "saved");
+  return ESP_OK;
+}
+
+} // namespace companion::provisioning
