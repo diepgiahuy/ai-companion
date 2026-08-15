@@ -1,216 +1,188 @@
 # Commercial architecture
 
-This document records the current architecture, stable boundaries, and intended
-evolution seams for AI Companion. It is not a release checklist and does not turn a
-roadmap candidate into an implemented dependency.
+This document records durable architecture, stable boundaries, and evolution seams for AI Companion. It is **not** a release checklist, live backlog, or branch-status dashboard. Current work belongs in GitHub Issues/PRs; merged code is product truth and `evidence/status.json` owns promoted evidence claims.
 
-## 1. Status language
+## Status language
 
-Architecture and issue documents use these terms consistently:
+Use these terms consistently:
 
-- **Implemented:** code is present on the referenced branch.
-- **Tested:** named checks passed in a stated environment.
+- **Implemented:** code exists on merged `main`.
+- **Tested:** a named oracle passed in a stated environment/code revision.
 - **HIL-tested:** a named physical scenario passed on identified hardware.
-- **Production-proven:** defined release and operational criteria passed.
+- **Production-proven:** defined provider/physical/operational release criteria passed.
 - **Planned:** accepted direction without an implementation claim.
-- **Candidate:** an option that still requires a benchmark or decision record.
+- **Candidate:** an option still requiring research, benchmark, or decision.
 
-## 2. Current system shape
+Implementation is not automatically Production-proven.
 
-The current product is a modular Go monolith plus ESP32-S3 firmware.
+## Current system shape
+
+The product is a modular Go monolith plus ESP32-S3 firmware.
 
 ```text
 ESP32-S3
-  -> WebSocket data plane
-  -> Go backend
-       -> agent/model and speech adapters
-       -> typed product commands and domain ports
-       -> PostgreSQL authoritative state
-       -> transactional outbox
-       -> control-plane services
-  -> audio, button, and display hardware adapters
+  -> secure WebSocket / Companion Protocol v2
+  -> Go realtime runtime
+       -> speech/realtime provider adapters
+       -> Google ADK
+       -> ToolRegistry + policy
+            -> native/domain tools
+            -> authenticated device capabilities
+            -> optional backend-side external MCP
+       -> PostgreSQL / pgx + Atlas
+       -> transactional outbox + River
+       -> identity/twin/config/privacy/OTA control plane
 ```
 
-Current repository seams:
+Repository seams:
 
 - `backend/internal/domain/`: domain types and ports.
-- `backend/internal/pgstore/`: PostgreSQL persistence and outbox implementation.
-- `backend/internal/store/`: SQLite migration/recovery adapter and isolated tests.
-- `backend/internal/controlplane/`: device identity/twins, config, feature
-  metadata, privacy, OTA metadata, and related control-plane behavior.
-- `backend/internal/protocol/`: device/backend protocol.
+- `backend/internal/pgstore/`: authoritative PostgreSQL persistence and outbox implementation.
+- `backend/internal/store/`: SQLite migration/recovery adapter and isolated tests only.
+- `backend/internal/controlplane/`: device identity/twins, scoped config, feature metadata, privacy, entitlements and firmware metadata.
+- `backend/internal/protocol/`: Companion device/backend wire contracts.
+- `backend/internal/capability/`: ToolRegistry/ResourceRegistry policy and integration boundaries.
 - `components/companion_app/`: hardware-independent firmware state and behavior.
-- `components/esp32_board/`: ESP32-S3 peripheral and transport adapters.
-- `main/`: composition root for the physical device.
-- `host/`: host simulator and deterministic firmware-core tests.
+- `components/esp32_board/`: ESP32-S3 physical adapters.
+- `main/`: physical-device composition root.
+- `host/`: software-device and deterministic firmware-core testing.
 
-Future process splits must preserve these boundaries or introduce an explicit,
-reviewed replacement.
+A future split must preserve these boundaries or replace them through an explicit reviewed decision.
 
-## 3. Sources of truth
+## Sources of truth
 
-Authoritative product state lives in the implemented database adapter.
+PostgreSQL/pgx is the sole authoritative product store and Atlas owns its schema.
 
-- Expenses, budgets, reminders, notes, voice metadata, identity, device state,
-  permissions, package/OTA state, and similar records are database state.
-- The LLM is a reasoning and composition component, not a database.
-- Vector or graph memory is a secondary projection and cannot authorize or replace
-  current financial, schedule, identity, configuration, or device state.
-- Device UI and local caches present or temporarily retain state; they do not become
-  the backend source of truth.
+- Financial, schedule, conversation, memory metadata, identity, device/control, privacy and similar application records remain Companion-owned state.
+- The LLM is a reasoning/composition component, not a database or authorization source.
+- Vector/embedding memory is a secondary projection; it cannot authorize or replace current financial, schedule, identity or configuration state.
+- Device UI/caches may present or temporarily retain state but do not become backend authority.
+- SQLite is retained only for explicit migration/recovery tooling and isolated adapter tests. No product runtime SQLite selector, shadow read, dual write or fallback is allowed.
+- River is the implemented durable-job layer after the PostgreSQL hard cut. It is no longer a roadmap candidate.
+- Redis/external vector infrastructure remains optional and requires measured operational need before adoption.
 
-PostgreSQL/pgx is the authoritative product store and Atlas owns its schema. SQLite
-is retained only for explicit cutover/recovery tooling and isolated tests. River,
-Redis, external vector stores, and other additions remain candidates or roadmap
-items until their adapters, tests, and rollback paths are implemented.
+## Data, control and event boundaries
 
-## 4. Data, control, and event boundaries
+The realtime data plane carries latency-sensitive audio, protocol and presentation/capability traffic over Companion Protocol v2/WebSocket. MQTT/UDP/WebRTC are not parallel product transports merely because other projects/providers support them.
 
-The data plane carries latency-sensitive device interaction such as audio, protocol
-messages, and UI events. WebSocket is implemented. WebRTC or provider-native
-realtime transports are optional candidates and require benchmarked adapters.
+The control plane owns enrolled device identity, desired/reported twin state, scoped configuration, feature metadata, privacy policy, entitlement and signed firmware metadata.
 
-The control plane owns identity, device twins, remote configuration, feature
-metadata, privacy policy, entitlement, rollout state, and OTA metadata.
+The event plane uses the transactional outbox when a state mutation and emitted durable event must commit atomically. Consumers are idempotent because delivery may be at least once. The product does not use full event sourcing.
 
-The event plane uses durable outbox records when state and an emitted event must be
-atomic. Consumers must be idempotent because delivery can be at least once. The
-project does not use full event sourcing.
+River owns implemented durable maintenance/retention job execution. A domain operation requiring atomic state + job scheduling must preserve the existing transaction/idempotency boundaries rather than introduce a second in-memory scheduler as authority.
 
-## 5. Device twin and configuration
+## Device twin, configuration and feature state
 
-Desired and reported device state are separate. Updates use monotonic versions;
-stale desired updates or stale reports do not advance state. The device retains
-last-known-good configuration and reports whether a version was applied or rejected.
+Desired and reported state remain separate and versioned. Devices apply compatible desired state and report applied/rejected versions; stale desired/reported messages must not move state backwards.
 
-Remote configuration, feature rollout, entitlement, and authorization are separate
-decisions. A feature flag cannot grant permission, and a config value cannot prove
-ownership.
+Remote configuration, feature rollout, entitlement, privacy and authorization remain separate decisions:
 
-## 6. Features and integrations
+- feature/config cannot grant ownership or permission;
+- entitlement is not authentication;
+- privacy policy may deny a technically available feature;
+- firmware/device compatibility may reject a desired config/firmware target.
 
-`FeatureModule` is descriptive metadata for capabilities, tools, resources, UI
-cards, config keys, locales, and implementation adapters. It does not dynamically
-load arbitrary executable code into the Go process.
+`FeatureModule` is descriptive metadata for capabilities/tools/resources/UI/config/locales. It must not dynamically load arbitrary executable code.
 
-Internal product actions call typed commands and ports directly. They do not require
-an MCP round trip. Optional external integrations may use MCP or another adapter
-behind backend authentication, authorization, schema validation, egress policy,
-timeouts, and auditing. Firmware never connects directly to an LLM, semantic router,
-or MCP server.
+## Capabilities and integrations
 
-## 7. Model, speech, and memory adapters
+ToolRegistry/policy is the model-facing schema/authorization/execution boundary.
 
-Model, ASR, TTS, and realtime voice providers remain replaceable adapters.
-Selection requires representative Vietnamese and product-task evaluation, including
-quality, tool accuracy, latency, cost, cancellation, privacy, and failure behavior.
+- Durable product/business mutations execute through backend-owned typed tools/repositories.
+- Authenticated device capabilities execute over Companion Protocol v2 and are scoped to the authenticated current device/session. The model cannot supply an arbitrary device identity as authorization.
+- The current proven software-device example is `device.volume.set`; additional physical controls are added only when product hardware/need is concrete and bounded.
+- Optional external integrations use backend-side MCP behind explicit configuration, authentication, schema validation, egress policy, timeout/cancel and auditing.
+- The official MCP Go SDK interoperability path is implemented. Firmware does not run MCP and never connects directly to an LLM or external MCP endpoint.
+- Arbitrary GPIO, shell, filesystem, credential, firmware-flash and raw-secret access are not generic model capabilities.
 
-Context assembly may combine current session events, relevant recent turns,
-authoritative domain resources, selected long-term memories, and the current
-request. Only the minimum provider context required by the selected mode should
-leave the backend.
+## Model, speech and memory adapters
 
-Memory is opt-in where required, records provenance, supports correction and
-deletion, and remains separate from authoritative domain state.
+LLM/model transport, ASR, TTS, native-realtime audio, embedding/retrieval and external integrations remain replaceable at Companion-owned boundaries.
 
-## 8. Voice and media lifecycle
+Selection requires representative Companion evaluation rather than generic leaderboard claims. Important dimensions include:
 
-Voice media uses a blob-storage boundary. The POC may use local files; a production
-adapter may use S3-compatible object storage. Database records contain metadata,
-ownership, checksum, codec, size, duration, lifecycle state, object key, timestamps,
-and idempotency data rather than making large audio blobs the default relational
-payload.
+- Vietnamese/English task and tool correctness;
+- false mutation/schema failure rate;
+- first-token/partial/final/first-audio/end-to-end latency;
+- cancellation and stale-output behavior;
+- reliability, provider failures and rate limits;
+- privacy/data egress and retention terms;
+- runtime resource use and cost.
 
-Ogg Opus is the preferred interoperable storage format unless a measured device or
-provider constraint requires another format.
+Reference adapters/harnesses can be implemented without promoting a Production-v1 provider/model. Measured selection evidence is tracked separately.
 
-Voice-mail policy is explicit:
+Memory remains distinct from authoritative domain state, records provenance/validity where applicable, and supports correction/deletion semantics.
 
-- `disabled`: creating or receiving voice mail is rejected.
-- `ephemeral`: one successful playback consumes the item and schedules deletion.
-- `retained`: the item remains until its configured expiry or user deletion.
+## Voice and media lifecycle
 
-"Deleted" must distinguish immediate access revocation from asynchronous object,
-version, backup, and retention cleanup. State changes that also notify devices use
-the outbox where atomicity is required.
+Voice media uses a replaceable blob-storage boundary.
 
-## 9. Pairing and relationships
+Current voice-mail implementation:
 
-Device relationships are many-to-many and backend-authorized. A proximity signal
-alone never authorizes a relationship.
+- PostgreSQL owns mailbox metadata/lifecycle/ownership/idempotency;
+- the current blob adapter stores **local-filesystem Ogg Opus** media;
+- authenticated retrieval validates bounded media metadata/content before playback;
+- voice mail never auto-plays;
+- privacy lifecycle supports disabled/ephemeral/retained behavior.
 
-On ESP32-S3, BLE RSSI is only a coarse proximity input. A secure flow uses an
-authenticated owner/device, one-time session, nonce, expiry, replay protection,
-rate limits, idempotency, and explicit confirmation by both participants. Filtering
-and thresholds must be calibrated and benchmarked against false accept/reject
-scenarios.
+An S3-compatible object-store adapter is a future deployment/scaling option, not the current implementation. Any replacement must preserve ownership, checksum/content validation, deletion/retention semantics, backup/restore boundaries and rollback.
 
-A product claim of physical "bump" requires an additional physical signal such as a
-tap/impact sensor, NFC, UWB, or other measured hardware. Without that signal, call
-the feature proximity-confirmed pairing.
+"Deleted" distinguishes immediate access revocation from asynchronous object/version/backup retention cleanup.
 
-## 10. Firmware and UI
+## Pairing and relationships
 
-Application state stays in `components/companion_app/`; peripheral details stay
-behind board interfaces. Network, audio, display, input, BLE, LED, and haptic work
-must not block one another's real-time paths.
+Device relationships are backend-authoritative and many-to-many. Proximity is an input, not authorization.
 
-For a color-display upgrade, the default candidate is Espressif `esp_lcd` plus
-`esp_lvgl_port` and an appropriate BSP. LovyanGFX remains a benchmark alternative
-for procedural sprite workloads. The chosen stack must be justified on target
-hardware with audio and networking active.
+On ESP32-S3, BLE RSSI is only coarse evidence. A secure pairing product flow requires authenticated devices/owners, a short-lived one-time session, bilateral confirmation, expiry, replay/rate-limit protection and durable idempotency. RSSI algorithm/threshold selection requires measured false-accept/false-reject qualification on real hardware/enclosure.
 
-Frame rate, latency, heap/PSRAM, binary size, bus use, and power are measured
-budgets. A fixed 60 FPS claim is not an architecture requirement.
+Without a stronger physical signal, describe the feature as **proximity-confirmed pairing**, not secure ranging or a guaranteed physical bump.
 
-Hardware selection precedes hardware-specific implementation. The decision compares
-retrofitting the current board with an integrated board on pin budget, display bus,
-audio coexistence, power, enclosure, availability, cost, and recovery/debug access.
+## Firmware, audio and presentation
 
-## 11. Security and privacy
+Application state remains in `components/companion_app/`; peripheral/vendor details stay behind firmware board/audio/network/presentation interfaces.
 
-- Production transport verifies TLS and uses unique revocable device credentials.
-- Ownership and authorization are enforced at product-command and data boundaries,
-  not only in prompts or UI.
-- Secrets are not stored in source, firmware assets, logs, or issue bodies.
-- High-impact mutations require an explicit confirmation scope tied to actor,
-  operation, arguments, and expiry where appropriate.
-- Audio, transcripts, memory, and conversation retention are independently
-  configurable and support export/delete behavior.
-- Secure Boot, flash encryption, anti-rollback, and eFuse provisioning require a
-  tested manufacturing and recovery procedure before irreversible activation.
-- External providers receive only data needed for the selected feature and mode.
+The ESP-SR AFE/WakeNet/VAD/AEC software path is implemented behind a portable audio-front-end boundary. Physical wake/AEC/self-trigger/false-interruption/resource quality remains a Tier-3 acoustic qualification problem.
 
-## 12. Validation and release evidence
+The current product display remains the existing SSD1306 path until hardware selection and physical benchmark evidence promote a replacement. The reversible color-display candidate uses Espressif `esp_lcd` + `esp_lvgl_port`/LVGL 9 as the baseline; alternatives are benchmark challengers, not simultaneous production stacks.
 
-Use layered validation:
+Frame time, heap/PSRAM, binary size, audio/network coexistence, bus behavior and power are measured budgets. A hard-coded 60 FPS requirement is not an architecture contract.
 
-- static/build/schema checks;
-- deterministic unit and host tests;
-- implemented database, blob, protocol, and provider integration tests;
-- simulation where it represents the relevant peripheral behavior;
-- physical HIL for RF, timing, audio, display, power, input, OTA, and peripherals;
-- release soak, fault, backup/restore, security, and rollback tests where applicable.
+Typed remote presentation may select allow-listed local semantic states; arbitrary executable UI/animation code is not downloaded into the device runtime.
 
-Mocks and fakes are expected at replaceable ports. They do not prove physical or
-provider behavior. HIL does not replace deterministic lower-level tests.
+## Connectivity and OTA boundaries
 
-Because this repository is public, physical HIL runs only for manually authorized
-trusted refs. Pull-request code does not automatically execute on a personal
-self-hosted runner.
+Wi-Fi + secure WSS remains the current product connectivity path. A future cellular network adapter may share the same IP/WSS product protocol only if a portable product requirement justifies it; it must not create a second MQTT/UDP business protocol.
 
-## 13. Evolution decisions
+Signed firmware manifests/control-plane metadata are implemented. Device-side A/B download/apply/health-confirm/rollback remains a separate firmware lifecycle until implemented and physically qualified. Irreversible anti-rollback/eFuse changes require a tested manufacturing and recovery procedure plus explicit approval.
 
-A roadmap item becomes a fixed architecture decision only when an issue or ADR
-records:
+## Security and privacy
 
-- the problem and current limitation;
-- evaluated options and primary-source constraints;
-- representative benchmark or compatibility evidence;
-- migration and rollback plan;
-- security/privacy impact;
-- operational ownership.
+- Production transport verifies TLS and uses unique revocable enrolled device credentials.
+- Enrolled backend identity, not client-supplied user/tenant/plan headers, controls authorization context.
+- ToolRegistry policy, privacy, entitlement and feature/config checks remain explicit boundaries.
+- High-impact mutations use scoped confirmation where required; model text alone is not authorization.
+- Secrets are not committed or included in normal logs/evidence.
+- Raw private audio is not persisted by default outside explicit voice-media/product policy.
+- External providers receive only data needed by the selected feature/mode.
+- Secure Boot, flash encryption, anti-rollback and eFuse provisioning require a tested recovery/manufacturing procedure before irreversible activation.
 
-Choose maintained technology that fits the workload. "Latest" is not a design
-criterion, and version numbers are pinned only after dependency and compatibility
-validation.
+## Validation and evidence
+
+Use the evidence ladder, not a blanket "no mocks" or "run everything" rule:
+
+1. deterministic unit/host/contract tests;
+2. real implemented database/protocol/integration boundaries;
+3. software-device Tier 1 for real Companion orchestration without physical claims;
+4. simulation only where it represents the behavior;
+5. trusted physical HIL for RF/audio/display/power/input/OTA/peripheral claims;
+6. real-provider benchmarks for provider/model claims.
+
+Mocks/fakes are valid at replaceable ports for deterministic logic and failure injection. They never promote provider or physical quality.
+
+Because the repository is public, personal HIL executes only on manually authorized trusted refs. Pull-request code does not automatically execute on the personal self-hosted runner.
+
+## Evolution decisions
+
+A candidate becomes architecture only when the problem is real and the issue/ADR records relevant constraints, measured evidence or a bounded spike, security/privacy impact, migration/rollback and operational ownership.
+
+"Latest" is not a design criterion. Avoid framework, database, transport, cache or infrastructure additions until measured need exceeds their coordination/operational cost.
