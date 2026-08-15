@@ -156,7 +156,7 @@ ClaimStatus ClaimClient::redeem_code(const PendingConfig& pending, std::string_v
   result = {};
   if (device_id.empty() || device_id.size() > 128 ||
       !valid_human_claim_code(pending.claim_code.view()) ||
-      !pending.claim_authorization.view().empty()) {
+      !pending.claim_authorization.view().empty() || pending.idempotency_key.view().size() < 8) {
     return ClaimStatus::setup_required;
   }
   std::array<char, 640> url{};
@@ -167,9 +167,11 @@ ClaimStatus ClaimClient::redeem_code(const PendingConfig& pending, std::string_v
   const std::string owned_code(pending.claim_code.view());
   const std::string owned_bootstrap(pending.bootstrap_id.view());
   const std::string owned_device(device_id);
+  const std::string owned_redemption(pending.idempotency_key.view());
   cJSON_AddStringToObject(request, "claim_code", owned_code.c_str());
   cJSON_AddStringToObject(request, "bootstrap_id", owned_bootstrap.c_str());
   cJSON_AddStringToObject(request, "device_id", owned_device.c_str());
+  cJSON_AddStringToObject(request, "redemption_id", owned_redemption.c_str());
   char* encoded = cJSON_PrintUnformatted(request);
   cJSON_Delete(request);
   if (encoded == nullptr) return ClaimStatus::retryable;
@@ -199,10 +201,6 @@ ClaimStatus ClaimClient::claim(const PendingConfig& pending, std::string_view de
   result = {};
   if (device_id.empty() || device_id.size() > 128) return ClaimStatus::setup_required;
 
-  // Reload the canonical pending phase on every retry. After a human code is
-  // redeemed, persist the opaque authorization before attempting credential
-  // issuance; a reboot therefore resumes from authorization rather than trying
-  // to replay the one-time human code.
   PendingConfig effective = pending;
   ProvisioningStore persistence;
   PendingConfig persisted{};
