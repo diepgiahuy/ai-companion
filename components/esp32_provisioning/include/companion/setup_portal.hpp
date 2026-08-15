@@ -13,6 +13,9 @@ namespace companion::provisioning {
 
 class SetupPortal final {
 public:
+  // Product call surface remains device-suffix only; the provisioning component
+  // derives the exact stable Wi-Fi MAC device ID internally for the owner binding.
+  bool start(std::string_view device_suffix);
   bool start(std::string_view device_id, std::string_view device_suffix);
   bool start_wifi_only(std::string_view device_suffix);
   bool configured() const { return configured_.load(); }
