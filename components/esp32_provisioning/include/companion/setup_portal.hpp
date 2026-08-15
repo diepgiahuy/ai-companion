@@ -22,6 +22,7 @@ public:
 
 private:
   static esp_err_t handle_index(httpd_req_t* request);
+  static esp_err_t handle_nonce(httpd_req_t* request);
   static esp_err_t handle_configure(httpd_req_t* request);
   esp_err_t configure(httpd_req_t* request);
 
@@ -29,6 +30,7 @@ private:
   PendingConfig pending_{};
   std::array<char, 33> ssid_{};
   std::array<char, 17> password_{};
+  std::array<char, 33> session_nonce_{};
   std::atomic<bool> configured_{false};
 };
 
