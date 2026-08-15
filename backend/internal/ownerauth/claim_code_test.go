@@ -26,7 +26,7 @@ func humanClaimTestService(now *time.Time) (*Service, string, string) {
 	}, rawSession, csrf
 }
 
-func TestHumanClaimCodeRedeemsOnceIntoBoundOpaqueAuthorization(t *testing.T) {
+func TestHumanClaimCodeRedeemsRetrySafeIntoBoundOpaqueAuthorization(t *testing.T) {
 	now := time.Date(2026, 8, 16, 1, 0, 0, 0, time.UTC)
 	service, session, csrf := humanClaimTestService(&now)
 
@@ -40,20 +40,28 @@ func TestHumanClaimCodeRedeemsOnceIntoBoundOpaqueAuthorization(t *testing.T) {
 	if _, err := service.AuthorizeDeviceClaim(code, "bootstrap-1", "device-1"); !errors.Is(err, ErrInvalidClaim) {
 		t.Fatalf("human code bypassed redemption boundary: %v", err)
 	}
-	if _, _, err := service.RedeemBoundHumanClaimCode(code, "bootstrap-1", "device-2"); !errors.Is(err, ErrInvalidClaim) {
+	if _, _, err := service.RedeemBoundHumanClaimCode(code, "bootstrap-1", "device-2", "device-retry-1"); !errors.Is(err, ErrInvalidClaim) {
 		t.Fatalf("wrong-device redemption err=%v, want ErrInvalidClaim", err)
 	}
 
-	authorization, redeemed, err := service.RedeemBoundHumanClaimCode(strings.ToLower(code), "bootstrap-1", "device-1")
+	authorization, redeemed, err := service.RedeemBoundHumanClaimCode(strings.ToLower(code), "bootstrap-1", "device-1", "device-retry-1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if authorization == "" || authorization == code || redeemed.UserID != "owner-1" {
 		t.Fatalf("authorization=%q redeemed=%+v", authorization, redeemed)
 	}
-	if _, _, err := service.RedeemBoundHumanClaimCode(code, "bootstrap-1", "device-1"); !errors.Is(err, ErrInvalidClaim) {
-		t.Fatalf("replayed code err=%v, want ErrInvalidClaim", err)
+
+	// Lost HTTP response / reboot retry: same device retry identity gets the same
+	// opaque authorization, not a second authorization and not a dead code.
+	replayedAuthorization, replayed, err := service.RedeemBoundHumanClaimCode(code, "bootstrap-1", "device-1", "device-retry-1")
+	if err != nil || replayedAuthorization != authorization || replayed != redeemed {
+		t.Fatalf("retry authorization=%q claim=%+v err=%v", replayedAuthorization, replayed, err)
 	}
+	if _, _, err := service.RedeemBoundHumanClaimCode(code, "bootstrap-1", "device-1", "attacker-retry"); !errors.Is(err, ErrInvalidClaim) {
+		t.Fatalf("different redemption identity replay err=%v, want ErrInvalidClaim", err)
+	}
+
 	owner, err := service.AuthorizeDeviceClaim(authorization, "bootstrap-1", "device-1")
 	if err != nil || owner != "owner-1" {
 		t.Fatalf("opaque authorization owner=%q err=%v", owner, err)
@@ -71,7 +79,7 @@ func TestHumanClaimCodeRejectsExpiredAndRateLimitsOnlineGuessing(t *testing.T) {
 		t.Fatal(err)
 	}
 	now = now.Add(6 * time.Minute)
-	if _, _, err := service.RedeemBoundHumanClaimCode(code, "bootstrap-expire", "device-expire"); !errors.Is(err, ErrInvalidClaim) {
+	if _, _, err := service.RedeemBoundHumanClaimCode(code, "bootstrap-expire", "device-expire", "device-expire-retry"); !errors.Is(err, ErrInvalidClaim) {
 		t.Fatalf("expired code err=%v, want ErrInvalidClaim", err)
 	}
 
@@ -129,7 +137,7 @@ func TestHumanClaimCodeHTTPRequiresOwnerCSRFAndNeverReturnsCredential(t *testing
 		t.Fatal("owner handoff exposed long-lived device credential")
 	}
 
-	redeemBody := `{"claim_code":"` + code + `","bootstrap_id":"bootstrap-http","device_id":"device-http"}`
+	redeemBody := `{"claim_code":"` + code + `","bootstrap_id":"bootstrap-http","device_id":"device-http","redemption_id":"device-retry-http"}`
 	redeem := httptest.NewRequest(http.MethodPost, "/v1/owner/device-claim-codes/redeem", strings.NewReader(redeemBody))
 	redeem.RemoteAddr = "203.0.113.88:8080"
 	redeemRecorder := httptest.NewRecorder()
@@ -145,7 +153,16 @@ func TestHumanClaimCodeHTTPRequiresOwnerCSRFAndNeverReturnsCredential(t *testing
 	replay.RemoteAddr = "203.0.113.88:8080"
 	replayRecorder := httptest.NewRecorder()
 	service.HandleHumanClaimCodeRedeem(replayRecorder, replay)
-	if replayRecorder.Code != http.StatusGone {
-		t.Fatalf("replay status=%d body=%q", replayRecorder.Code, replayRecorder.Body.String())
+	if replayRecorder.Code != http.StatusOK || replayRecorder.Body.String() != redeemRecorder.Body.String() {
+		t.Fatalf("idempotent replay status=%d body=%q first=%q", replayRecorder.Code, replayRecorder.Body.String(), redeemRecorder.Body.String())
+	}
+
+	attackerBody := `{"claim_code":"` + code + `","bootstrap_id":"bootstrap-http","device_id":"device-http","redemption_id":"different-retry"}`
+	attacker := httptest.NewRequest(http.MethodPost, "/v1/owner/device-claim-codes/redeem", strings.NewReader(attackerBody))
+	attacker.RemoteAddr = "203.0.113.89:8080"
+	attackerRecorder := httptest.NewRecorder()
+	service.HandleHumanClaimCodeRedeem(attackerRecorder, attacker)
+	if attackerRecorder.Code != http.StatusGone {
+		t.Fatalf("different redemption replay status=%d body=%q", attackerRecorder.Code, attackerRecorder.Body.String())
 	}
 }
