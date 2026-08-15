@@ -9,11 +9,6 @@ on:
       - "db/postgres/**"
       - "ops/postgres/**"
       - "testdata/scenarios/**"
-      - "evidence/**"
-      - "README.md"
-      - "docs/TEST_EVIDENCE_LADDER.md"
-      - "docs/OBSERVABILITY.md"
-      - "scripts/check_evidence.py"
       - ".github/workflows/software-device-e2e.yml"
   push:
     branches: [main]
@@ -24,11 +19,6 @@ on:
       - "db/postgres/**"
       - "ops/postgres/**"
       - "testdata/scenarios/**"
-      - "evidence/**"
-      - "README.md"
-      - "docs/TEST_EVIDENCE_LADDER.md"
-      - "docs/OBSERVABILITY.md"
-      - "scripts/check_evidence.py"
       - ".github/workflows/software-device-e2e.yml"
   workflow_dispatch:
 
