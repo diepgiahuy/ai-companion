@@ -31,4 +31,8 @@ bool GpioButton::consume_press(uint64_t now_ms) {
   return false;
 }
 
+bool GpioButton::is_pressed() const {
+  return gpio_get_level(board::kButton) == 0;
+}
+
 } // namespace companion
