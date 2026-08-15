@@ -15,7 +15,8 @@
 namespace companion::provisioning {
 namespace {
 constexpr size_t kMaximumBodyBytes = 4 * 1024;
-constexpr char kHtml[] = R"HTML(<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>Companion Setup</title><style>body{font-family:sans-serif;max-width:34rem;margin:2rem auto;padding:0 1rem}label{display:block;margin:.8rem 0}input{width:100%;padding:.6rem;box-sizing:border-box}button{padding:.7rem 1rem}</style><h1>Companion Setup</h1><form id=f><label>Wi-Fi SSID<input name=wifi_ssid required maxlength=32></label><label>Wi-Fi password<input name=wifi_password type=password maxlength=63></label><label>Companion WSS URL<input name=server_url required placeholder="wss://..." maxlength=512></label><label>Bootstrap ID<input name=bootstrap_id required maxlength=128></label><label>Claim authorization<input name=claim_authorization type=password required maxlength=1024></label><label>Idempotency key<input name=idempotency_key required minlength=8 maxlength=128></label><button>Save and reboot</button></form><pre id=o></pre><script>f.onsubmit=async e=>{e.preventDefault();o.textContent='Saving...';const x=Object.fromEntries(new FormData(f));const r=await fetch('/configure',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(x)});o.textContent=r.ok?'Saved. Companion will reboot.':'Invalid setup data.'}</script>)HTML";
+constexpr char kNonceHeader[] = "X-Companion-Setup-Nonce";
+constexpr char kHtml[] = R"HTML(<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>Companion Setup</title><style>body{font-family:sans-serif;max-width:34rem;margin:2rem auto;padding:0 1rem}label{display:block;margin:.8rem 0}input{width:100%;padding:.6rem;box-sizing:border-box}button{padding:.7rem 1rem}</style><h1>Companion Setup</h1><form id=f><label>Wi-Fi SSID<input name=wifi_ssid required maxlength=32></label><label>Wi-Fi password<input name=wifi_password type=password maxlength=63></label><label>Companion WSS URL<input name=server_url required placeholder="wss://..." maxlength=512></label><label>Bootstrap ID<input name=bootstrap_id required maxlength=128></label><label>Claim authorization<input name=claim_authorization type=password required maxlength=1024></label><label>Idempotency key<input name=idempotency_key required minlength=8 maxlength=128></label><button>Save and reboot</button></form><pre id=o></pre><script>let nonce='';async function setupNonce(){const r=await fetch('/nonce',{cache:'no-store'});if(!r.ok)throw new Error('nonce');nonce=(await r.text()).trim()}setupNonce().catch(()=>o.textContent='Setup session unavailable. Reload this page.');f.onsubmit=async e=>{e.preventDefault();try{if(!nonce)await setupNonce();o.textContent='Saving...';const x=Object.fromEntries(new FormData(f));const r=await fetch('/configure',{method:'POST',headers:{'Content-Type':'application/json','X-Companion-Setup-Nonce':nonce},body:JSON.stringify(x)});o.textContent=r.ok?'Saved. Companion will reboot.':'Invalid or expired setup session.'}catch(_){o.textContent='Setup session unavailable. Reload this page.'}}</script>)HTML";
 
 template <size_t N>
 bool copy_json_string(const cJSON* root, const char* name, FixedSecret<N>& output) {
@@ -42,6 +43,19 @@ void random_password(std::array<char, 17>& output) {
     output[i] = alphabet[esp_random() % (sizeof(alphabet) - 1)];
   }
 }
+
+void random_nonce(std::array<char, 33>& output) {
+  static constexpr char hex[] = "0123456789abcdef";
+  output.fill('\0');
+  for (size_t i = 0; i < 16; i += 4) {
+    const uint32_t value = esp_random();
+    for (size_t j = 0; j < 4; ++j) {
+      const uint8_t byte = static_cast<uint8_t>(value >> (j * 8));
+      output[(i + j) * 2] = hex[(byte >> 4) & 0x0f];
+      output[(i + j) * 2 + 1] = hex[byte & 0x0f];
+    }
+  }
+}
 } // namespace
 
 std::string_view SetupPortal::ssid() const {
@@ -58,9 +72,11 @@ bool SetupPortal::start(std::string_view device_suffix) {
   pending_ = {};
   ssid_.fill('\0');
   password_.fill('\0');
+  session_nonce_.fill('\0');
   const std::string_view suffix = device_suffix.substr(device_suffix.size() > 4 ? device_suffix.size() - 4 : 0);
   std::snprintf(ssid_.data(), ssid_.size(), "Companion-%.*s", static_cast<int>(suffix.size()), suffix.data());
   random_password(password_);
+  random_nonce(session_nonce_);
 
   esp_err_t err = esp_netif_init();
   if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) return false;
@@ -81,7 +97,7 @@ bool SetupPortal::start(std::string_view device_suffix) {
   config.ap.max_connection = 2;
   config.ap.authmode = WIFI_AUTH_WPA2_PSK;
   config.ap.pmf_cfg.capable = true;
-  config.ap.pmf_cfg.required = true;
+  config.ap.pmf_cfg.required = false;
   if (esp_wifi_set_config(WIFI_IF_AP, &config) != ESP_OK || esp_wifi_start() != ESP_OK) {
     return false;
   }
@@ -96,12 +112,18 @@ bool SetupPortal::start(std::string_view device_suffix) {
   index.method = HTTP_GET;
   index.handler = &SetupPortal::handle_index;
   index.user_ctx = this;
+  httpd_uri_t nonce_uri{};
+  nonce_uri.uri = "/nonce";
+  nonce_uri.method = HTTP_GET;
+  nonce_uri.handler = &SetupPortal::handle_nonce;
+  nonce_uri.user_ctx = this;
   httpd_uri_t configure_uri{};
   configure_uri.uri = "/configure";
   configure_uri.method = HTTP_POST;
   configure_uri.handler = &SetupPortal::handle_configure;
   configure_uri.user_ctx = this;
   return httpd_register_uri_handler(server_, &index) == ESP_OK &&
+         httpd_register_uri_handler(server_, &nonce_uri) == ESP_OK &&
          httpd_register_uri_handler(server_, &configure_uri) == ESP_OK;
 }
 
@@ -109,6 +131,7 @@ bool SetupPortal::take_pending(PendingConfig& out) {
   if (!configured_.exchange(false)) return false;
   out = pending_;
   pending_ = {};
+  session_nonce_.fill('\0');
   return true;
 }
 
@@ -116,6 +139,14 @@ esp_err_t SetupPortal::handle_index(httpd_req_t* request) {
   httpd_resp_set_type(request, "text/html; charset=utf-8");
   httpd_resp_set_hdr(request, "Cache-Control", "no-store");
   return httpd_resp_send(request, kHtml, HTTPD_RESP_USE_STRLEN);
+}
+
+esp_err_t SetupPortal::handle_nonce(httpd_req_t* request) {
+  if (request == nullptr || request->user_ctx == nullptr) return ESP_FAIL;
+  auto* portal = static_cast<SetupPortal*>(request->user_ctx);
+  httpd_resp_set_type(request, "text/plain; charset=utf-8");
+  httpd_resp_set_hdr(request, "Cache-Control", "no-store");
+  return httpd_resp_send(request, portal->session_nonce_.data(), HTTPD_RESP_USE_STRLEN);
 }
 
 esp_err_t SetupPortal::handle_configure(httpd_req_t* request) {
@@ -129,6 +160,16 @@ esp_err_t SetupPortal::configure(httpd_req_t* request) {
     httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST, "invalid setup data");
     return ESP_OK;
   }
+
+  std::array<char, 33> provided_nonce{};
+  const size_t nonce_length = httpd_req_get_hdr_value_len(request, kNonceHeader);
+  if (nonce_length == 0 || nonce_length >= provided_nonce.size() ||
+      httpd_req_get_hdr_value_str(request, kNonceHeader, provided_nonce.data(), provided_nonce.size()) != ESP_OK ||
+      std::string_view(provided_nonce.data(), nonce_length) != std::string_view(session_nonce_.data())) {
+    httpd_resp_send_err(request, HTTPD_403_FORBIDDEN, "invalid setup session");
+    return ESP_OK;
+  }
+
   std::array<char, kMaximumBodyBytes + 1> body{};
   size_t total = 0;
   while (total < static_cast<size_t>(request->content_len)) {
