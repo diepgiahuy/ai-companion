@@ -13,10 +13,11 @@ on:
       - unassigned
   push:
     branches:
-      - agent/issue-115-project-token-smoke
+      - main
     paths:
       - scripts/bootstrap_github_project.py
       - scripts/reconcile_github_issue_graph.py
+      - scripts/reconcile_github_issue_status.py
       - .github/workflows/project-management.yml
 
 permissions:
@@ -36,11 +37,13 @@ jobs:
       PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}
       REPO_TOKEN: ${{ github.token }}
       PROJECT_OWNER: diepgiahuy
-      PROJECT_OWNER_DATABASE_ID: '30974088'
       PROJECT_REPOSITORY: diepgiahuy/ai-companion
       PROJECT_TITLE: AI Companion — Production v1
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
       - name: Fail closed if PROJECT_TOKEN is unavailable
         shell: bash
         run: |
@@ -92,7 +95,6 @@ jobs:
           echo "Canonical Project fields exist on Project #${project_number}."
 
       - name: Ensure canonical Project views exist
-        id: views
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
@@ -109,35 +111,34 @@ jobs:
             if grep -Fxq "${name}" <<<"${view_names}"; then
               return 0
             fi
-            local body
-            body="$(jq -cn --arg name "${name}" --arg layout "${layout}" --arg filter "${filter}" \
-              '{name:$name,layout:$layout,filter:$filter}')"
-            if printf '%s' "${body}" | gh api --method POST \
-              -H 'Accept: application/vnd.github+json' \
-              -H 'X-GitHub-Api-Version: 2026-03-10' \
-              "users/${PROJECT_OWNER}/projectsV2/${PROJECT_NUMBER}/views" --input - >/tmp/project-view.json; then
-              echo "Created Project view: ${name}"
-              view_names="${view_names}"$'\n'"${name}"
-              return 0
-            fi
-            echo "::warning::GitHub Project view endpoint unavailable for '${name}'."
-            return 1
+            jq -cn --arg name "${name}" --arg layout "${layout}" --arg filter "${filter}" \
+              '{name:$name,layout:$layout,filter:$filter}' | \
+              gh api --method POST \
+                -H 'Accept: application/vnd.github+json' \
+                -H 'X-GitHub-Api-Version: 2026-03-10' \
+                "users/${PROJECT_OWNER}/projectsV2/${PROJECT_NUMBER}/views" --input - >/dev/null
+            echo "Created Project view: ${name}"
+            view_names="${view_names}"$'\n'"${name}"
           }
 
-          views_ok=true
-          create_view "01 — Command Center" table 'is:issue -status:Done' || views_ok=false
-          create_view "02 — Execution" board 'is:issue -status:Backlog -status:Done' || views_ok=false
-          create_view "03 — Critical Path" table 'is:issue priority:P0 -status:Done' || views_ok=false
-          create_view "04 — Physical / Evidence" table 'is:issue -status:Done' || views_ok=false
-          create_view "05 — Product Roadmap" roadmap 'is:issue' || views_ok=false
-          echo "available=${views_ok}" >> "${GITHUB_OUTPUT}"
+          create_view "01 — Command Center" table 'is:issue -status:Done'
+          create_view "02 — Execution" board 'is:issue -status:Backlog -status:Done'
+          create_view "03 — Critical Path" table 'is:issue priority:P0 -status:Done'
+          create_view "04 — Physical / Evidence" table 'is:issue required-evidence:"T3 Physical HIL" -status:Done'
+          create_view "05 — Product Roadmap" roadmap 'is:issue no:parent-issue'
+
+      - name: Reconcile native sub-issues and dependencies
+        run: python3 scripts/reconcile_github_issue_graph.py
+
+      - name: Reconcile execution labels from native dependencies
+        run: python3 scripts/reconcile_github_issue_status.py
 
       - name: Reconcile Project items and metadata
         shell: bash
         run: |
           set -euo pipefail
-          # Field/view creation is owned by the workflow using the supported CLI/REST
-          # surfaces. The Python reconciler owns project description/items/metadata.
+          # Field/view creation and native issue graph reconciliation are owned by
+          # dedicated workflow steps using their supported API surfaces.
           python3 - <<'PY'
           from pathlib import Path
           path = Path("scripts/bootstrap_github_project.py")
@@ -147,9 +148,6 @@ jobs:
           path.write_text(text)
           PY
           python3 scripts/bootstrap_github_project.py --bootstrap
-
-      - name: Reconcile native sub-issues and dependencies
-        run: python3 scripts/reconcile_github_issue_graph.py
 
   sync-issue:
     if: github.event_name == 'issues'
@@ -162,20 +160,13 @@ jobs:
       PROJECT_REPOSITORY: diepgiahuy/ai-companion
       PROJECT_TITLE: AI Companion — Production v1
     steps:
-      - uses: actions/checkout@v4
-      - name: Remove stale execution labels from a closed issue
-        if: github.event.action == 'closed'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          number="${{ github.event.issue.number }}"
-          for label in status:ready status:in-progress status:blocked; do
-            if gh issue view "${number}" --repo "${PROJECT_REPOSITORY}" --json labels \
-              --jq '.labels[].name' | grep -Fxq "${label}"; then
-              gh issue edit "${number}" --repo "${PROJECT_REPOSITORY}" --remove-label "${label}"
-            fi
-          done
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Reconcile dependent execution state
+        if: github.event.action == 'closed' || github.event.action == 'reopened'
+        run: python3 scripts/reconcile_github_issue_status.py
+
       - name: Sync changed issue into GitHub Project
         run: python3 scripts/bootstrap_github_project.py --sync-issue "${{ github.event.issue.number }}"
