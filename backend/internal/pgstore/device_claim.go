@@ -31,7 +31,7 @@ func (s *Store) ClaimDevice(ctx context.Context, mutation controlplane.DeviceCla
 		Key:         mutation.IdempotencyKey,
 		RequestHash: mutation.RequestHash,
 	}
-	outcome, err := RunIdempotent(ctx, s.pool, request, func(ctx context.Context, tx pgx.Tx) ([]byte, error) {
+	outcome, err := RunIdempotent(ctx, s.pool, request, func(tx pgx.Tx) (any, error) {
 		var owner string
 		err := tx.QueryRow(ctx, `SELECT user_id FROM device_credentials WHERE device_id = $1 FOR UPDATE`, mutation.DeviceID).Scan(&owner)
 		switch {
@@ -71,19 +71,19 @@ func (s *Store) ClaimDevice(ctx context.Context, mutation controlplane.DeviceCla
 		); err != nil {
 			return nil, fmt.Errorf("insert device claim delivery: %w", err)
 		}
-		return json.Marshal(controlplane.DeviceClaimOutcome{
+		return controlplane.DeviceClaimOutcome{
 			DeliveryID: mutation.DeliveryID,
 			DeviceID:   mutation.DeviceID,
-		})
+		}, nil
 	})
 	if err != nil {
 		return controlplane.DeviceClaimOutcome{}, err
 	}
 	var decoded controlplane.DeviceClaimOutcome
-	if err := json.Unmarshal(outcome, &decoded); err != nil {
+	if err := json.Unmarshal([]byte(outcome.JSON), &decoded); err != nil {
 		return controlplane.DeviceClaimOutcome{}, fmt.Errorf("decode device claim outcome: %w", err)
 	}
-	decoded.Replayed = decoded.DeliveryID != mutation.DeliveryID
+	decoded.Replayed = outcome.Replayed
 	return decoded, nil
 }
 
