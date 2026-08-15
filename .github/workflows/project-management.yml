@@ -16,6 +16,7 @@ on:
       - agent/issue-115-project-token-smoke
     paths:
       - scripts/bootstrap_github_project.py
+      - scripts/reconcile_github_issue_graph.py
       - .github/workflows/project-management.yml
 
 permissions:
@@ -111,17 +112,15 @@ jobs:
             local body
             body="$(jq -cn --arg name "${name}" --arg layout "${layout}" --arg filter "${filter}" \
               '{name:$name,layout:$layout,filter:$filter}')"
-            for identity in "${PROJECT_OWNER_DATABASE_ID}" "${PROJECT_OWNER}"; do
-              if printf '%s' "${body}" | gh api --method POST \
-                -H 'Accept: application/vnd.github+json' \
-                -H 'X-GitHub-Api-Version: 2026-03-10' \
-                "users/${identity}/projectsV2/${PROJECT_NUMBER}/views" --input - >/tmp/project-view.json 2>/tmp/project-view.err; then
-                echo "Created Project view: ${name} (identity=${identity})"
-                view_names="${view_names}"$'\n'"${name}"
-                return 0
-              fi
-            done
-            echo "::warning::GitHub user-owned Project view endpoint unavailable for '${name}': $(tail -1 /tmp/project-view.err)"
+            if printf '%s' "${body}" | gh api --method POST \
+              -H 'Accept: application/vnd.github+json' \
+              -H 'X-GitHub-Api-Version: 2026-03-10' \
+              "users/${PROJECT_OWNER}/projectsV2/${PROJECT_NUMBER}/views" --input - >/tmp/project-view.json; then
+              echo "Created Project view: ${name}"
+              view_names="${view_names}"$'\n'"${name}"
+              return 0
+            fi
+            echo "::warning::GitHub Project view endpoint unavailable for '${name}'."
             return 1
           }
 
@@ -133,25 +132,24 @@ jobs:
           create_view "05 — Product Roadmap" roadmap 'is:issue' || views_ok=false
           echo "available=${views_ok}" >> "${GITHUB_OUTPUT}"
 
-      - name: Reconcile Project items and native issue relationships
+      - name: Reconcile Project items and metadata
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "${{ steps.views.outputs.available }}" != "true" ]]; then
-            # GitHub's new user-owned view endpoint can be unavailable even while the
-            # Project GraphQL/CLI surface works. Do not let presentation block state.
-            python3 - <<'PY'
+          # Field/view creation is owned by the workflow using the supported CLI/REST
+          # surfaces. The Python reconciler owns project description/items/metadata.
+          python3 - <<'PY'
           from pathlib import Path
           path = Path("scripts/bootstrap_github_project.py")
           text = path.read_text()
-          text = text.replace(
-              "    ensure_views(project, snapshot)\n",
-              "    print('::warning::Skipping view creation; workflow probe reported endpoint unavailable.')\n",
-          )
+          text = text.replace("    ensure_views(project, snapshot)\n", "    pass  # views reconciled by workflow\n")
+          text = text.replace("    reconcile_relationships()\n", "    pass  # native issue graph reconciled separately\n")
           path.write_text(text)
           PY
-          fi
           python3 scripts/bootstrap_github_project.py --bootstrap
+
+      - name: Reconcile native sub-issues and dependencies
+        run: python3 scripts/reconcile_github_issue_graph.py
 
   sync-issue:
     if: github.event_name == 'issues'
@@ -159,10 +157,25 @@ jobs:
     timeout-minutes: 5
     env:
       PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+      REPO_TOKEN: ${{ github.token }}
       PROJECT_OWNER: diepgiahuy
       PROJECT_REPOSITORY: diepgiahuy/ai-companion
       PROJECT_TITLE: AI Companion — Production v1
     steps:
       - uses: actions/checkout@v4
+      - name: Remove stale execution labels from a closed issue
+        if: github.event.action == 'closed'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          number="${{ github.event.issue.number }}"
+          for label in status:ready status:in-progress status:blocked; do
+            if gh issue view "${number}" --repo "${PROJECT_REPOSITORY}" --json labels \
+              --jq '.labels[].name' | grep -Fxq "${label}"; then
+              gh issue edit "${number}" --repo "${PROJECT_REPOSITORY}" --remove-label "${label}"
+            fi
+          done
       - name: Sync changed issue into GitHub Project
         run: python3 scripts/bootstrap_github_project.py --sync-issue "${{ github.event.issue.number }}"
