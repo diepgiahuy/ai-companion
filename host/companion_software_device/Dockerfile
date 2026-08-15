@@ -1,11 +1,15 @@
-FROM golang:1.26.6-bookworm@sha256:116d58cbd88c1297624acc6e967a060012422bacf9930927e23fb719189c6f36
+FROM golang:1.26.6-bookworm@sha256:116d58cbd88c1297624acc6e967a060012422bacf9930927e23fb719189c6f36 AS software-deps
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential cmake ninja-build pkg-config curl ca-certificates python3 \
     libboost-system1.74-dev=1.74.0+ds1-21 \
     libopus-dev=1.3.1-3 \
+    libopusfile-dev=0.12-4 \
+    libssl-dev=3.0.20-1~deb12u2 \
     nlohmann-json3-dev=3.11.2-2 \
  && rm -rf /var/lib/apt/lists/*
+
+FROM software-deps AS runtime-build
 
 WORKDIR /src
 COPY backend/go.mod backend/go.sum ./backend/

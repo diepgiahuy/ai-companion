@@ -54,7 +54,8 @@ struct FakeSpeaker final : Speaker {
     samples_written += count;
     return count;
   }
-  bool playback_drained() const override { return true; }
+  bool drained{true};
+  bool playback_drained() const override { return drained; }
   void stop_playback() override {
     if (active) ++stop_count;
     active = false;
@@ -81,6 +82,20 @@ struct FakeButton final : Button {
     return false;
   }
 };
+
+VoiceMailMetadata voice_mail(std::string_view id = "voice-1") {
+  VoiceMailMetadata item{};
+  item.set_voice_mail_id(id);
+  item.set_from_device_id("sender-device");
+  item.set_media_format("ogg_opus");
+  item.set_checksum_sha256(
+      "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef");
+  item.duration_ms = 200;
+  item.size_bytes = 1'024;
+  item.expires_at_unix_ms = 1'800'000'000'000ULL;
+  item.policy = VoiceMailMetadata::Policy::ephemeral;
+  return item;
+}
 
 
 struct VadMicrophone final : Microphone {
@@ -368,6 +383,121 @@ void runtime_config_is_versioned_and_last_known_good() {
   assert(!backend.reported_config_applied());
 }
 
+void voice_mail_waits_deduplicates_and_completes_only_after_drain() {
+  SilentMicrophone microphone;
+  FakeSpeaker speaker;
+  speaker.drained = false;
+  FakeDisplay display;
+  FakeButton button{{10}};
+  MockVoiceBackend backend;
+  CompanionApp app(microphone, speaker, display, button, backend);
+  connect(app);
+
+  const auto item = voice_mail();
+  assert(backend.inject_voice_mail(item));
+  app.tick(1);
+  assert(app.state() == UiState::voice_mail_waiting);
+  assert(speaker.start_count == 0);
+  assert(backend.inject_voice_mail(item));
+  app.tick(2);
+  assert(app.state() == UiState::voice_mail_waiting);
+
+  app.tick(10);
+  assert(app.state() == UiState::voice_mail_claiming);
+  assert(backend.voice_mail_claims() == 1);
+  for (uint64_t now = 11; now < 40; ++now) app.tick(now);
+  assert(app.state() == UiState::voice_mail_playing);
+  assert(backend.voice_mail_successes() == 0);
+  assert(speaker.samples_written == 3'200);
+
+  speaker.drained = true;
+  app.tick(40);
+  assert(backend.voice_mail_successes() == 1);
+  assert(app.state() == UiState::voice_mail_claiming);
+  app.tick(41);
+  assert(app.state() == UiState::ready);
+}
+
+void voice_mail_invalid_cancel_and_expiry_are_safe() {
+  SilentMicrophone microphone;
+  FakeSpeaker speaker;
+  FakeDisplay display;
+  FakeButton button{{10, 12}};
+  MockVoiceBackend backend;
+  CompanionApp app(microphone, speaker, display, button, backend);
+  connect(app);
+
+  auto invalid = voice_mail("invalid");
+  invalid.set_checksum_sha256("not-a-checksum");
+  assert(backend.inject_voice_mail(invalid));
+  app.tick(1);
+  assert(app.state() == UiState::ready);
+
+  const auto item = voice_mail("voice-cancel");
+  assert(backend.inject_voice_mail(item));
+  app.tick(2);
+  app.tick(10);
+  app.tick(11);
+  assert(app.state() == UiState::voice_mail_playing);
+  app.tick(12);
+  assert(app.state() == UiState::voice_mail_waiting);
+  assert(backend.voice_mail_failures() == 1);
+  assert(backend.voice_mail_successes() == 0);
+
+  assert(backend.inject_voice_mail(item, BackendEventType::voice_mail_expired));
+  app.tick(13);
+  assert(app.state() == UiState::ready);
+  assert(display.events.back().second == "NO VOICE MAIL");
+}
+
+void voice_mail_output_stall_times_out_without_consuming() {
+  SilentMicrophone microphone;
+  FakeSpeaker speaker;
+  speaker.maximum_write = 0;
+  FakeDisplay display;
+  FakeButton button{{10}};
+  MockVoiceBackend backend;
+  AppConfig config{};
+  config.voice_mail_operation_timeout_ms = 5;
+  CompanionApp app(microphone, speaker, display, button, backend, config);
+  connect(app);
+
+  const auto item = voice_mail("voice-timeout");
+  assert(backend.inject_voice_mail(item));
+  app.tick(1);
+  app.tick(10);
+  app.tick(11);
+  assert(app.state() == UiState::voice_mail_playing);
+  app.tick(16);
+  assert(app.state() == UiState::voice_mail_waiting);
+  assert(display.events.back().second == "VOICE MAIL TIMEOUT");
+  assert(backend.voice_mail_failures() == 1);
+  assert(backend.voice_mail_successes() == 0);
+}
+
+void retained_voice_mail_returns_to_waiting_after_drain() {
+  SilentMicrophone microphone;
+  FakeSpeaker speaker;
+  FakeDisplay display;
+  FakeButton button{{10}};
+  MockVoiceBackend backend;
+  CompanionApp app(microphone, speaker, display, button, backend);
+  connect(app);
+
+  auto item = voice_mail("voice-retained");
+  item.policy = VoiceMailMetadata::Policy::retained;
+  assert(backend.inject_voice_mail(item));
+  app.tick(1);
+  app.tick(10);
+  for (uint64_t now = 11; now < 50 &&
+                                app.state() != UiState::voice_mail_waiting;
+       ++now) {
+    app.tick(now);
+  }
+  assert(backend.voice_mail_successes() == 1);
+  assert(app.state() == UiState::voice_mail_waiting);
+}
+
 } // namespace
 
 int main() {
@@ -379,5 +509,9 @@ int main() {
   smart_vad_finishes_after_speech_silence();
   idle_and_alarm_states_are_non_destructive();
   runtime_config_is_versioned_and_last_known_good();
-  std::cout << "PASS: protocol-v2 + streaming + timeout + silence + barge-in + smart VAD + idle/alarm + runtime-config\n";
+  voice_mail_waits_deduplicates_and_completes_only_after_drain();
+  voice_mail_invalid_cancel_and_expiry_are_safe();
+  voice_mail_output_stall_times_out_without_consuming();
+  retained_voice_mail_returns_to_waiting_after_drain();
+  std::cout << "PASS: protocol-v2 + streaming + timeout + silence + barge-in + smart VAD + idle/alarm + runtime-config + voice-mail FSM\n";
 }

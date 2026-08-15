@@ -49,6 +49,13 @@ public:
   void cancel_turn() override;
   bool poll_event(BackendEvent& event) override;
   bool report_config(const RuntimeConfigPatch& config, bool applied) override;
+  bool claim_voice_mail(const VoiceMailMetadata& item, uint64_t now_ms) override;
+  bool report_voice_mail_playback(const VoiceMailMetadata& item, bool succeeded,
+                                  std::string_view failure_code,
+                                  uint64_t now_ms) override;
+  void cancel_voice_mail(const VoiceMailMetadata& item,
+                         std::string_view failure_code,
+                         uint64_t now_ms) override;
   size_t read_playback(std::span<int16_t> destination) override;
   bool playback_empty() const override;
   uint32_t playback_sample_rate_hz() const override;
@@ -71,6 +78,7 @@ private:
   std::atomic<uint64_t> turn_sequence_{0};
   std::atomic<bool> protocol_connected_{false};
   std::atomic<bool> stopping_{false};
+  std::atomic<bool> media_worker_running_{false};
 
   mutable std::mutex state_mutex_;
   std::string session_id_;
@@ -81,8 +89,20 @@ private:
   uint32_t playback_sample_rate_{24'000};
   std::vector<int16_t> upload_samples_;
   std::deque<int16_t> playback_samples_;
+  std::vector<int16_t> voice_mail_samples_;
+  size_t voice_mail_sample_offset_{};
   std::deque<BackendEvent> events_;
   Stats stats_{};
+
+  VoiceMailMetadata active_voice_mail_{};
+  std::string voice_mail_playback_id_;
+  std::string voice_mail_claim_wire_;
+  std::string voice_mail_claim_idempotency_key_;
+  std::string voice_mail_result_wire_;
+  bool voice_mail_claim_active_{};
+  bool voice_mail_media_started_{};
+  bool voice_mail_result_sent_{};
+  std::thread media_thread_;
 
   OpusEncoder* encoder_{};
   OpusDecoder* decoder_{};
@@ -95,8 +115,13 @@ private:
                              std::string turn_id = {},
                              std::string correlation_id = {},
                              bool include_session = true,
-                             std::optional<uint64_t> generation_id = std::nullopt);
+                             std::optional<uint64_t> generation_id = std::nullopt,
+                             std::string idempotency_key = {},
+                             std::string occurred_at = {});
   void enqueue_event(BackendEventType type, std::string_view text = {});
+  void enqueue_voice_mail_event(BackendEventType type,
+                                const VoiceMailMetadata& item,
+                                std::string_view text = {});
   void handle_text(uint64_t generation, const std::string& text);
   void handle_binary(uint64_t generation, std::span<const uint8_t> packet);
   void handle_connection_open(uint64_t generation);
@@ -104,6 +129,11 @@ private:
                                 bool notify);
   bool flush_upload_frame(std::span<const int16_t> samples);
   void clear_turn_media_locked();
+  void start_voice_mail_fetch(std::string media_ref, uint64_t generation,
+                              VoiceMailMetadata item,
+                              std::string playback_id);
+  void finish_media_worker();
+  void clear_voice_mail_locked();
 
   friend class Connection;
 };

@@ -452,6 +452,9 @@ func (s *session) run(parent context.Context) error {
 		s.hub.register(s.deviceID, s)
 		defer s.hub.unregister(s.deviceID, s)
 	}
+	if err := s.recoverUnreadVoiceMail(ctx); err != nil {
+		s.logger.Warn("voice mail recovery failed", "session_id", s.id, "error", err)
+	}
 
 	readDone := make(chan error, 1)
 	go func() { readDone <- s.readLoop(ctx) }()
@@ -652,6 +655,9 @@ func (s *session) handleControl(ctx context.Context, data []byte) error {
 				return err
 			}
 			if payload.Result == protocol.PlaybackSucceeded {
+				if item.State == voicemail.Unread {
+					return s.sendJSONMeta(ctx, protocol.VoiceMailAvailableType, protocol.Metadata{CorrelationID: message.MessageID, IdempotencyKey: message.IdempotencyKey, OccurredAt: time.Now().UTC().Format(time.RFC3339Nano)}, protocol.VoiceMailAvailable{VoiceMailID: item.ID, FromDeviceID: item.SenderDeviceID, MediaFormat: item.MediaFormat, DurationMS: item.DurationMS, SizeBytes: item.SizeBytes, ChecksumSHA256: item.ChecksumSHA256, ExpiresAt: item.ExpiresAt, Policy: protocol.VoiceMailPolicy(item.Policy)})
+				}
 				return s.sendJSONMeta(ctx, protocol.VoiceMailConsumedType, protocol.Metadata{CorrelationID: message.MessageID, IdempotencyKey: message.IdempotencyKey, OccurredAt: time.Now().UTC().Format(time.RFC3339Nano)}, protocol.VoiceMailConsumed{VoiceMailID: item.ID, PlaybackID: payload.PlaybackID})
 			}
 			return nil

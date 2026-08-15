@@ -17,6 +17,13 @@ public:
   void cancel_turn() override;
   bool poll_event(BackendEvent& event) override;
   bool report_config(const RuntimeConfigPatch& config, bool applied) override;
+  bool claim_voice_mail(const VoiceMailMetadata& item, uint64_t now_ms) override;
+  bool report_voice_mail_playback(const VoiceMailMetadata& item, bool succeeded,
+                                  std::string_view failure_code,
+                                  uint64_t now_ms) override;
+  void cancel_voice_mail(const VoiceMailMetadata& item,
+                         std::string_view failure_code,
+                         uint64_t now_ms) override;
   size_t read_playback(std::span<int16_t> destination) override;
   bool playback_empty() const override;
   uint32_t playback_sample_rate_hz() const override { return kAudioSampleRateHz; }
@@ -24,6 +31,11 @@ public:
   uint64_t received_samples() const { return received_samples_; }
   bool inject_event(BackendEventType type, std::string_view text = {}) { return push_event(type, text); }
   bool inject_config(const RuntimeConfigPatch& config);
+  bool inject_voice_mail(const VoiceMailMetadata& item,
+                         BackendEventType type = BackendEventType::voice_mail_available);
+  uint32_t voice_mail_claims() const { return voice_mail_claims_; }
+  uint32_t voice_mail_successes() const { return voice_mail_successes_; }
+  uint32_t voice_mail_failures() const { return voice_mail_failures_; }
   uint64_t reported_config_version() const { return reported_config_version_; }
   bool reported_config_applied() const { return reported_config_applied_; }
 
@@ -39,6 +51,9 @@ private:
   size_t playback_offset_{};
   uint64_t reported_config_version_{};
   bool reported_config_applied_{};
+  uint32_t voice_mail_claims_{};
+  uint32_t voice_mail_successes_{};
+  uint32_t voice_mail_failures_{};
   std::array<int16_t, reply_samples_> reply_pcm_{};
   std::array<BackendEvent, event_capacity_> events_{};
   size_t event_head_{};

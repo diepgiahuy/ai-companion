@@ -93,6 +93,7 @@ jobs:
         run: |
           set -eu
           python3 host/companion_software_device/validate_evidence.py artifacts/software-device/evidence.json
+          python3 host/companion_software_device/validate_evidence.py artifacts/software-device/evidence-voice-mail.json
           for evidence in artifacts/software-device/evidence-tool*.json; do
             case "$evidence" in
               *-db.json|*-observability.json) continue ;;

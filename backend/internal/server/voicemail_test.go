@@ -34,7 +34,10 @@ func TestVoiceMailRateLimitIsBoundedPerActorWindow(t *testing.T) {
 	}
 }
 
-type voiceMailRepositoryStub struct{ claimed, played bool }
+type voiceMailRepositoryStub struct {
+	claimed, played bool
+	unread          []voicemail.Item
+}
 
 func (r *voiceMailRepositoryStub) CreateUpload(context.Context, idempotency.Request, voicemail.Create, time.Time) (voicemail.Item, error) {
 	panic("unexpected")
@@ -46,7 +49,7 @@ func (r *voiceMailRepositoryStub) CompleteUpload(context.Context, idempotency.Re
 	panic("unexpected")
 }
 func (r *voiceMailRepositoryStub) ListUnread(context.Context, string, string, time.Time, int) ([]voicemail.Item, error) {
-	panic("unexpected")
+	return r.unread, nil
 }
 func (r *voiceMailRepositoryStub) ClaimVoiceMail(_ context.Context, request idempotency.Request, userID, deviceID, id, playbackID string, _, lease time.Time) (voicemail.Item, error) {
 	if request.Operation != "voice_mail.claim" || userID != "default" || deviceID != "device-vm" {
@@ -54,6 +57,51 @@ func (r *voiceMailRepositoryStub) ClaimVoiceMail(_ context.Context, request idem
 	}
 	r.claimed = true
 	return voicemail.Item{ID: id, PlaybackID: playbackID, LeaseExpiresAt: &lease, State: voicemail.Claimed}, nil
+}
+
+func TestVoiceMailUnreadIsRecoveredForNewSession(t *testing.T) {
+	now := time.Now().UTC()
+	repo := &voiceMailRepositoryStub{unread: []voicemail.Item{{
+		ID: "mail-recovered", SenderDeviceID: "sender-device", MediaFormat: "ogg_opus",
+		DurationMS: 240, SizeBytes: 716, ChecksumSHA256: strings.Repeat("a", 64),
+		Policy: voicemail.Ephemeral, State: voicemail.Unread,
+		ExpiresAt: now.Add(time.Hour), UpdatedAt: now,
+	}}}
+	blobs, err := voicemail.NewFileSystem(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	mail, err := voicemail.New(repo, blobs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := newAuthenticatedTestServer(pipeline.Components{ASR: pipeline.MockASR{}, Agent: pipeline.MockAgent{}, TTS: pipeline.MockTTS{}, Codecs: pipeline.OpusFactory{}}, WithVoiceMail(mail))
+	httpServer := httptest.NewServer(service.Handler())
+	defer httpServer.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	connection, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(httpServer.URL, "http")+"/v2/device", testDeviceDialOptions("device-vm"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close(websocket.StatusNormalClosure, "test done")
+	audio := protocol.DefaultAudioParams()
+	writeJSON(t, ctx, connection, testEnvelope{Type: protocol.SessionHelloType, Version: protocol.Version, Transport: protocol.Transport, AudioParams: &audio})
+	if ready := readJSON(t, ctx, connection); ready.Type != protocol.SessionReadyType {
+		t.Fatalf("ready=%+v", ready)
+	}
+	_, raw, err := connection.Read(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope, payload, err := protocol.DecodeInteraction(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	available, ok := payload.(*protocol.VoiceMailAvailable)
+	if !ok || envelope.Type != protocol.VoiceMailAvailableType || available.VoiceMailID != "mail-recovered" {
+		t.Fatalf("envelope=%+v payload=%+v", envelope, payload)
+	}
 }
 func (r *voiceMailRepositoryStub) CompleteVoiceMailPlayback(_ context.Context, request idempotency.Request, userID, id, playbackID string, succeeded bool, _ time.Time) (voicemail.Item, error) {
 	if request.Operation != "voice_mail.playback" || userID != "default" || !succeeded {

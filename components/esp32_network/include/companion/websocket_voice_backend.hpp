@@ -12,6 +12,7 @@
 #include "esp_event.h"
 #include "esp_audio_enc.h"
 #include "esp_audio_types.h"
+#include "esp_http_client.h"
 #include "esp_opus_dec.h"
 #include "esp_opus_enc.h"
 #include "esp_websocket_client.h"
@@ -38,6 +39,13 @@ public:
   void cancel_turn() override;
   bool poll_event(BackendEvent& event) override;
   bool report_config(const RuntimeConfigPatch& config, bool applied) override;
+  bool claim_voice_mail(const VoiceMailMetadata& item, uint64_t now_ms) override;
+  bool report_voice_mail_playback(const VoiceMailMetadata& item, bool succeeded,
+                                  std::string_view failure_code,
+                                  uint64_t now_ms) override;
+  void cancel_voice_mail(const VoiceMailMetadata& item,
+                         std::string_view failure_code,
+                         uint64_t now_ms) override;
   size_t read_playback(std::span<int16_t> destination) override;
   bool playback_empty() const override;
   uint32_t playback_sample_rate_hz() const override {
@@ -48,7 +56,9 @@ private:
   static constexpr size_t kOutboundQueueCapacity = 16;
   static constexpr size_t kPlaybackQueueCapacity = 24;
   static constexpr size_t kEventQueueCapacity = 12;
-  static constexpr size_t kWriterStackDepth = 3'072;
+  static constexpr size_t kMediaQueueCapacity = 2;
+  static constexpr size_t kWriterStackDepth = 5'120;
+  static constexpr size_t kMediaStackDepth = 6'144;
   static constexpr size_t kOpusFrameSamples = 960; // 60 ms at 16 kHz.
   static constexpr size_t kMaximumOpusPacketBytes = 1'275;
   static constexpr size_t kMaximumDecodedSamples = 1'440; // 60 ms at 24 kHz.
@@ -62,6 +72,8 @@ private:
     alarm_ack,
     config_report,
     protocol_error,
+    voice_mail_claim,
+    voice_mail_playback_result,
   };
   struct Command {
     CommandType type{};
@@ -70,8 +82,13 @@ private:
     std::array<char, 48> correlation_id{};
     std::array<char, 40> code{};
     std::array<char, 96> message{};
+    VoiceMailMetadata voice_mail{};
+    std::array<char, 129> playback_id{};
+    std::array<char, 129> idempotency_key{};
+    std::array<char, 36> occurred_at{};
     RuntimeConfigPatch config{};
     bool applied{};
+    bool succeeded{};
   };
   struct AudioFrame {
     std::array<int16_t, kAudioFrameSamples> samples{};
@@ -88,6 +105,12 @@ private:
     OpusPacket audio{};
     uint64_t media_generation{};
   };
+  struct MediaJob {
+    VoiceMailMetadata voice_mail{};
+    std::array<char, 129> playback_id{};
+    std::array<char, 257> media_ref{};
+    uint64_t generation{};
+  };
 
   esp_websocket_client_handle_t client_{};
   std::atomic<bool> client_started_{false};
@@ -99,9 +122,12 @@ private:
   std::atomic<uint64_t> media_generation_{};
   uint64_t turn_sequence_{};
   std::atomic<uint64_t> message_sequence_{};
+  std::atomic<uint64_t> voice_mail_generation_{};
 
   std::array<char, 192> url_{};
   std::array<char, 256> headers_{};
+  std::array<char, 192> token_{};
+  std::array<char, 320> http_origin_{};
   std::array<char, 40> device_id_{};
   std::array<char, 40> client_id_{};
   std::array<char, 64> session_id_{};
@@ -115,6 +141,13 @@ private:
   std::array<int16_t, kOpusFrameSamples> upload_payload_{};
   size_t upload_payload_size_{};
   portMUX_TYPE media_buffer_lock_ = portMUX_INITIALIZER_UNLOCKED;
+  portMUX_TYPE voice_mail_lock_ = portMUX_INITIALIZER_UNLOCKED;
+  VoiceMailMetadata active_voice_mail_{};
+  std::array<char, 129> active_playback_id_{};
+  std::array<char, 129> active_claim_key_{};
+  std::array<char, 129> active_result_key_{};
+  bool voice_mail_claim_pending_{};
+  bool voice_mail_result_pending_{};
   void* opus_encoder_{};
   void* opus_decoder_{};
   int encoder_output_bytes_{};
@@ -122,22 +155,30 @@ private:
   StaticQueue_t outbound_queue_storage_{};
   StaticQueue_t playback_queue_storage_{};
   StaticQueue_t event_queue_storage_{};
+  StaticQueue_t media_queue_storage_{};
   alignas(portBYTE_ALIGNMENT) std::array<uint8_t, kOutboundQueueCapacity * sizeof(Outbound)> outbound_queue_buffer_{};
   alignas(portBYTE_ALIGNMENT) std::array<uint8_t, kPlaybackQueueCapacity * sizeof(AudioFrame)> playback_queue_buffer_{};
   alignas(portBYTE_ALIGNMENT) std::array<uint8_t, kEventQueueCapacity * sizeof(BackendEvent)> event_queue_buffer_{};
+  alignas(portBYTE_ALIGNMENT) std::array<uint8_t, kMediaQueueCapacity * sizeof(MediaJob)> media_queue_buffer_{};
   QueueHandle_t outbound_queue_{};
   QueueHandle_t playback_queue_{};
   QueueHandle_t event_queue_{};
+  QueueHandle_t media_queue_{};
 
   StaticTask_t writer_task_storage_{};
   std::array<StackType_t, kWriterStackDepth> writer_stack_{};
   TaskHandle_t writer_task_{};
+  StaticTask_t media_task_storage_{};
+  std::array<StackType_t, kMediaStackDepth> media_stack_{};
+  TaskHandle_t media_task_{};
 
   static void event_handler(void* context, esp_event_base_t base,
                             int32_t event_id, void* event_data);
   static void writer_entry(void* context);
+  static void media_entry(void* context);
   void on_event(int32_t event_id, esp_websocket_event_data_t* data);
   void writer_loop();
+  void media_loop();
   void handle_text(std::string_view json);
   void handle_binary(const esp_websocket_event_data_t& data);
   bool enqueue_command(CommandType type, std::string_view turn = {}, ListenMode mode = ListenMode::manual);
@@ -150,6 +191,9 @@ private:
   bool enqueue_audio(const OpusPacket& frame, uint64_t media_generation);
   bool enqueue_event(BackendEventType type, std::string_view text = {});
   bool enqueue_config_event(const RuntimeConfigPatch& config);
+  bool enqueue_voice_mail_event(BackendEventType type,
+                                const VoiceMailMetadata& item,
+                                std::string_view text = {});
   bool send_text(std::string_view text);
   bool set_session_id(std::string_view session_id);
   void clear_session_id();
@@ -159,6 +203,16 @@ private:
   bool activate_tts_for_matching_turn(std::string_view turn_id);
   bool deactivate_matching_turn(std::string_view turn_id);
   void reset_turn_queues();
+  bool build_http_origin(std::string_view websocket_url);
+  bool enqueue_media_job(const VoiceMailMetadata& item,
+                         std::string_view playback_id,
+                         std::string_view media_ref);
+  bool download_voice_mail(const MediaJob& job, bool decode);
+  bool decode_voice_mail_packet(const MediaJob& job,
+                                std::span<const uint8_t> packet,
+                                uint64_t& decoded_samples, bool& ready_sent);
+  bool voice_mail_job_current(const MediaJob& job) const;
+  void clear_voice_mail(bool reset_playback);
 };
 
 } // namespace companion
