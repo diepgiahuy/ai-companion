@@ -7,6 +7,13 @@
 
 namespace companion::provisioning {
 
+enum class ClaimStatus {
+  success,
+  retryable,
+  setup_required,
+  owner_recovery_required,
+};
+
 struct ClaimResult {
   std::array<char, 513> device_credential{};
   bool replayed{};
@@ -22,8 +29,8 @@ bool owner_claim_url(std::string_view websocket_url,
 
 class ClaimClient final {
 public:
-  bool claim(const PendingConfig& pending, std::string_view device_id,
-             ClaimResult& result) const;
+  ClaimStatus claim(const PendingConfig& pending, std::string_view device_id,
+                    ClaimResult& result) const;
 };
 
 } // namespace companion::provisioning
