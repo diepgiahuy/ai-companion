@@ -42,6 +42,21 @@ struct PairingBackendEvent {
   std::string_view reason_view() const;
 };
 
+struct UserConfirmationRequest {
+  std::array<char, 129> correlation_id{};
+  std::array<char, 129> turn_id{};
+  std::array<char, 97> tool_name{};
+  std::array<char, 193> prompt{};
+  uint64_t generation_id{};
+  uint32_t deadline_ms{};
+
+  std::string_view correlation_id_view() const;
+  std::string_view turn_id_view() const;
+  std::string_view tool_name_view() const;
+  std::string_view prompt_view() const;
+  bool valid() const;
+};
+
 class WebSocketVoiceBackend final : public VoiceBackend {
 public:
   WebSocketVoiceBackend();
@@ -71,6 +86,13 @@ public:
   uint32_t playback_sample_rate_hz() const override {
     return playback_sample_rate_hz_.load();
   }
+
+  // This capability is server-internal and never advertised to the model. The
+  // firmware advertises it only to the authenticated server after session.ready.
+  bool poll_user_confirmation(UserConfirmationRequest& request);
+  bool user_confirmation_current(const UserConfirmationRequest& request);
+  bool respond_user_confirmation(const UserConfirmationRequest& request,
+                                 bool approved);
 
   // Pairing reuses this exact authenticated Protocol-v2 client. Enabling it
   // before start() swaps in a composite event handler that intercepts only
@@ -106,14 +128,16 @@ private:
     alarm_ack,
     config_report,
     protocol_error,
+    capability_advertise,
+    capability_result,
     voice_mail_claim,
     voice_mail_playback_result,
   };
   struct Command {
     CommandType type{};
     ListenMode mode{ListenMode::manual};
-    std::array<char, 40> turn_id{};
-    std::array<char, 48> correlation_id{};
+    std::array<char, 129> turn_id{};
+    std::array<char, 129> correlation_id{};
     std::array<char, 40> code{};
     std::array<char, 96> message{};
     VoiceMailMetadata voice_mail{};
@@ -121,8 +145,10 @@ private:
     std::array<char, 129> idempotency_key{};
     std::array<char, 36> occurred_at{};
     RuntimeConfigPatch config{};
+    uint64_t generation_id{};
     bool applied{};
     bool succeeded{};
+    bool approved{};
   };
   struct AudioFrame {
     std::array<int16_t, kAudioFrameSamples> samples{};
@@ -169,6 +195,10 @@ private:
   portMUX_TYPE session_id_lock_ = portMUX_INITIALIZER_UNLOCKED;
   std::array<char, 40> active_turn_id_{};
   portMUX_TYPE turn_id_lock_ = portMUX_INITIALIZER_UNLOCKED;
+  portMUX_TYPE confirmation_lock_ = portMUX_INITIALIZER_UNLOCKED;
+  UserConfirmationRequest active_confirmation_{};
+  bool confirmation_ready_{};
+  bool confirmation_active_{};
   std::array<char, 8'193> text_payload_{};
   size_t text_payload_size_{};
   int receive_opcode_{};
@@ -226,6 +256,9 @@ private:
   bool enqueue_command(CommandType type, std::string_view turn = {}, ListenMode mode = ListenMode::manual);
   bool enqueue_pong(std::string_view correlation_id);
   bool enqueue_protocol_error(std::string_view code, std::string_view message);
+  bool enqueue_confirmation_result(const UserConfirmationRequest& request,
+                                   bool approved);
+  void clear_user_confirmation();
   bool encode_and_enqueue(std::span<const int16_t, kOpusFrameSamples> pcm,
                           uint64_t media_generation);
   bool configure_decoder(uint32_t sample_rate_hz);
