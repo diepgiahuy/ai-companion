@@ -108,5 +108,22 @@ func TestOwnerWebDataEndpoints(t *testing.T) {
 	if wBudget.Code != http.StatusOK {
 		t.Fatalf("set budget status = %d: %s", wBudget.Code, wBudget.Body.String())
 	}
+
+	// Test Devices List
+	reqDevices := httptest.NewRequest(http.MethodGet, "/v1/owner/data/devices", nil)
+	wDevices := httptest.NewRecorder()
+	handler.ServeHTTP(wDevices, reqDevices)
+	if wDevices.Code != http.StatusOK || !strings.Contains(wDevices.Body.String(), "companion-s3-01") {
+		t.Fatalf("devices list failed: %s", wDevices.Body.String())
+	}
+
+	// Test Device Claim
+	reqClaim := httptest.NewRequest(http.MethodPost, "/v1/owner/data/device/claim", strings.NewReader(`{"claim_code":"7K4N9X"}`))
+	wClaim := httptest.NewRecorder()
+	handler.ServeHTTP(wClaim, reqClaim)
+	if wClaim.Code != http.StatusOK || !strings.Contains(wClaim.Body.String(), "companion-s3-7K4N9X") {
+		t.Fatalf("claim failed: %s", wClaim.Body.String())
+	}
 }
+
 

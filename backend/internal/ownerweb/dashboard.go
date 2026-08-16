@@ -89,8 +89,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleReminders(w, r)
 	case path == "data/reminders" && r.Method == http.MethodPost:
 		h.handleCreateReminder(w, r)
+	case path == "data/devices" && r.Method == http.MethodGet:
+		h.handleDevices(w, r)
 	case path == "data/device" && r.Method == http.MethodGet:
 		h.handleDevice(w, r)
+	case path == "data/device/claim" && r.Method == http.MethodPost:
+		h.handleClaimDevice(w, r)
 	default:
 		http.NotFound(w, r)
 	}
@@ -173,11 +177,13 @@ func (h *Handler) handleVoiceMemos(w http.ResponseWriter, r *http.Request) {
 	search := strings.TrimSpace(r.URL.Query().Get("search"))
 	limit := parseQueryLimit(r, 50)
 
+	deviceID := strings.TrimSpace(r.URL.Query().Get("device_id"))
 	items, err := h.deps.Store.QueryVoiceMemos(ctx, userID, domain.VoiceMemoQuery{
-		From:   from,
-		To:     to,
-		Search: search,
-		Limit:  limit,
+		DeviceID: deviceID,
+		From:     from,
+		To:       to,
+		Search:   search,
+		Limit:    limit,
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -203,23 +209,81 @@ func (h *Handler) handleJournal(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleReminders(w http.ResponseWriter, r *http.Request) {
 	userID := h.userID(r)
 	ctx := r.Context()
+	deviceID := strings.TrimSpace(r.URL.Query().Get("device_id"))
 	limit := parseQueryLimit(r, 50)
 
-	reminders, _ := h.deps.Store.ListReminders(ctx, userID, "", "active", limit)
-	timers, _ := h.deps.Store.ListTimers(ctx, userID, "", "active", limit)
+	reminders, _ := h.deps.Store.ListReminders(ctx, userID, deviceID, "active", limit)
+	timers, _ := h.deps.Store.ListTimers(ctx, userID, deviceID, "active", limit)
 	writeJSON(w, map[string]any{"reminders": reminders, "timers": timers})
 }
 
+func (h *Handler) handleDevices(w http.ResponseWriter, r *http.Request) {
+	devices := []map[string]any{
+		{
+			"device_id":         "companion-s3-01",
+			"name":              "Desk Companion (Living Room)",
+			"online":            true,
+			"hardware":          "ESP32-S3-WROOM-1-N16R8",
+			"firmware_version":  "v2.4.0",
+			"wifi_rssi_dbm":     -58,
+			"ota_poll_interval": "6h",
+			"last_seen_at":      time.Now().UTC().Format(time.RFC3339),
+		},
+		{
+			"device_id":         "companion-s3-02",
+			"name":              "Bedside Companion",
+			"online":            true,
+			"hardware":          "ESP32-S3-WROOM-1-N16R8",
+			"firmware_version":  "v2.4.0",
+			"wifi_rssi_dbm":     -64,
+			"ota_poll_interval": "12h",
+			"last_seen_at":      time.Now().UTC().Add(-2 * time.Minute).Format(time.RFC3339),
+		},
+	}
+	writeJSON(w, map[string]any{"devices": devices})
+}
+
 func (h *Handler) handleDevice(w http.ResponseWriter, r *http.Request) {
+	deviceID := strings.TrimSpace(r.URL.Query().Get("device_id"))
+	if deviceID == "" || deviceID == "companion-s3-01" {
+		writeJSON(w, map[string]any{
+			"device_id":         "companion-s3-01",
+			"name":              "Desk Companion (Living Room)",
+			"online":            true,
+			"hardware":          "ESP32-S3-WROOM-1-N16R8",
+			"sram_cap_kb":       160.5,
+			"psram_codec_kb":    128.0,
+			"ota_poll_interval": "6h",
+			"firmware_version":  "v2.4.0",
+			"wifi_rssi_dbm":     -58,
+		})
+		return
+	}
 	writeJSON(w, map[string]any{
-		"device_id":         "companion-s3-01",
+		"device_id":         deviceID,
+		"name":              "Bedside Companion (" + deviceID + ")",
 		"online":            true,
 		"hardware":          "ESP32-S3-WROOM-1-N16R8",
 		"sram_cap_kb":       160.5,
 		"psram_codec_kb":    128.0,
-		"ota_poll_interval": "6h",
+		"ota_poll_interval": "12h",
 		"firmware_version":  "v2.4.0",
-		"wifi_rssi_dbm":     -58,
+		"wifi_rssi_dbm":     -64,
+	})
+}
+
+func (h *Handler) handleClaimDevice(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ClaimCode string `json:"claim_code"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.ClaimCode) == "" {
+		http.Error(w, "valid claim_code is required", http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{
+		"ok":        true,
+		"claimed":   true,
+		"device_id": fmt.Sprintf("companion-s3-%s", strings.TrimSpace(req.ClaimCode)),
 	})
 }
 

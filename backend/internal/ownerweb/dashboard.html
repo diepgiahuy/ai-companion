@@ -164,15 +164,29 @@ h1 { font-size: 1.8rem; font-weight: 700; margin-bottom: 1.5rem; letter-spacing:
     <div class="nav-title" style="margin-top:1rem">Hardware</div>
     <div class="nav-item" onclick="navigate('device')">📶 Device Twin & OTA</div>
   </div>
-  <div class="sidebar-footer">
-    <div>Signed in as <b id="user-display">owner</b></div>
+  <div class="sidebar-footer" style="display:flex;justify-content:space-between;align-items:center">
+    <div style="font-size:0.8rem">Signed in as <b id="user-display">owner</b></div>
+    <button onclick="logout()" style="background:none;border:none;color:var(--accent-red);cursor:pointer;font-size:0.8rem;padding:0.2rem 0.5rem;border-radius:4px" onmouseover="this.style.background='rgba(239,68,68,0.1)'" onmouseout="this.style.background='none'">Sign Out</button>
   </div>
 </aside>
 
 <main id="main">
   <div class="topbar">
-    <div class="breadcrumbs">Workspace / <span id="section-crumb">Overview</span></div>
-    <div style="font-size:0.8rem;color:var(--text-muted);font-family:var(--font-mono)" id="live-clock">--:--:--</div>
+    <div style="display:flex;align-items:center;gap:1.2rem">
+      <div class="breadcrumbs">Workspace / <span id="section-crumb">Overview</span></div>
+      <div style="display:flex;align-items:center;gap:0.4rem">
+        <span style="font-size:0.78rem;color:var(--text-muted)">Companion:</span>
+        <select id="device-select" class="filter-input" style="padding:0.25rem 0.6rem;font-size:0.8rem;background:#252525" onchange="onDeviceSelect(this.value)">
+          <option value="">All Devices (Aggregated)</option>
+          <option value="companion-s3-01" selected>Desk Companion (Living Room)</option>
+          <option value="companion-s3-02">Bedside Companion</option>
+        </select>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:1rem">
+      <button class="filter-btn" style="background:#2a2a2a;color:#eee" onclick="openClaimModal()">+ Claim Device</button>
+      <div style="font-size:0.8rem;color:var(--text-muted);font-family:var(--font-mono)" id="live-clock">--:--:--</div>
+    </div>
   </div>
 
   <div class="content-area" id="content">
@@ -180,8 +194,24 @@ h1 { font-size: 1.8rem; font-weight: 700; margin-bottom: 1.5rem; letter-spacing:
   </div>
 </main>
 
+<!-- Claim Modal -->
+<div id="claim-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);backdrop-filter:blur(4px);z-index:100;align-items:center;justify-content:center">
+  <div style="background:var(--bg-surface);border:1px solid var(--border-subtle);border-radius:10px;padding:2rem;width:90%;max-width:420px">
+    <h2 style="font-size:1.3rem;margin-bottom:0.6rem">Claim AI Companion</h2>
+    <p style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:1.2rem">Enter the 6-character human claim code displayed on your companion's OLED screen during onboarding.</p>
+    <input id="claim-code-input" class="filter-input" placeholder="e.g. 7K4N9X" style="width:100%;font-size:1.1rem;font-family:var(--font-mono);text-align:center;text-transform:uppercase;margin-bottom:1.2rem;letter-spacing:0.2em" maxlength="8">
+    <div style="display:flex;gap:0.8rem;justify-content:flex-end">
+      <button class="filter-btn" onclick="closeClaimModal()">Cancel</button>
+      <button class="filter-btn active" style="background:var(--accent-blue)" onclick="submitClaim()">Claim Device</button>
+    </div>
+    <div id="claim-status" style="font-size:0.8rem;margin-top:0.8rem;text-align:center"></div>
+  </div>
+</div>
+
 <script>
 let currentView = 'overview';
+let selectedDeviceID = 'companion-s3-01';
+
 function updateClock() {
   const d = new Date();
   document.getElementById('live-clock').textContent = d.toLocaleTimeString() + ' (Local)';
@@ -195,6 +225,83 @@ function navigate(view) {
   event && event.currentTarget && event.currentTarget.classList.add('active');
   document.getElementById('section-crumb').textContent = view.charAt(0).toUpperCase() + view.slice(1);
   renderView();
+}
+
+function onDeviceSelect(devID) {
+  selectedDeviceID = devID;
+  renderView();
+}
+
+function openClaimModal() {
+  document.getElementById('claim-modal').style.display = 'flex';
+  document.getElementById('claim-code-input').value = '';
+  document.getElementById('claim-status').textContent = '';
+}
+
+function closeClaimModal() {
+  document.getElementById('claim-modal').style.display = 'none';
+}
+
+async function submitClaim() {
+  const code = document.getElementById('claim-code-input').value.trim();
+  const statusEl = document.getElementById('claim-status');
+  if (!code) {
+    statusEl.textContent = 'Please enter a claim code';
+    statusEl.style.color = 'var(--accent-red)';
+    return;
+  }
+  statusEl.textContent = 'Claiming companion...';
+  statusEl.style.color = 'var(--text-muted)';
+  try {
+    const res = await fetch('/v1/owner/data/device/claim', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ claim_code: code })
+    });
+    const data = await res.json();
+    if (res.ok && data.ok) {
+      statusEl.textContent = 'Device claimed successfully!';
+      statusEl.style.color = 'var(--accent-green)';
+      setTimeout(() => {
+        closeClaimModal();
+        loadDevices();
+        renderView();
+      }, 1000);
+    } else {
+      statusEl.textContent = data.error || 'Claiming failed';
+      statusEl.style.color = 'var(--accent-red)';
+    }
+  } catch (err) {
+    statusEl.textContent = 'Network error claiming device';
+    statusEl.style.color = 'var(--accent-red)';
+  }
+}
+
+async function loadDevices() {
+  const data = await fetchJSON('/v1/owner/data/devices');
+  if (data && data.devices) {
+    const sel = document.getElementById('device-select');
+    sel.innerHTML = '<option value="">All Devices (Aggregated)</option>' +
+      data.devices.map(d => `<option value="${d.device_id}" ${d.device_id === selectedDeviceID ? 'selected' : ''}>${d.name || d.device_id}</option>`).join('');
+  }
+}
+loadDevices();
+
+async function logout() {
+  const getCookie = (name) => {
+    const v = document.cookie.match('(^|;) ?' + name + '=([^;]*)(;|$)');
+    return v ? v[2] : '';
+  };
+  const csrf = getCookie('__Host-companion_csrf');
+  try {
+    await fetch('/v1/owner/auth/logout', {
+      method: 'POST',
+      headers: { 'X-CSRF-Token': csrf }
+    });
+  } catch (e) {
+    console.error('Logout error:', e);
+  }
+  window.location.reload();
 }
 
 async function fetchJSON(url) {
@@ -213,7 +320,7 @@ async function renderView() {
   container.innerHTML = '<div style="color:var(--text-muted)">Loading workspace data...</div>';
 
   if (currentView === 'overview') {
-    const data = await fetchJSON('/v1/owner/data/overview');
+    const data = await fetchJSON('/v1/owner/data/overview' + (selectedDeviceID ? `?device_id=${selectedDeviceID}` : ''));
     if (!data) return;
     container.innerHTML = `
       <h1>Dashboard Overview</h1>
@@ -227,7 +334,7 @@ async function renderView() {
         <div class="block-card">
           <div class="block-title">🎙️ Recent Voice Memos</div>
           <div class="block-metric">${(data.voice_memos || []).length} <span style="font-size:0.9rem;font-weight:400;color:var(--text-muted)">recorded</span></div>
-          <div style="font-size:0.75rem;color:var(--text-muted);margin-top:0.6rem">Last audio captured today</div>
+          <div style="font-size:0.75rem;color:var(--text-muted);margin-top:0.6rem">Device: ${selectedDeviceID || 'All'}</div>
         </div>
         <div class="block-card">
           <div class="block-title">📝 Quick Notes</div>
@@ -269,19 +376,19 @@ async function renderView() {
       </table>
     `;
   } else if (currentView === 'voice') {
-    const data = await fetchJSON('/v1/owner/data/voice-memos');
+    const data = await fetchJSON('/v1/owner/data/voice-memos' + (selectedDeviceID ? `?device_id=${selectedDeviceID}` : ''));
     container.innerHTML = `
       <h1>Voice Memos & Transcripts</h1>
       <div class="filter-bar">
         <input class="filter-input" placeholder="Search transcripts..." style="width:280px">
       </div>
-      ${(data?.voice_memos || []).map(vm => `
+      ${(data?.voice_memos || []).length === 0 ? '<div style="color:var(--text-muted);margin-top:1rem">No voice memos recorded on this companion yet.</div>' : (data?.voice_memos || []).map(vm => `
         <div class="audio-card">
           <div class="audio-row">
             <button class="play-btn">▶</button>
             <div style="flex:1">
               <div class="transcript">"${vm.transcript || '(Audio recorded without transcript)'}"</div>
-              <div class="time-badge">${new Date(vm.created_at).toLocaleString()} • ${(vm.duration_ms / 1000).toFixed(1)}s</div>
+              <div class="time-badge">${new Date(vm.created_at).toLocaleString()} • ${(vm.duration_ms / 1000).toFixed(1)}s • Device: ${vm.device_id || 'companion-s3'}</div>
             </div>
           </div>
         </div>
@@ -304,14 +411,17 @@ async function renderView() {
       </div>
     `;
   } else if (currentView === 'device') {
-    const data = await fetchJSON('/v1/owner/data/device');
+    const data = await fetchJSON('/v1/owner/data/device' + (selectedDeviceID ? `?device_id=${selectedDeviceID}` : ''));
     container.innerHTML = `
-      <h1>Device Twin & Telemetry</h1>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.5rem">
+        <h1 style="margin-bottom:0">Device Twin & Telemetry</h1>
+        <button class="filter-btn" style="background:var(--accent-blue);color:#fff" onclick="openClaimModal()">+ Pair Another Device</button>
+      </div>
       <div class="card-grid">
         <div class="block-card">
           <div class="block-title">📶 Hardware Connection</div>
           <div class="block-metric" style="color:var(--accent-green)">ONLINE</div>
-          <div style="font-size:0.8rem;color:var(--text-muted);margin-top:0.4rem">Device: ${data?.device_id || 'companion-s3'}</div>
+          <div style="font-size:0.85rem;color:var(--text-primary);margin-top:0.4rem;font-weight:600">${data?.name || data?.device_id || 'companion-s3'}</div>
           <div style="font-size:0.8rem;color:var(--text-muted)">Wi-Fi RSSI: ${data?.wifi_rssi_dbm || -58} dBm</div>
         </div>
         <div class="block-card">
@@ -321,7 +431,7 @@ async function renderView() {
         </div>
         <div class="block-card">
           <div class="block-title">🔄 Dynamic OTA Polling</div>
-          <div class="block-metric">6 <span style="font-size:0.9rem;font-weight:400;color:var(--text-muted)">hours</span></div>
+          <div class="block-metric">${data?.ota_poll_interval || '6h'} <span style="font-size:0.9rem;font-weight:400;color:var(--text-muted)">interval</span></div>
           <div style="font-size:0.8rem;color:var(--text-muted);margin-top:0.4rem">Firmware: ${data?.firmware_version || 'v2.4.0'}</div>
         </div>
       </div>
