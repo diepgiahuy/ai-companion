@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-const RequiredSchemaRevision = "20260817000000"
+const RequiredSchemaRevision = "20260817010000"
 
 var requiredProductTables = []string{
 	"turn_results", "notes", "expenses", "journal_entries", "reminders",
@@ -23,6 +23,7 @@ var requiredProductTriggers = map[string]string{
 	"trg_budgets_ai": "budgets", "trg_budgets_au": "budgets",
 	"trg_savings_goals_ai": "savings_goals", "trg_savings_goals_au": "savings_goals", "trg_savings_goals_ad": "savings_goals",
 	"trg_reminders_ai": "reminders", "trg_memories_ai": "memories", "trg_twins_au": "device_twins",
+	"trg_twins_desired_timestamp": "device_twins",
 }
 
 // VerifySchema fails closed unless Atlas completed the exact schema revision
@@ -96,6 +97,9 @@ func (s *Store) VerifySchema(ctx context.Context) error {
 		return fmt.Errorf("verify PostgreSQL outbox triggers: %w", err)
 	}
 	missingTriggers, err := scanNames(rows)
+	if err != nil {
+		return fmt.Errorf("scan PostgreSQL triggers: %w", err)
+	}
 	if len(missingTriggers) != 0 {
 		return fmt.Errorf("PostgreSQL schema revision %s is missing outbox triggers: %s", RequiredSchemaRevision, strings.Join(missingTriggers, ", "))
 	}
