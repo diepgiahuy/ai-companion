@@ -27,7 +27,8 @@ var dashboardHTML string
 
 type Dependencies struct {
 	Store         domain.ReadRepositories
-	ControlPlane  *controlplane.Service
+	ControlPlane     *controlplane.Service
+	SettingsDelivery DeviceSettingsDelivery
 	Auth          *ownerauth.Service
 	RecordingsDir string
 }
@@ -327,43 +328,47 @@ func (h *Handler) handleDevice(w http.ResponseWriter, r *http.Request) {
 	}
 	if deviceID == "" {
 		writeJSON(w, map[string]any{
-			"device_id":         "none",
-			"status":            "offline",
-			"wifi_rssi_dbm":     0,
-			"ota_poll_interval": "6h",
-			"firmware_version":  "unknown",
-			"sram_budget_kib":   160.5,
-			"psram_budget_kib":  128.0,
+			"device_id": "none", "status": "offline", "online": false,
+			"wifi_rssi_dbm": nil, "firmware_version": "unknown",
+			"sram_budget_kib": nil, "psram_budget_kib": nil,
+			"settings": controlplane.SettingsStatus{State: controlplane.SettingsUnknown, Online: false},
 		})
 		return
 	}
-
-	var twin controlplane.Twin
-	if h.deps.ControlPlane != nil {
-		t, err := h.deps.ControlPlane.Manifest(r.Context(), userID, deviceID)
-		if err == nil {
-			twin = t
-		}
+	if !h.ownsDevice(r.Context(), userID, deviceID) {
+		http.NotFound(w, r)
+		return
 	}
-
-	pollInterval := "6h"
+	if h.deps.ControlPlane == nil {
+		http.Error(w, "device settings unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	twin, err := h.deps.ControlPlane.Manifest(r.Context(), userID, deviceID)
+	if err != nil {
+		http.Error(w, "device settings unavailable", http.StatusInternalServerError)
+		return
+	}
+	online := h.deps.SettingsDelivery != nil && h.deps.SettingsDelivery.DeviceOnline(userID, deviceID)
+	settings, err := h.deps.ControlPlane.SettingsStatus(r.Context(), userID, deviceID, online)
+	if err != nil {
+		http.Error(w, "device settings status unavailable", http.StatusInternalServerError)
+		return
+	}
+	pollInterval := "unknown"
 	if twin.Desired.OTAPollIntervalSeconds != nil && *twin.Desired.OTAPollIntervalSeconds > 0 {
 		pollInterval = (time.Duration(*twin.Desired.OTAPollIntervalSeconds) * time.Second).String()
 	}
-
-	firmware := "v2.4.0"
-	if twin.Reported.VoiceKey != "" {
-		firmware = twin.Reported.VoiceKey
+	connection := "offline"
+	if online {
+		connection = "online"
 	}
-
 	writeJSON(w, map[string]any{
-		"device_id":         deviceID,
-		"status":            "online",
-		"wifi_rssi_dbm":     -58,
+		"device_id": deviceID, "status": connection, "online": online,
+		"wifi_rssi_dbm": nil, "firmware_version": "unknown",
+		"sram_budget_kib": nil, "psram_budget_kib": nil,
 		"ota_poll_interval": pollInterval,
-		"firmware_version":  firmware,
-		"sram_budget_kib":   160.5,
-		"psram_budget_kib":  128.0,
+		"desired_config": twin.Desired, "reported_config": twin.Reported,
+		"settings": settings,
 	})
 }
 
@@ -397,21 +402,22 @@ func (h *Handler) handleTriggerOTA(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	var req struct {
-		DeviceID   string `json:"device_id"`
-		TargetSlot string `json:"target_slot"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.DeviceID == "" {
+	var req struct { DeviceID string `json:"device_id"` }
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil || strings.TrimSpace(req.DeviceID) == "" {
 		http.Error(w, "device_id is required", http.StatusBadRequest)
 		return
 	}
-
-	writeJSON(w, map[string]any{
-		"ok":          true,
-		"device_id":   req.DeviceID,
-		"target_slot": "ota_1",
-		"version":     "v2.4.1",
-		"message":     "Firmware OTA trigger dispatched",
+	if !h.ownsDevice(r.Context(), userID, req.DeviceID) {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusNotImplemented)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"ok": false, "device_id": req.DeviceID, "state": "unavailable",
+		"message": "Owner Hub OTA dispatch is not implemented; no update was sent",
 	})
 }
 
@@ -425,16 +431,50 @@ func (h *Handler) handleUpdateDeviceConfig(w http.ResponseWriter, r *http.Reques
 		DeviceID        string `json:"device_id"`
 		OTAPollInterval string `json:"ota_poll_interval"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.DeviceID == "" {
-		http.Error(w, "device_id is required", http.StatusBadRequest)
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil || strings.TrimSpace(req.DeviceID) == "" {
+		http.Error(w, "invalid device settings payload", http.StatusBadRequest)
 		return
 	}
-
+	if !h.ownsDevice(r.Context(), userID, req.DeviceID) {
+		http.NotFound(w, r)
+		return
+	}
+	if h.deps.ControlPlane == nil {
+		http.Error(w, "device settings unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	duration, err := time.ParseDuration(strings.TrimSpace(req.OTAPollInterval))
+	if err != nil || duration < time.Hour || duration > 7*24*time.Hour || duration%time.Second != 0 {
+		http.Error(w, "ota_poll_interval must be between 1h and 168h", http.StatusBadRequest)
+		return
+	}
+	seconds := int(duration / time.Second)
+	twin, err := h.deps.ControlPlane.SetDesired(r.Context(), userID, req.DeviceID, controlplane.RuntimeConfig{OTAPollIntervalSeconds: &seconds})
+	if err != nil {
+		http.Error(w, "device settings rejected", http.StatusBadRequest)
+		return
+	}
+	online := h.deps.SettingsDelivery != nil && h.deps.SettingsDelivery.DeviceOnline(userID, req.DeviceID)
+	delivered := 0
+	deliveryError := ""
+	if online {
+		delivered, err = h.deps.SettingsDelivery.DeliverRuntimeConfig(r.Context(), userID, req.DeviceID, twin)
+		if err != nil {
+			deliveryError = err.Error()
+		}
+	}
+	settings, statusErr := h.deps.ControlPlane.SettingsStatus(r.Context(), userID, req.DeviceID, online)
+	if statusErr != nil {
+		http.Error(w, "device settings status unavailable", http.StatusInternalServerError)
+		return
+	}
 	writeJSON(w, map[string]any{
-		"ok":                true,
-		"device_id":         req.DeviceID,
-		"ota_poll_interval": req.OTAPollInterval,
-		"message":           "Device twin configuration updated",
+		"ok": true, "accepted": true, "device_id": req.DeviceID,
+		"ota_poll_interval": duration.String(), "desired_version": twin.DesiredVersion,
+		"delivered_sessions": delivered, "delivery_error": deliveryError,
+		"settings": settings,
 	})
 }
 

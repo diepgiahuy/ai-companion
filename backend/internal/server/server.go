@@ -608,11 +608,18 @@ func (s *session) handleControl(ctx context.Context, data []byte) error {
 			return err
 		}
 		return s.processInbound(message.MessageID, data, func() error {
+			failureCode := ""
 			if !payload.Applied {
+				failureCode = "device_rejected"
 				s.logger.Warn("device rejected runtime config", "device_id", s.deviceID, "version", payload.ConfigVersion)
-				return nil
 			}
-			return s.controlPlane.Report(ctx, s.userID, s.deviceID, payload.ConfigVersion, controlConfig(payload.Config))
+			return s.controlPlane.ReportResult(ctx, s.userID, s.deviceID, controlplane.ConfigReportResult{
+				Version: payload.ConfigVersion,
+				Applied: payload.Applied,
+				Config: controlConfig(payload.Config),
+				FailureCode: failureCode,
+				ReportedAt: time.Now().UTC(),
+			})
 		})
 	case protocol.SessionPingType:
 		if _, err := protocol.DecodePayload[protocol.EmptyPayload](message); err != nil {

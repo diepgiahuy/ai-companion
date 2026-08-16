@@ -232,7 +232,11 @@ void CompanionApp::process_backend_event(const BackendEvent& event,
     break;
   case BackendEventType::config: {
     const auto& c = event.config;
-    if (c.version <= runtime_config_version_) break;
+    if (c.version < runtime_config_version_) break;
+    if (c.version == runtime_config_version_) {
+      backend_.report_config(c, true);
+      break;
+    }
     const bool valid = c.vad_threshold >= 1 && c.vad_threshold <= 65'535 &&
                        c.vad_silence_ms >= 100 && c.vad_silence_ms <= 5'000 &&
                        c.vad_min_speech_ms >= 50 && c.vad_min_speech_ms <= 5'000 &&

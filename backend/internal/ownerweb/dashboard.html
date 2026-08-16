@@ -721,26 +721,26 @@ async function renderView() {
       <div class="card-grid">
         <div class="block-card">
           <div class="block-title">📶 Hardware Connection</div>
-          <div class="block-metric" style="color:var(--accent-green)">ONLINE</div>
+          <div class="block-metric" style="color:${data?.online ? `var(--accent-green)` : `var(--text-muted)`}">${data?.online ? `ONLINE` : `OFFLINE`}</div>
           <div style="font-size:0.85rem;color:var(--text-primary);margin-top:0.4rem;font-weight:600">${data?.name || data?.device_id || 'companion-s3'}</div>
-          <div style="font-size:0.8rem;color:var(--text-muted)">Wi-Fi RSSI: ${data?.wifi_rssi_dbm || -58} dBm</div>
+          <div style="font-size:0.8rem;color:var(--text-muted)">Wi-Fi RSSI: ${data?.wifi_rssi_dbm == null ? `Unknown` : `${data.wifi_rssi_dbm} dBm`}</div>
         </div>
         <div class="block-card">
           <div class="block-title">🧠 Memory Budgets</div>
-          <div class="block-metric">160.5 <span style="font-size:0.9rem;font-weight:400;color:var(--text-muted)">KiB SRAM</span></div>
-          <div style="font-size:0.8rem;color:var(--text-muted);margin-top:0.4rem">PSRAM Codec: 128 KiB</div>
+          <div class="block-metric">${data?.sram_budget_kib == null ? `Unknown` : data.sram_budget_kib} <span style="font-size:0.9rem;font-weight:400;color:var(--text-muted)">${data?.sram_budget_kib == null ? `` : `KiB SRAM`}</span></div>
+          <div style="font-size:0.8rem;color:var(--text-muted);margin-top:0.4rem">PSRAM: ${data?.psram_budget_kib == null ? `Not reported` : `${data.psram_budget_kib} KiB`}</div>
         </div>
         <div class="block-card">
           <div class="block-title">🔄 Dynamic OTA Polling</div>
           <div class="block-metric">${data?.ota_poll_interval || '6h'} <span style="font-size:0.9rem;font-weight:400;color:var(--text-muted)">interval</span></div>
-          <div style="font-size:0.8rem;color:var(--text-muted);margin-top:0.4rem">Firmware: ${data?.firmware_version || 'v2.4.0'}</div>
+          <div style="font-size:0.8rem;color:var(--text-muted);margin-top:0.4rem">Firmware: ${data?.firmware_version || 'unknown'}</div>
         </div>
       </div>
 
       <div class="block-card" style="margin-top:1.5rem">
         <h3 style="font-size:1.05rem;margin-bottom:0.8rem">📦 Over-The-Air (OTA) Firmware Management</h3>
         <p style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:1.2rem">
-          Manage background update intervals and push signed A/B firmware updates directly to your companion device twin.
+          Settings state: ${data?.settings?.state || `unknown`}. A requested change is not shown as applied until the device reports it.
         </p>
         <div style="display:flex;gap:1rem;align-items:center;flex-wrap:wrap;margin-bottom:1rem">
           <div>
@@ -754,7 +754,7 @@ async function renderView() {
           </div>
           <div style="display:flex;gap:0.6rem;align-items:flex-end;margin-top:auto">
             <button class="filter-btn" onclick="checkOTA()">🔍 Check For Update</button>
-            <button class="filter-btn active" style="background:var(--accent-green);color:#000;font-weight:600" onclick="triggerOTA()">🚀 Push Update (v2.4.1)</button>
+            <button class="filter-btn" disabled title="Owner Hub OTA dispatch is not implemented">🚀 Push unavailable</button>
           </div>
         </div>
         <div id="ota-status-banner" style="font-size:0.85rem;color:var(--text-muted);padding:0.6rem 0.8rem;background:#202020;border-radius:6px">

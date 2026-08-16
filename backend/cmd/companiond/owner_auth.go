@@ -15,7 +15,7 @@ import (
 
 const ownerPathPrefix = "/v1/owner/"
 
-func ownerAuthFromEnvironment(next http.Handler, store *pgstore.Store, control *controlplane.Service, claimRepository controlplane.DeviceClaimRepository) http.Handler {
+func ownerAuthFromEnvironment(next http.Handler, store *pgstore.Store, control *controlplane.Service, claimRepository controlplane.DeviceClaimRepository, settingsDelivery ownerweb.DeviceSettingsDelivery) http.Handler {
 	recordingsDir := os.Getenv("COMPANION_RECORDINGS_DIR")
 	cfg := ownerauth.Config{
 		AuthorizationURL: strings.TrimSpace(os.Getenv("COMPANION_OWNER_OIDC_AUTH_URL")),
@@ -34,7 +34,8 @@ func ownerAuthFromEnvironment(next http.Handler, store *pgstore.Store, control *
 		if store != nil {
 			webHandler := ownerweb.NewHandler(ownerweb.Dependencies{
 				Store:         store,
-				ControlPlane:  control,
+				ControlPlane:     control,
+				SettingsDelivery: settingsDelivery,
 				Auth:          nil,
 				RecordingsDir: recordingsDir,
 			})
@@ -76,7 +77,8 @@ func ownerAuthFromEnvironment(next http.Handler, store *pgstore.Store, control *
 	if store != nil {
 		webHandler = ownerweb.NewHandler(ownerweb.Dependencies{
 			Store:         store,
-			ControlPlane:  control,
+			ControlPlane:     control,
+			SettingsDelivery: settingsDelivery,
 			Auth:          service,
 			RecordingsDir: recordingsDir,
 		})
