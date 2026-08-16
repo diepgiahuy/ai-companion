@@ -57,15 +57,24 @@ type ToolRegistry struct {
 func NewToolRegistry() *ToolRegistry                   { return &ToolRegistry{tools: map[string]Tool{}} }
 func (r *ToolRegistry) SetAuthorizer(a ToolAuthorizer) { r.mu.Lock(); r.authorizer = a; r.mu.Unlock() }
 func (r *ToolRegistry) Register(t Tool) error {
-	if t == nil || t.Name() == "" {
+	if t == nil {
 		return fmt.Errorf("tool name is required")
+	}
+	name := strings.TrimSpace(t.Name())
+	if name == "" || name != t.Name() {
+		return fmt.Errorf("tool name must be non-empty and canonical")
+	}
+	if definition := t.Definition(); definition != nil {
+		if strings.TrimSpace(definition.Name) == "" || definition.Name != name {
+			return fmt.Errorf("tool %q definition name must match registry name", name)
+		}
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if _, ok := r.tools[t.Name()]; ok {
-		return fmt.Errorf("tool %q already registered", t.Name())
+	if _, ok := r.tools[name]; ok {
+		return fmt.Errorf("tool %q already registered", name)
 	}
-	r.tools[t.Name()] = t
+	r.tools[name] = t
 	return nil
 }
 func (r *ToolRegistry) Definitions() []ToolDefinition { return r.DefinitionsForPacks(nil) }
