@@ -1,0 +1,31 @@
+name: temporary-atlas-hash-197
+
+on:
+  push:
+    branches:
+      - feat/issue-197-device-settings
+
+permissions:
+  contents: read
+
+jobs:
+  hash:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      ATLAS_IMAGE: arigaio/atlas:1.2.0-community-distroless@sha256:0527e6aaaf8078ca3398cac75209f8f43a13e96bc15b3dfdeffe7cef5451c96e
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Compute canonical Atlas hash
+        run: |
+          set -euo pipefail
+          rm -rf .tmp-atlas-migrations
+          mkdir .tmp-atlas-migrations
+          cp db/postgres/*.sql .tmp-atlas-migrations/
+          docker run --rm -v "$PWD/.tmp-atlas-migrations:/migrations" "$ATLAS_IMAGE" migrate hash --dir file:///migrations
+          echo '---ATLAS-SUM-BEGIN---'
+          cat .tmp-atlas-migrations/atlas.sum
+          echo '---ATLAS-SUM-END---'
