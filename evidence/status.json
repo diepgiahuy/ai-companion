@@ -1,31 +1,190 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-08-16T11:45:00+07:00",
-  "policy": {
-    "real_evidence_kinds": [
-      "github_actions",
-      "manual_real_environment",
-      "hardware_manual",
-      "real_provider",
-      "hil",
-      "real_network",
-      "soak",
-      "fault_injection",
-      "release_artifact"
+  "updated_at": "2026-08-16T11:55:00+07:00",
+  "rules": {
+    "allowed_statuses": [
+      "passed",
+      "partial",
+      "unproven",
+      "blocked",
+      "failed"
     ],
-    "nonproduction_evidence_kinds": [
-      "mock",
-      "fake_model",
-      "stub",
-      "simulated_provider",
-      "tier1_orchestration",
-      "wokwi_simulation",
-      "wokwi_unavailable"
-    ],
-    "rule": "A passed gate must contain at least one real evidence item and no non-production evidence item. Mock, fake-model, Tier-1 deterministic orchestration, and simulation artifacts may validate contracts/orchestration only. They may not promote provider correctness, live MCP interoperability, real hardware, real network, soak, or release claims.",
-    "release_rule": "Production-v1 release readiness is the conjunction of the status ledger and protected branch/release gates. Fail closed on missing required evidence."
+    "production_pass_requires_non_mock_evidence": true,
+    "mock_evidence_can_promote": false
   },
   "gates": {
+    "go_1_26_6_race_e2e": {
+      "status": "passed",
+      "evidence": [
+        {
+          "kind": "github_actions",
+          "run_id": 31813909862,
+          "commit": "00ee795fd9b224563272c1046ad2f0ef103f9206",
+          "workflow": "production-e2e",
+          "assertion": "exact Go 1.26.6 production dependency E2E passed on PR #87 head"
+        },
+        {
+          "kind": "github_actions",
+          "run_id": 31813909819,
+          "commit": "00ee795fd9b224563272c1046ad2f0ef103f9206",
+          "workflow": "quality-security",
+          "assertion": "exact Go 1.26.6 production adapter vet and race gate passed on PR #87 head"
+        }
+      ]
+    },
+    "module_reproducibility": {
+      "status": "passed",
+      "evidence": [
+        {
+          "kind": "manual_real_environment",
+          "environment": "Docker Go 1.26.5 on Apple Silicon",
+          "assertion": "go mod tidy produced zero diff after dependency lock; go mod verify passed"
+        },
+        {
+          "kind": "github_actions",
+          "run_id": 31708039876,
+          "commit": "7ae065f6f8fb73cde8ee71087806d0189634406f",
+          "workflow": "module-lock",
+          "assertion": "Go 1.26.5 module tidy/verify gate passed on the observability PR head"
+        },
+        {
+          "kind": "github_actions",
+          "run_id": 31813909829,
+          "commit": "00ee795fd9b224563272c1046ad2f0ef103f9206",
+          "workflow": "module-lock",
+          "assertion": "Go 1.26.6 module tidy and verify produced a reproducible lock on PR #87 head"
+        }
+      ]
+    },
+    "dependency_vulnerability_scan": {
+      "status": "passed",
+      "evidence": [
+        {
+          "kind": "manual_real_environment",
+          "tool": "govulncheck v1.6.0",
+          "assertion": "0 called vulnerabilities"
+        },
+        {
+          "kind": "github_actions",
+          "run_id": 31696472492,
+          "commit": "7089bdad4a73fcc66ce225fc7a3495bdc542f9ed",
+          "workflow": "quality-security",
+          "assertion": "post-merge main module reproducibility, vet/race, govulncheck, evidence and diff-hygiene gates passed after the ADK/auth hard cut"
+        },
+        {
+          "kind": "github_actions",
+          "run_id": 31813909819,
+          "commit": "00ee795fd9b224563272c1046ad2f0ef103f9206",
+          "workflow": "quality-security",
+          "assertion": "plain blocking govulncheck v1.6.0 reported no reachable vulnerabilities with exact Go 1.26.6 on PR #87 head"
+        }
+      ]
+    },
+    "codeql_go": {
+      "status": "passed",
+      "evidence": [
+        {
+          "kind": "github_actions",
+          "run_id": 31708039616,
+          "commit": "7ae065f6f8fb73cde8ee71087806d0189634406f",
+          "workflow": "codeql",
+          "assertion": "CodeQL Go traced build and analysis passed with adk,mcp,nolibopusfile production adapter tags"
+        },
+        {
+          "kind": "github_actions",
+          "run_id": 31813909869,
+          "commit": "00ee795fd9b224563272c1046ad2f0ef103f9206",
+          "workflow": "codeql",
+          "assertion": "CodeQL Go traced build and analysis passed with exact Go 1.26.6 on PR #87 head"
+        }
+      ]
+    },
+    "mic_signal_hardware": {
+      "status": "passed",
+      "evidence": [
+        {
+          "kind": "hardware_manual",
+          "assertion": "INMP441 peak/RMS respond dynamically to sound on ESP32-S3"
+        }
+      ]
+    },
+    "real_voice_e2e": {
+      "status": "unproven",
+      "evidence": [],
+      "reason": "Mock/fake voice paths are useful regression tests but do not count as production voice evidence. A real ESP32/network run with real ASR, real LLM and real TTS is still required."
+    },
+    "real_asr_quality": {
+      "status": "unproven",
+      "evidence": [],
+      "reason": "No Vietnamese/English real-ASR WER/CER benchmark has been recorded."
+    },
+    "real_tts_quality": {
+      "status": "unproven",
+      "evidence": [],
+      "reason": "No real streaming-TTS latency/quality benchmark has been recorded."
+    },
+    "real_llm_tool_quality": {
+      "status": "unproven",
+      "evidence": [],
+      "reason": "Deterministic ADK Responses tests exist but real-model task success, tool selection and argument accuracy have not been measured."
+    },
+    "prompt_regression_eval": {
+      "status": "unproven",
+      "evidence": [],
+      "reason": "Versioned/composable prompt bundle v4 is implemented, but no real-model prompt regression/red-team benchmark has promoted it."
+    },
+    "destructive_tool_confirmation": {
+      "status": "unproven",
+      "evidence": [],
+      "reason": "Authorization core now scopes confirmation by owner + exact tool + canonical args hash + expiry, but durable user confirmation issuance/consumption and adversarial E2E are not yet proven."
+    },
+    "idempotency_payload_conflict": {
+      "status": "passed",
+      "production_ready": true,
+      "evidence": [
+        {
+          "kind": "github_actions",
+          "workflow": "postgres-schema (reusable via ci)",
+          "run_id": 31926628744,
+          "source_head": "fe647c8e976b5c383910330268fae069132bdf6e",
+          "assertion": "Current PostgreSQL/River gate ran backend/internal/pgstore integration tests covering same-key replay, payload conflict, actor isolation, and concurrent-first mutation exactly once on the PostgreSQL-authoritative path."
+        }
+      ],
+      "reason": "Actor-scoped durable idempotency has current PostgreSQL integration evidence; obsolete SQLite-era proof is not used for promotion."
+    },
+    "postgres_migrations_jobs": {
+      "status": "passed",
+      "evidence": [
+        {
+          "kind": "github_actions",
+          "workflow": "postgres-schema",
+          "run_id": 31819036769,
+          "commit": "b11ab90143ede112f66381254674db9aac7dc115",
+          "assertion": "PR #90 exact head passed pinned PostgreSQL 18.4 Atlas migration, least-privilege pgx repository integration, application restart, 24-table parity, pg_dump restore, reverse SQLite recovery round trip and no-op reapply before the PostgreSQL-only hard cut merged."
+        },
+        {
+          "kind": "github_actions",
+          "workflow": "software-device-e2e",
+          "run_id": 31819036758,
+          "commit": "b11ab90143ede112f66381254674db9aac7dc115",
+          "artifact_id": 9226247574,
+          "artifact_digest": "sha256:355d73744d9be7616396ed2d120bf694011e214254c8eabaa58f8b732cd6cb34",
+          "assertion": "PR #90 exact head ran actual companiond against the authoritative PostgreSQL store across restart with database-enrolled credentials and representative ToolRegistry mutations."
+        },
+        {
+          "kind": "github_actions",
+          "workflow": "postgres-schema",
+          "run_id": 31858248403,
+          "commit": "f4ae44c67dfc679dd7bbdebc47ffd0b817a15844",
+          "tested_merge_commit": "69444f776492d94549221e5a6a88e062d92974cc",
+          "artifact_id": 9239788633,
+          "artifact_digest": "sha256:110683082b472b269db4e10dd9ea3603d68f78b344e91033a2cfc965b45ba650",
+          "postgres": "18.4",
+          "runtime_role": "companion_app",
+          "assertion": "PR #93 exact head passed River schema migration/validation, DML-only runtime access, transactional rollback/commit enqueue, uniqueness, retry, simulated stuck-job restart rescue, cancellation, graceful stop, operational state capture, restore digest and 24-table rollback round trip."
+        }
+      ]
+    },
     "mcp_external_integration": {
       "status": "passed",
       "production_ready": true,
@@ -35,10 +194,28 @@
           "workflow": "production-e2e",
           "run_id": 31797377344,
           "source_head": "61db2ba7dbaa6f37fa6af39f6e4bc5f806623226",
-          "assertion": "PR #72 exact head passed real TLS Streamable-HTTP MCP interoperability using the official MCP Go SDK through the canonical backend ToolRegistry path; quality/security/e2e workflows passed on the same head."
+          "assertion": "PR #72 exact head passed real TLS Streamable-HTTP MCP interoperability using the official MCP Go SDK through the canonical backend ToolRegistry path."
         }
       ],
-      "reason": "The external MCP backend path is implemented and has exact-head real TLS Streamable-HTTP interoperability evidence. Firmware still does not run MCP directly; physical/device capability evidence remains separate."
+      "reason": "External MCP is wired through the canonical backend capability boundary and has exact-head real TLS interoperability evidence; firmware still does not run MCP directly."
+    },
+    "protocol_v2_negotiation": {
+      "status": "partial",
+      "production_ready": false,
+      "evidence": [
+        {
+          "kind": "tier1_orchestration",
+          "workflow": "software-device-e2e",
+          "run_id": 31708039890,
+          "source_head": "7ae065f6f8fb73cde8ee71087806d0189634406f",
+          "tested_merge_commit": "d6b8ddcdd24c62d4291d188a20ee9bade1b90dfa",
+          "artifact_id": 9184091869,
+          "artifact_digest": "sha256:dca97e0b5623611bd9e0689555b581de94e738def9fb32d81599b1a07891c808",
+          "promotion": "orchestration_only",
+          "assertion": "protocol v2 production CompanionApp session/turn flow succeeds and a v1 client is deterministically rejected; physical-device/network evidence remains separate"
+        }
+      ],
+      "reason": "Canonical v2 behavior is proven at Tier-1 with the production device FSM; physical-device/network evidence remains pending."
     },
     "security_default_deny": {
       "status": "passed",
@@ -52,7 +229,7 @@
           "assertion": "PR #66 exact head passed adversarial identity isolation: forged X-Device-* headers cannot override the authenticated per-device credential context, and wrong/revoked credential lifecycle checks fail closed."
         }
       ],
-      "reason": "The enrolled per-device authentication boundary and default-deny identity isolation are merged and have exact-head adversarial software evidence. Deployment TLS/origin policy is enforced separately by the product transport/origin guard."
+      "reason": "The enrolled per-device authentication boundary and default-deny identity isolation are merged and have exact-head adversarial software evidence."
     },
     "privacy_explicit_consent": {
       "status": "partial",
@@ -67,131 +244,14 @@
           "assertion": "Explicit consent/revocation and memory privacy boundaries are exercised in the merged product path; historical retention/delete proof predates the PostgreSQL hard cut."
         }
       ],
-      "reason": "Privacy implementation is merged and consent-gated behavior is exercised, but the evidence registry does not yet contain a canonical PostgreSQL-backed real retention/delete proof after the SQLite hard cut. Keep this gate partial rather than inheriting obsolete storage evidence."
+      "reason": "Privacy implementation is merged and consent-gated behavior is exercised, but the registry does not yet contain a canonical PostgreSQL-backed real voice-retention deletion proof after the SQLite hard cut."
     },
-    "destructive_confirmation": {
+    "real_device_24h_soak": {
       "status": "unproven",
-      "production_ready": false,
       "evidence": [],
-      "reason": "Issue #26 owns model-visible destructive confirmation and failure-injection acceptance evidence."
+      "reason": "24h+ physical ESP32 soak/fault-injection evidence has not been recorded."
     },
-    "idempotency_payload_conflict": {
-      "status": "passed",
-      "production_ready": true,
-      "evidence": [
-        {
-          "kind": "github_actions",
-          "workflow": "postgres-schema (reusable via ci)",
-          "run_id": 31926628744,
-          "source_head": "fe647c8e976b5c383910330268fae069132bdf6e",
-          "assertion": "The current PostgreSQL/River gate ran backend/internal/pgstore integration tests covering replay, payload conflict, actor isolation, and concurrent-first mutation exactly once on the PostgreSQL-authoritative path."
-        }
-      ],
-      "reason": "Actor-scoped durable idempotency now has current PostgreSQL integration evidence; the old SQLite-era proof is no longer used for promotion."
-    },
-    "protocol_v2_firmware": {
-      "status": "passed",
-      "production_ready": true,
-      "evidence": [
-        {
-          "kind": "github_actions",
-          "workflow": "protocol-v2",
-          "run_id": 31664502419,
-          "source_head": "fb9a5088365758242eb562598241d862eb76f66e",
-          "tested_merge_commit": "f90bead94e4a8ffcc123b77e6ad8fbf10ab209e7",
-          "assertion": "ESP-IDF v6.0.1 target esp32s3 built successfully on the dedicated Protocol-v2 firmware workflow."
-        },
-        {
-          "kind": "github_actions",
-          "workflow": "production-e2e",
-          "run_id": 31664497713,
-          "source_head": "fb9a5088365758242eb562598241d862eb76f66e",
-          "tested_merge_commit": "f90bead94e4a8ffcc123b77e6ad8fbf10ab209e7",
-          "assertion": "Production E2E passed with Protocol-v2 backend/auth changes on the same exact source head."
-        },
-        {
-          "kind": "github_actions",
-          "workflow": "quality-and-security",
-          "run_id": 31664497774,
-          "source_head": "fb9a5088365758242eb562598241d862eb76f66e",
-          "tested_merge_commit": "f90bead94e4a8ffcc123b77e6ad8fbf10ab209e7",
-          "assertion": "Backend quality/security passed on the same Protocol-v2 source head."
-        }
-      ],
-      "reason": "Protocol-v2 transport boundary and exact ESP32-S3 compile are proven in GitHub Actions. Physical-device behavior is a separate HIL gate."
-    },
-    "firmware_real_hardware": {
-      "status": "unproven",
-      "production_ready": false,
-      "evidence": [],
-      "reason": "Issue #3 owns physical ESP32-S3 HIL. The base self-hosted smoke harness now proves boot to app_main without POC/mock claims, but no trusted physical run has been registered yet."
-    },
-    "esp_sr_acoustic_hil": {
-      "status": "unproven",
-      "production_ready": false,
-      "evidence": [],
-      "reason": "Issue #17 owns real-room wake/VAD/AEC/barge-in evidence."
-    },
-    "live_voice_provider": {
-      "status": "unproven",
-      "production_ready": false,
-      "evidence": [],
-      "reason": "Issue #18 owns real ASR/TTS or native-realtime provider evidence."
-    },
-    "model_measured": {
-      "status": "unproven",
-      "production_ready": false,
-      "evidence": [],
-      "reason": "Issue #23 owns measured LLM/embedding selection evidence."
-    },
-    "hil_real_hardware": {
-      "status": "unproven",
-      "production_ready": false,
-      "evidence": [],
-      "reason": "Issue #3 owns trusted physical-device HIL setup and qualification."
-    },
-    "pairing_real_hil": {
-      "status": "unproven",
-      "production_ready": false,
-      "evidence": [],
-      "reason": "Issue #100 owns measured two-DUT BLE/RSSI corpus and positive/negative physical HIL. The merged #163 harness intentionally cannot promote synthetic evidence."
-    },
-    "display_hardware": {
-      "status": "unproven",
-      "production_ready": false,
-      "evidence": [],
-      "reason": "Issue #9 owns selected-display cutover and physical UX evidence."
-    },
-    "observability_expanded": {
-      "status": "unproven",
-      "production_ready": false,
-      "evidence": [],
-      "reason": "Issue #32 owns session/turn/device/tool/provider latency/error evidence."
-    },
-    "provisioning_recovery": {
-      "status": "unproven",
-      "production_ready": false,
-      "evidence": [],
-      "reason": "Issue #104 owns physical browser/SoftAP/power-loss/reset/recovery qualification. Software onboarding/recovery is merged."
-    },
-    "ota_safe_rollback": {
-      "status": "partial",
-      "production_ready": false,
-      "evidence": [
-        {
-          "kind": "github_actions",
-          "workflow": "production-e2e",
-          "run_id": 31708039890,
-          "source_head": "7ae065f6f8fb73cde8ee71087806d0189634406f",
-          "tested_merge_commit": "d6b8ddcdd24c62d4291d188a20ee9bade1b90dfa",
-          "artifact_id": 9184091869,
-          "artifact_digest": "sha256:dca97e0b5623611bd9e0689555b581de94e738def9fb32d81599b1a07891c808",
-          "assertion": "Software-device Tier-1 exercises signed OTA control-plane messages, health acknowledgement and rollback state transitions without physical flash writes."
-        }
-      ],
-      "reason": "OTA software implementation is merged, but issue #114/#3 still require physical A/B slot, unhealthy-image rollback and power-loss evidence."
-    },
-    "tier1_software_device": {
+    "software_device_tier1": {
       "status": "partial",
       "production_ready": false,
       "evidence": [
