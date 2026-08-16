@@ -12,10 +12,37 @@ import (
 
 	"companion-server/internal/capability"
 	conversationctx "companion-server/internal/conversation"
+	"companion-server/internal/idempotency"
 	"companion-server/internal/pipeline"
-	conversationprovider "companion-server/internal/providers/conversation"
 	"companion-server/internal/store"
 )
+
+// sqliteConversationFixture deliberately lives in the test that needs the
+// legacy recovery store. It prevents an obsolete SQLite provider adapter from
+// remaining importable by product composition while preserving migration-era
+// parity/idempotency coverage.
+type sqliteConversationFixture struct{ data *store.Store }
+
+func (s sqliteConversationFixture) Append(ctx context.Context, turnKey string, scope conversationctx.Scope, role, content string) error {
+	return s.data.SaveConversationMessageScoped(ctx, turnKey, scope.UserID, scope.ThreadID, role, content)
+}
+func (s sqliteConversationFixture) Recent(ctx context.Context, scope conversationctx.Scope, limit int) ([]conversationctx.Message, error) {
+	rows, err := s.data.ConversationHistoryScoped(ctx, scope.UserID, scope.ThreadID, limit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]conversationctx.Message, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, conversationctx.Message{Role: row.Role, Content: row.Content, CreatedAt: row.CreatedAt})
+	}
+	return out, nil
+}
+func (s sqliteConversationFixture) Clear(ctx context.Context, scope conversationctx.Scope) error {
+	return s.data.DeleteConversationThread(ctx, scope.UserID, scope.ThreadID)
+}
+func (s sqliteConversationFixture) ClearMutation(ctx context.Context, request idempotency.Request, scope conversationctx.Scope) (bool, error) {
+	return s.data.ClearConversationMutation(ctx, request, scope.UserID, scope.ThreadID)
+}
 
 func TestVoiceMemoDurableSaveConflictAndDeleteReplay(t *testing.T) {
 	data, err := store.Open(filepath.Join(t.TempDir(), "voice.db"))
@@ -94,7 +121,7 @@ func TestConversationClearReplayDoesNotClearPostCommitMessages(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer data.Close()
-	service := conversationctx.New(conversationprovider.NewSQLite(data), conversationctx.NewMemoryCache(time.Hour, 10))
+	service := conversationctx.New(sqliteConversationFixture{data: data}, conversationctx.NewMemoryCache(time.Hour, 10))
 	registry := capability.NewToolRegistry()
 	if err := RegisterNative(registry, NativeDependencies{Store: data, Conversation: service}); err != nil {
 		t.Fatal(err)
