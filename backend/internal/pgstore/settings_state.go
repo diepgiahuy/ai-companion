@@ -78,7 +78,11 @@ func (s *Store) RecordConfigReport(ctx context.Context, userID, deviceID string,
 		return nil
 	}
 	if result.Version == lastReportVersion {
-		if lastReportState == string(controlplane.SettingsApplied) {
+		// Exact duplicate acknowledgement of the current desired revision has no
+		// side effect. When a newer desired revision exists, however, a real
+		// post-desired report of the older applied revision is useful evidence:
+		// persist its timestamp so the product can truthfully classify `stale`.
+		if lastReportState == string(controlplane.SettingsApplied) && result.Version == desiredVersion {
 			return nil
 		}
 		if lastReportState == string(controlplane.SettingsRejected) && !result.Applied {
