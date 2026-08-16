@@ -133,7 +133,7 @@ func Validate(c RuntimeConfig) error {
 		}
 		return nil
 	}
-	if e := chk("vad_threshold", c.VADThreshold, 1, 100000); e != nil {
+	if e := chk("vad_threshold", c.VADThreshold, 1, 65535); e != nil {
 		return e
 	}
 	if e := chk("vad_silence_ms", c.VADSilenceMS, 100, 5000); e != nil {
@@ -207,7 +207,7 @@ type ConfigField struct {
 
 func ConfigSchema() []ConfigField {
 	ptr := func(v int) *int { return &v }
-	scopes := []string{"global", "tenant", "plan", "user", "device"}
+	scopes := []string{"global", "tenant", "plan", "user"}
 	return []ConfigField{
 		{Key: "smart_vad_enabled", Dynamic: true, Scopes: scopes},
 		{Key: "vad_threshold", Dynamic: true, Min: ptr(1), Max: ptr(65535), Scopes: scopes},
@@ -283,7 +283,7 @@ func (f *FeatureProvider) Enabled(ctx context.Context, key string, e EvalContext
 		if x.Key != key {
 			continue
 		}
-		if x.Lifecycle == "removed" || x.Lifecycle == "deprecated" && !x.Enabled {
+		if x.Lifecycle == "removed" || (x.Lifecycle == "deprecated" && !x.Enabled) {
 			return false
 		}
 		if x.ExpiresAt != nil && !x.ExpiresAt.After(time.Now()) {
