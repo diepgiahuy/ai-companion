@@ -132,14 +132,13 @@ Non-goals include premature Kubernetes/microservices, direct unrestricted Intern
 
 ## Quick start
 
-Run the entire application stack (PostgreSQL 16, Migrations, Background Queues, Backend Daemon, Owner Web Workspace) with one command:
-
 ```bash
-# Automated launch script with healthcheck
-./scripts/run_app.sh
+# 1. Configure API credentials (required — backend won't start without them)
+cp .env.example .env
+$EDITOR .env          # set ADK_OPENAI_BASE_URL, ADK_MODEL, ADK_OPENAI_API_KEY
 
-# Or directly with Docker Compose
-docker compose up -d
+# 2. Launch the stack (PostgreSQL, migrations, backend daemon)
+./scripts/run_app.sh
 ```
 
 - 🌐 **Owner Web Dashboard:** [http://localhost:8000/v1/owner/dashboard](http://localhost:8000/v1/owner/dashboard)
