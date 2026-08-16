@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"companion-server/internal/controlplane"
-	"companion-server/internal/domain"
 	"companion-server/internal/onboarding"
 	"companion-server/internal/ownerauth"
 	"companion-server/internal/ownerweb"
@@ -16,7 +15,8 @@ import (
 
 const ownerPathPrefix = "/v1/owner/"
 
-func ownerAuthFromEnvironment(next http.Handler, store domain.ReadRepositories, claimRepository controlplane.DeviceClaimRepository) http.Handler {
+func ownerAuthFromEnvironment(next http.Handler, store *pgstore.Store, control *controlplane.Service, claimRepository controlplane.DeviceClaimRepository) http.Handler {
+	recordingsDir := os.Getenv("COMPANION_RECORDINGS_DIR")
 	cfg := ownerauth.Config{
 		AuthorizationURL: strings.TrimSpace(os.Getenv("COMPANION_OWNER_OIDC_AUTH_URL")),
 		TokenURL:         strings.TrimSpace(os.Getenv("COMPANION_OWNER_OIDC_TOKEN_URL")),
@@ -25,14 +25,19 @@ func ownerAuthFromEnvironment(next http.Handler, store domain.ReadRepositories, 
 		ClientSecret:     os.Getenv("COMPANION_OWNER_OIDC_CLIENT_SECRET"),
 		RedirectURL:      strings.TrimSpace(os.Getenv("COMPANION_OWNER_OIDC_REDIRECT_URL")),
 		Scopes:           ownerScopes(os.Getenv("COMPANION_OWNER_OIDC_SCOPES")),
-		ClaimCodeStore:   pgstore.NewPgClaimCodeStore(nil),
+		ClaimCodeStore:   pgstore.NewPgClaimCodeStore(store),
 	}
 	configured := cfg.AuthorizationURL != "" || cfg.TokenURL != "" || cfg.UserInfoURL != "" ||
 		cfg.ClientID != "" || cfg.ClientSecret != "" || cfg.RedirectURL != "" ||
 		strings.TrimSpace(os.Getenv("COMPANION_OWNER_OIDC_SCOPES")) != ""
 	if !configured {
 		if store != nil {
-			webHandler := ownerweb.NewHandler(ownerweb.Dependencies{Store: store, Auth: nil})
+			webHandler := ownerweb.NewHandler(ownerweb.Dependencies{
+				Store:         store,
+				ControlPlane:  control,
+				Auth:          nil,
+				RecordingsDir: recordingsDir,
+			})
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "/v1/owner/dashboard" || strings.HasPrefix(r.URL.Path, "/v1/owner/data/") {
 					webHandler.ServeHTTP(w, r)
@@ -69,7 +74,12 @@ func ownerAuthFromEnvironment(next http.Handler, store domain.ReadRepositories, 
 	}
 	var webHandler http.Handler
 	if store != nil {
-		webHandler = ownerweb.NewHandler(ownerweb.Dependencies{Store: store, Auth: service})
+		webHandler = ownerweb.NewHandler(ownerweb.Dependencies{
+			Store:         store,
+			ControlPlane:  control,
+			Auth:          service,
+			RecordingsDir: recordingsDir,
+		})
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
