@@ -204,11 +204,38 @@ def validate_static_plan() -> None:
             if previous != parent:
                 die(f"issue #{child} has two planned parents: #{previous}, #{parent}")
 
+    # Validate the planned hierarchy itself, not only the current live hierarchy.
+    for start in PARENT_CHILDREN:
+        seen: set[int] = set()
+        current = start
+        while current in child_to_parent:
+            current = child_to_parent[current]
+            if current == start or current in seen:
+                die(f"planned parent hierarchy contains a cycle at #{start}")
+            seen.add(current)
+
     for issue, blockers in DEPENDENCIES_ADD.items():
         if issue in blockers:
             die(f"issue #{issue} cannot block itself")
     if 208 in DEPENDENCIES_ADD:
         die("#208 must not receive release-blocker fan-in during #210")
+
+    # Planned add-only dependency edges must also be acyclic before live graph checks.
+    planned_blockers = {issue: set(blockers) for issue, blockers in DEPENDENCIES_ADD.items()}
+
+    def reaches(start: int, target: int, seen: set[int] | None = None) -> bool:
+        if start == target:
+            return True
+        seen = seen or set()
+        if start in seen:
+            return False
+        seen.add(start)
+        return any(reaches(blocker, target, seen) for blocker in planned_blockers.get(start, set()))
+
+    for issue, blockers in planned_blockers.items():
+        for blocker in blockers:
+            if reaches(blocker, issue):
+                die(f"planned dependency graph contains cycle #{issue} <- #{blocker}")
 
     for number, fields in PROJECT_META.items():
         if set(fields) != set(REQUIRED_PROJECT_OPTIONS):
@@ -341,34 +368,53 @@ def verify_graph(state: RepoState) -> None:
 
 
 def project_snapshot() -> dict[str, Any]:
-    query = """
+    # Discover only the target Project first. Nesting items/field-values under all 100
+    # possible projects can exceed GitHub GraphQL's node-cost limit even for one account.
+    discovery = """
     query($login:String!) {
       user(login:$login) {
-        projectsV2(first:100) {
-          nodes {
-            id number title
-            fields(first:100) {
-              nodes {
-                __typename
-                ... on ProjectV2SingleSelectField {
-                  id name options { id name }
-                }
+        projectsV2(first:100) { nodes { id number title } }
+      }
+    }
+    """
+    user = graphql(discovery, {"login": OWNER}).get("user")
+    if not user:
+        die(f"GitHub user {OWNER!r} not found")
+    target = next(
+        (project for project in user["projectsV2"]["nodes"] if project["title"] == PROJECT_TITLE),
+        None,
+    )
+    if target is None:
+        die(f"Project {PROJECT_TITLE!r} not found")
+
+    query = """
+    query($login:String!,$number:Int!) {
+      user(login:$login) {
+        projectV2(number:$number) {
+          id number title
+          fields(first:20) {
+            totalCount
+            nodes {
+              __typename
+              ... on ProjectV2SingleSelectField {
+                id name options { id name }
               }
             }
-            items(first:100) {
-              nodes {
-                id
-                content {
+          }
+          items(first:100) {
+            totalCount
+            nodes {
+              id
+              content {
+                __typename
+                ... on Issue { id number state repository { nameWithOwner } }
+              }
+              fieldValues(first:20) {
+                nodes {
                   __typename
-                  ... on Issue { id number state repository { nameWithOwner } }
-                }
-                fieldValues(first:50) {
-                  nodes {
-                    __typename
-                    ... on ProjectV2ItemFieldSingleSelectValue {
-                      name
-                      field { ... on ProjectV2SingleSelectField { name } }
-                    }
+                  ... on ProjectV2ItemFieldSingleSelectValue {
+                    name
+                    field { ... on ProjectV2SingleSelectField { name } }
                   }
                 }
               }
@@ -378,13 +424,14 @@ def project_snapshot() -> dict[str, Any]:
       }
     }
     """
-    user = graphql(query, {"login": OWNER}).get("user")
-    if not user:
-        die(f"GitHub user {OWNER!r} not found")
-    for project in user["projectsV2"]["nodes"]:
-        if project["title"] == PROJECT_TITLE:
-            return project
-    die(f"Project {PROJECT_TITLE!r} not found")
+    snapshot = graphql(query, {"login": OWNER, "number": int(target["number"])})["user"]["projectV2"]
+    if snapshot is None:
+        die(f"Project #{target['number']} disappeared during snapshot")
+    if int(snapshot["fields"]["totalCount"]) > len(snapshot["fields"]["nodes"]):
+        die("Project has more than 20 fields; refuse a partial planning-field snapshot")
+    if int(snapshot["items"]["totalCount"]) > len(snapshot["items"]["nodes"]):
+        die("Project has more than 100 items; refuse a partial migration snapshot")
+    return snapshot
 
 
 def project_field_map(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
