@@ -1,0 +1,5546 @@
+{
+  "schema_version": "companion.eval.report.v1",
+  "evidence_class": "synthetic",
+  "selection": "not_selected",
+  "corpus": {
+    "source": "./eval/scenarios.jsonl",
+    "sha256": "39457394516161562c69f9216790e80201c6a005a781a7da55ece14133a2ab15",
+    "scenario_count": 48
+  },
+  "configuration": {
+    "runs": 2,
+    "primary": {
+      "name": "deterministic-fixture",
+      "runtime": "offline-mock"
+    },
+    "escalation": {
+      "name": "deterministic-fixture",
+      "runtime": "offline-mock"
+    },
+    "pricing": {},
+    "metadata": {}
+  },
+  "trials": [
+    {
+      "scenario_id": "scenario-0001",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "expense"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 2,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "expense"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 2,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0002",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "expense"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 2,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "expense"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 2,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0003",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "expense"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 2,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "expense"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 2,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0004",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "expense"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 2,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "expense"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 2,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0005",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "expense"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 2,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "expense"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 2,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0006",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "budget"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "budget"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0007",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "budget"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "budget"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0008",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "budget"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "budget"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0009",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0010",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0011",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0012",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0013",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0014",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0015",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "note"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "note"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0016",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "note"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "note"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0017",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "note"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "note"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0018",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "journal"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "journal"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0019",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "journal"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "journal"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0020",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "voice"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "voice"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0021",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "voice"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "voice"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0022",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "memory"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "memory"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0023",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "memory"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "memory"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0024",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "memory"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "memory"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0025",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "memory"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "memory"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0026",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0027",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0028",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0029",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0030",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0031",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0032",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "market",
+              "schedule"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 2,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "market",
+              "schedule"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 2,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0033",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0034",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "context"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "context"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0035",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "context"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "context"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0036",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "context"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "context"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0037",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": null,
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": null,
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0038",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": null,
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": null,
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0039",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": null,
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": null,
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0040",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "expense"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 2,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "expense"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 2,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0041",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "expense"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 2,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "expense"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 2,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0042",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "budget"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "budget"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0043",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0044",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0045",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "voice"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "voice"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0046",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "memory"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "memory"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0047",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0048",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0001",
+      "kind": "routing",
+      "run": 2,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "expense"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 2,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "expense"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 2,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0002",
+      "kind": "routing",
+      "run": 2,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "expense"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 2,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "expense"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 2,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0003",
+      "kind": "routing",
+      "run": 2,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "expense"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 2,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "expense"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 2,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0004",
+      "kind": "routing",
+      "run": 2,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "expense"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 2,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "expense"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 2,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0005",
+      "kind": "routing",
+      "run": 2,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "expense"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 2,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "expense"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 2,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0006",
+      "kind": "routing",
+      "run": 2,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "budget"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "budget"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0007",
+      "kind": "routing",
+      "run": 2,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "budget"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "budget"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0008",
+      "kind": "routing",
+      "run": 2,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "budget"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "budget"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0009",
+      "kind": "routing",
+      "run": 2,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0010",
+      "kind": "routing",
+      "run": 2,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0011",
+      "kind": "routing",
+      "run": 2,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0012",
+      "kind": "routing",
+      "run": 2,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0013",
+      "kind": "routing",
+      "run": 2,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0014",
+      "kind": "routing",
+      "run": 2,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0015",
+      "kind": "routing",
+      "run": 2,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "note"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "note"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0016",
+      "kind": "routing",
+      "run": 2,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "note"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "note"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0017",
+      "kind": "routing",
+      "run": 2,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "note"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "note"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0018",
+      "kind": "routing",
+      "run": 2,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "journal"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "journal"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0019",
+      "kind": "routing",
+      "run": 2,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "journal"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "journal"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0020",
+      "kind": "routing",
+      "run": 2,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "voice"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "voice"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0021",
+      "kind": "routing",
+      "run": 2,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "voice"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "voice"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0022",
+      "kind": "routing",
+      "run": 2,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "memory"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "memory"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0023",
+      "kind": "routing",
+      "run": 2,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "memory"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "memory"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0024",
+      "kind": "routing",
+      "run": 2,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "memory"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "memory"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0025",
+      "kind": "routing",
+      "run": 2,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "memory"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "memory"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0026",
+      "kind": "routing",
+      "run": 2,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0027",
+      "kind": "routing",
+      "run": 2,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0028",
+      "kind": "routing",
+      "run": 2,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0029",
+      "kind": "routing",
+      "run": 2,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0030",
+      "kind": "routing",
+      "run": 2,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0031",
+      "kind": "routing",
+      "run": 2,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0032",
+      "kind": "routing",
+      "run": 2,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "market",
+              "schedule"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 2,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "market",
+              "schedule"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 2,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0033",
+      "kind": "routing",
+      "run": 2,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0034",
+      "kind": "routing",
+      "run": 2,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "context"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "context"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0035",
+      "kind": "routing",
+      "run": 2,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "context"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "context"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0036",
+      "kind": "routing",
+      "run": 2,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "context"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "context"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0037",
+      "kind": "routing",
+      "run": 2,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": null,
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": null,
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0038",
+      "kind": "routing",
+      "run": 2,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": null,
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": null,
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0039",
+      "kind": "routing",
+      "run": 2,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": null,
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": null,
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0040",
+      "kind": "routing",
+      "run": 2,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "expense"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 2,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "expense"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 2,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0041",
+      "kind": "routing",
+      "run": 2,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "expense"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 2,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "expense"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 2,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0042",
+      "kind": "routing",
+      "run": 2,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "budget"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "budget"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0043",
+      "kind": "routing",
+      "run": 2,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0044",
+      "kind": "routing",
+      "run": 2,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0045",
+      "kind": "routing",
+      "run": 2,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "voice"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "voice"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0046",
+      "kind": "routing",
+      "run": 2,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "memory"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "memory"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0047",
+      "kind": "routing",
+      "run": 2,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0048",
+      "kind": "routing",
+      "run": 2,
+      "primary": {
+        "observation": {},
+        "timing": {
+          "total_us": 0
+        },
+        "warnings": [
+          "mock response not configured; emitted an empty observation"
+        ]
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "total_us": 0
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 1,
+            "precision": 0,
+            "recall": 0,
+            "f1": 0,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0,
+          "task_success": false
+        },
+        "escalation_requested": false
+      }
+    }
+  ],
+  "summary": {
+    "trials": 96,
+    "provider_failures": 0,
+    "latency": {
+      "total_samples": 96,
+      "ttft_samples": 0,
+      "p50_total_us": 0,
+      "p95_total_us": 0
+    },
+    "quality": {
+      "scored_trials": 96,
+      "mean_deterministic_score": 0.0625,
+      "task_success_trials": 96,
+      "task_success_rate": 0.0625,
+      "forbidden_tool_calls": 0
+    },
+    "cost": {
+      "usage_samples": 0,
+      "priced_samples": 0,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "total_tokens": 0,
+      "unavailable_reason": "provider did not report token usage"
+    },
+    "escalation": {
+      "ground_truth_trials": 0,
+      "true_positive": 0,
+      "false_positive": 0,
+      "true_negative": 0,
+      "false_negative": 0,
+      "requested": 0,
+      "executed": 0,
+      "unavailable": 0,
+      "failures": 0,
+      "quality_delta_samples": 0,
+      "latency_penalty_samples": 0
+    }
+  },
+  "warnings": [
+    "synthetic mock evidence cannot establish real-provider quality, latency, cost, or production readiness"
+  ]
+}
