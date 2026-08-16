@@ -329,7 +329,7 @@ func nativeTools(d NativeDependencies) []capability.Tool {
 			var from, to time.Time
 			var err error
 			if strings.TrimSpace(a.From) != "" || strings.TrimSpace(a.To) != "" {
-				from, to, err = parseRange(a.From, a.To, 366*24*time.Hour)
+				from, to, err = parseOptionalRange(a.From, a.To, 366*24*time.Hour)
 				if err != nil {
 					return capability.Failure(err)
 				}
@@ -638,7 +638,7 @@ func nativeTools(d NativeDependencies) []capability.Tool {
 			var from, to time.Time
 			var err error
 			if strings.TrimSpace(a.From) != "" || strings.TrimSpace(a.To) != "" {
-				from, to, err = parseRange(a.From, a.To, 366*24*time.Hour)
+				from, to, err = parseOptionalRange(a.From, a.To, 366*24*time.Hour)
 				if err != nil {
 					return capability.Failure(err)
 				}
@@ -800,6 +800,34 @@ func parseRange(a, b string, max time.Duration) (time.Time, time.Time, error) {
 	}
 	if !to.After(from) || to.Sub(from) > max {
 		return time.Time{}, time.Time{}, fmt.Errorf("invalid range")
+	}
+	return from, to, nil
+}
+
+func parseOptionalRange(a, b string, max time.Duration) (time.Time, time.Time, error) {
+	var from, to time.Time
+	var err error
+	a = strings.TrimSpace(a)
+	b = strings.TrimSpace(b)
+	if a != "" {
+		from, err = time.Parse(time.RFC3339, a)
+		if err != nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("from must be RFC3339: %w", err)
+		}
+	}
+	if b != "" {
+		to, err = time.Parse(time.RFC3339, b)
+		if err != nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("to must be RFC3339: %w", err)
+		}
+	}
+	if !from.IsZero() && !to.IsZero() {
+		if !to.After(from) {
+			return time.Time{}, time.Time{}, fmt.Errorf("to must be after from")
+		}
+		if max > 0 && to.Sub(from) > max {
+			return time.Time{}, time.Time{}, fmt.Errorf("range exceeds maximum allowed span")
+		}
 	}
 	return from, to, nil
 }

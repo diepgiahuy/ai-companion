@@ -122,5 +122,17 @@ func TestNotesAndVoiceMemosQueryFiltering(t *testing.T) {
 	if strings.Contains(otherNotes.Content, "coffee") {
 		t.Fatalf("cross-user note leak: %s", otherNotes.Content)
 	}
+
+	// Single-bound query (from only)
+	fromOnly := registry.Execute(ctx, "note.list", capability.ToolRequest{Key: "l3", Arguments: `{"from":"2026-08-01T00:00:00Z"}`})
+	if !strings.Contains(fromOnly.Content, `"ok":true`) || !strings.Contains(fromOnly.Content, "buy coffee and oats") {
+		t.Fatalf("from-only query failed: %s", fromOnly.Content)
+	}
+
+	// Single-bound query (to only)
+	toOnly := registry.Execute(ctx, "note.list", capability.ToolRequest{Key: "l4", Arguments: `{"to":"2030-01-01T00:00:00Z"}`})
+	if !strings.Contains(toOnly.Content, `"ok":true`) || !strings.Contains(toOnly.Content, "buy coffee and oats") {
+		t.Fatalf("to-only query failed: %s", toOnly.Content)
+	}
 }
 
