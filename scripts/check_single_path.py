@@ -13,20 +13,18 @@ FORBIDDEN_PATHS = [
     "host/companion_software_device/fake_qwen.py",
 ]
 
-# Active product/config/build surfaces only. Historical checkpoints are
-# intentionally not scanned: they document prior states and are not runtime
-# instructions.
+# Scan the complete active product/runtime surfaces. Historical checkpoints are
+# intentionally excluded: they document prior states and are not runtime
+# instructions. Broad roots avoid a blind spot whenever a new internal package
+# or firmware component is added.
 SCAN_ROOTS = [
     "README.md",
     "backend/README.md",
     "backend/config.example.env",
     "backend/cmd",
-    "backend/internal/adkbridge",
-    "backend/internal/runtimeconfig",
-    "backend/internal/server",
+    "backend/internal",
     "main",
-    "components/esp32_network",
-    "components/esp32_provisioning",
+    "components",
     "host/companion_software_device",
     "Makefile",
     ".github/workflows",
