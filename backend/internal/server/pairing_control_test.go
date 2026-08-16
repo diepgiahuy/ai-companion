@@ -37,6 +37,14 @@ func (r pairingControlRepository) RejectPairingSession(_ context.Context, m pair
 	return pairing.Session{}, false, errors.New("unexpected reject")
 }
 
+func (r pairingControlRepository) ListAuthorizedRecipients(_ context.Context, _ pairing.Participant) ([]pairing.RecipientDescriptor, error) {
+	return nil, nil
+}
+
+func (r pairingControlRepository) RevokeRelationship(_ context.Context, _ pairing.Participant, _ string, _ time.Time) error {
+	return nil
+}
+
 func pairingTestSession(hub *sessionHub, sessionID, userID, deviceID string) *session {
 	return &session{
 		id:            sessionID,

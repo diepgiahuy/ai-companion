@@ -15,11 +15,13 @@ import (
 const SessionTTL = 2 * time.Minute
 
 var (
-	ErrUnauthorized        = errors.New("pairing participant is not authorized")
-	ErrDeviceUnavailable   = errors.New("pairing candidate device is unavailable")
-	ErrSessionExpired      = errors.New("pairing session expired")
-	ErrSessionClosed       = errors.New("pairing session is closed")
-	ErrInvalidConfirmation = errors.New("invalid pairing confirmation")
+	ErrUnauthorized         = errors.New("pairing participant is not authorized")
+	ErrDeviceUnavailable    = errors.New("pairing candidate device is unavailable")
+	ErrSessionExpired       = errors.New("pairing session expired")
+	ErrSessionClosed        = errors.New("pairing session is closed")
+	ErrInvalidConfirmation  = errors.New("invalid pairing confirmation")
+	ErrRelationshipNotFound = errors.New("pairing relationship not found")
+	ErrRelationshipRevoked  = errors.New("pairing relationship is revoked")
 )
 
 type Participant struct {
@@ -27,18 +29,35 @@ type Participant struct {
 	DeviceID string `json:"device_id"`
 }
 
+type RecipientDescriptor struct {
+	RelationshipID string    `json:"relationship_id"`
+	PeerDeviceID   string    `json:"peer_device_id"`
+	DisplayName    string    `json:"display_name,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+type Relationship struct {
+	ID        string     `json:"relationship_id"`
+	DeviceAID string     `json:"device_a_id"`
+	DeviceBID string     `json:"device_b_id"`
+	UserAID   string     `json:"user_a_id"`
+	UserBID   string     `json:"user_b_id"`
+	CreatedAt time.Time  `json:"created_at"`
+	RevokedAt *time.Time `json:"revoked_at,omitempty"`
+}
+
 type Session struct {
 	ID                   string      `json:"session_id"`
-	Initiator             Participant `json:"initiator"`
-	Peer                  Participant `json:"peer"`
+	Initiator            Participant `json:"initiator"`
+	Peer                 Participant `json:"peer"`
 	ProximityEvidenceID  string      `json:"proximity_evidence_id"`
 	InitiatorNonce       string      `json:"-"`
-	PeerNonce             string      `json:"-"`
-	InitiatorConfirmedAt *time.Time   `json:"initiator_confirmed_at,omitempty"`
-	PeerConfirmedAt      *time.Time   `json:"peer_confirmed_at,omitempty"`
-	ExpiresAt             time.Time   `json:"expires_at"`
+	PeerNonce            string      `json:"-"`
+	InitiatorConfirmedAt *time.Time  `json:"initiator_confirmed_at,omitempty"`
+	PeerConfirmedAt      *time.Time  `json:"peer_confirmed_at,omitempty"`
+	ExpiresAt            time.Time   `json:"expires_at"`
 	RelationshipID       string      `json:"relationship_id,omitempty"`
-	State                 string      `json:"state"`
+	State                string      `json:"state"`
 }
 
 type CreateMutation struct {
@@ -76,11 +95,30 @@ type Repository interface {
 	CreatePairingSession(context.Context, CreateMutation) (Session, bool, error)
 	ConfirmPairingSession(context.Context, ConfirmMutation) (ConfirmationOutcome, error)
 	RejectPairingSession(context.Context, RejectMutation) (Session, bool, error)
+	ListAuthorizedRecipients(context.Context, Participant) ([]RecipientDescriptor, error)
+	RevokeRelationship(context.Context, Participant, string, time.Time) error
 }
 
 type Service struct {
 	repository Repository
 	now        func() time.Time
+}
+
+func (s *Service) ListAuthorizedRecipients(ctx context.Context, participant Participant) ([]RecipientDescriptor, error) {
+	participant = normalizeParticipant(participant)
+	if participant.UserID == "" || participant.DeviceID == "" {
+		return nil, ErrUnauthorized
+	}
+	return s.repository.ListAuthorizedRecipients(ctx, participant)
+}
+
+func (s *Service) RevokeRelationship(ctx context.Context, participant Participant, relationshipID string) error {
+	participant = normalizeParticipant(participant)
+	relationshipID = strings.TrimSpace(relationshipID)
+	if participant.UserID == "" || participant.DeviceID == "" || relationshipID == "" {
+		return ErrUnauthorized
+	}
+	return s.repository.RevokeRelationship(ctx, participant, relationshipID, s.now().UTC())
 }
 
 func New(repository Repository) (*Service, error) {

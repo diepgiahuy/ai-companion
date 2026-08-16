@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-const RequiredSchemaRevision = "20260816220000"
+const RequiredSchemaRevision = "20260817000000"
 
 var requiredProductTables = []string{
 	"turn_results", "notes", "expenses", "journal_entries", "reminders",

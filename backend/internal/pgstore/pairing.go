@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"companion-server/internal/idempotency"
 	"companion-server/internal/pairing"
@@ -115,10 +116,10 @@ func (s *Store) ConfirmPairingSession(ctx context.Context, mutation pairing.Conf
 		if err := tx.QueryRow(ctx, `
 			INSERT INTO device_relationships(relationship_id,device_a_id,device_b_id,user_a_id,user_b_id,created_at)
 			VALUES($1,$2,$3,$4,$5,now())
-			ON CONFLICT(device_a_id,device_b_id) DO NOTHING
+			ON CONFLICT(device_a_id,device_b_id) WHERE revoked_at IS NULL DO NOTHING
 			RETURNING relationship_id`, relationshipID, deviceA, deviceB, userA, userB).Scan(&relationshipID); err != nil {
 			if !errors.Is(err, pgx.ErrNoRows) { return nil, fmt.Errorf("insert device relationship: %w", err) }
-			if err := tx.QueryRow(ctx, `SELECT relationship_id FROM device_relationships WHERE device_a_id=$1 AND device_b_id=$2`, deviceA, deviceB).Scan(&relationshipID); err != nil {
+			if err := tx.QueryRow(ctx, `SELECT relationship_id FROM device_relationships WHERE device_a_id=$1 AND device_b_id=$2 AND revoked_at IS NULL`, deviceA, deviceB).Scan(&relationshipID); err != nil {
 				return nil, fmt.Errorf("load existing device relationship: %w", err)
 			}
 		} else {
@@ -211,4 +212,53 @@ func canonicalPair(a, b string) (string, string) {
 	a, b = strings.TrimSpace(a), strings.TrimSpace(b)
 	if b < a { return b, a }
 	return a, b
+}
+
+func (s *Store) ListAuthorizedRecipients(ctx context.Context, participant pairing.Participant) ([]pairing.RecipientDescriptor, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT relationship_id, device_a_id, user_a_id, device_b_id, user_b_id, created_at
+		FROM device_relationships
+		WHERE ((user_a_id=$1 AND device_a_id=$2) OR (user_b_id=$1 AND device_b_id=$2))
+		  AND revoked_at IS NULL
+		ORDER BY created_at DESC`,
+		owner(participant.UserID), strings.TrimSpace(participant.DeviceID))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []pairing.RecipientDescriptor
+	for rows.Next() {
+		var relID, devA, userA, devB, userB string
+		var createdAt time.Time
+		if err := rows.Scan(&relID, &devA, &userA, &devB, &userB, &createdAt); err != nil {
+			return nil, err
+		}
+		peerDev := devB
+		if devB == participant.DeviceID {
+			peerDev = devA
+		}
+		out = append(out, pairing.RecipientDescriptor{
+			RelationshipID: relID,
+			PeerDeviceID:   peerDev,
+			CreatedAt:      createdAt,
+		})
+	}
+	return out, nil
+}
+
+func (s *Store) RevokeRelationship(ctx context.Context, participant pairing.Participant, relationshipID string, now time.Time) error {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE device_relationships
+		SET revoked_at=$1
+		WHERE relationship_id=$2
+		  AND ((user_a_id=$3 AND device_a_id=$4) OR (user_b_id=$3 AND device_b_id=$4))
+		  AND revoked_at IS NULL`,
+		now.UTC(), relationshipID, owner(participant.UserID), strings.TrimSpace(participant.DeviceID))
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return pairing.ErrRelationshipNotFound
+	}
+	return nil
 }

@@ -4,12 +4,22 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
 	"time"
 
 	"companion-server/internal/idempotency"
+	"companion-server/internal/pairing"
+)
+
+var (
+	ErrUnauthorized         = errors.New("unauthorized voice mail operation")
+	ErrRelationshipNotFound = errors.New("pairing relationship not found")
+	ErrRelationshipRevoked  = errors.New("pairing relationship is revoked")
+	ErrItemNotFound         = errors.New("voice mail item not found")
+	ErrInvalidState         = errors.New("invalid voice mail state")
 )
 
 const (
@@ -41,6 +51,7 @@ const (
 
 type Item struct {
 	ID                string     `json:"id"`
+	RelationshipID    string     `json:"relationship_id"`
 	SenderUserID      string     `json:"sender_user_id,omitempty"`
 	SenderDeviceID    string     `json:"sender_device_id,omitempty"`
 	RecipientUserID   string     `json:"recipient_user_id,omitempty"`
@@ -60,20 +71,22 @@ type Item struct {
 }
 
 type Create struct {
-	SenderUserID      string
-	SenderDeviceID    string
-	RecipientUserID   string
-	RecipientDeviceID string
-	DurationMS        int64
-	SizeBytes         int64
-	ChecksumSHA256    string
-	Policy            Policy
-	ExpiresAt         time.Time
+	RelationshipID string
+	SenderUserID   string
+	SenderDeviceID string
+	DurationMS     int64
+	SizeBytes      int64
+	ChecksumSHA256 string
+	Policy         Policy
+	ExpiresAt      time.Time
 }
 
 func (c Create) Validate(now time.Time) error {
-	if strings.TrimSpace(c.SenderUserID) == "" || strings.TrimSpace(c.SenderDeviceID) == "" || strings.TrimSpace(c.RecipientUserID) == "" {
-		return fmt.Errorf("sender user/device and recipient user are required")
+	if strings.TrimSpace(c.RelationshipID) == "" {
+		return fmt.Errorf("relationship_id is required")
+	}
+	if strings.TrimSpace(c.SenderUserID) == "" || strings.TrimSpace(c.SenderDeviceID) == "" {
+		return fmt.Errorf("sender user and device are required")
 	}
 	if c.Policy == Disabled || (c.Policy != Ephemeral && c.Policy != Retained) {
 		return fmt.Errorf("voice mail policy must be ephemeral or retained")
@@ -97,13 +110,14 @@ func (c Create) Validate(now time.Time) error {
 }
 
 type Repository interface {
+	ListRecipients(context.Context, string, string) ([]pairing.RecipientDescriptor, error)
 	CreateUpload(context.Context, idempotency.Request, Create, time.Time) (Item, error)
-	ItemForSender(context.Context, string, string) (Item, bool, error)
-	CompleteUpload(context.Context, idempotency.Request, string, string, time.Time) (Item, error)
+	ItemForSender(context.Context, string, string, string) (Item, bool, error)
+	CompleteUpload(context.Context, idempotency.Request, string, string, string, time.Time) (Item, error)
 	ListUnread(context.Context, string, string, time.Time, int) ([]Item, error)
 	ClaimVoiceMail(context.Context, idempotency.Request, string, string, string, string, time.Time, time.Time) (Item, error)
-	CompleteVoiceMailPlayback(context.Context, idempotency.Request, string, string, string, bool, time.Time) (Item, error)
-	ItemForPlayback(context.Context, string, string, string, time.Time) (Item, bool, error)
+	CompleteVoiceMailPlayback(context.Context, idempotency.Request, string, string, string, string, bool, time.Time) (Item, error)
+	ItemForPlayback(context.Context, string, string, string, string, time.Time) (Item, bool, error)
 	RequestDelete(context.Context, idempotency.Request, string, string, time.Time) (Item, error)
 	MarkDeleted(context.Context, string, time.Time) error
 	ClaimCleanup(context.Context, time.Time, int) ([]Item, error)
@@ -129,6 +143,13 @@ func New(repo Repository, blobs BlobStore) (*Service, error) {
 	return &Service{repo: repo, blobs: blobs, now: time.Now, lease: 2 * time.Minute}, nil
 }
 
+func (s *Service) ListRecipients(ctx context.Context, senderUserID, senderDeviceID string) ([]pairing.RecipientDescriptor, error) {
+	if strings.TrimSpace(senderUserID) == "" || strings.TrimSpace(senderDeviceID) == "" {
+		return nil, fmt.Errorf("sender user and device are required")
+	}
+	return s.repo.ListRecipients(ctx, senderUserID, senderDeviceID)
+}
+
 func (s *Service) CreateUpload(ctx context.Context, request idempotency.Request, create Create) (Item, error) {
 	now := s.now().UTC()
 	if err := create.Validate(now); err != nil {
@@ -137,8 +158,8 @@ func (s *Service) CreateUpload(ctx context.Context, request idempotency.Request,
 	return s.repo.CreateUpload(ctx, request, create, now)
 }
 
-func (s *Service) PutMedia(ctx context.Context, senderUserID, id string, body io.Reader) error {
-	item, ok, err := s.repo.ItemForSender(ctx, senderUserID, id)
+func (s *Service) PutMedia(ctx context.Context, senderUserID, senderDeviceID, id string, body io.Reader) error {
+	item, ok, err := s.repo.ItemForSender(ctx, senderUserID, senderDeviceID, id)
 	if err != nil || !ok {
 		if err != nil {
 			return err
@@ -151,8 +172,8 @@ func (s *Service) PutMedia(ctx context.Context, senderUserID, id string, body io
 	return s.blobs.Put(ctx, item.ObjectKey, body, item.SizeBytes, item.ChecksumSHA256)
 }
 
-func (s *Service) CompleteUpload(ctx context.Context, request idempotency.Request, senderUserID, id string) (Item, error) {
-	item, ok, err := s.repo.ItemForSender(ctx, senderUserID, id)
+func (s *Service) CompleteUpload(ctx context.Context, request idempotency.Request, senderUserID, senderDeviceID, id string) (Item, error) {
+	item, ok, err := s.repo.ItemForSender(ctx, senderUserID, senderDeviceID, id)
 	if err != nil {
 		return Item{}, err
 	}
@@ -177,7 +198,7 @@ func (s *Service) CompleteUpload(ctx context.Context, request idempotency.Reques
 			return Item{}, fmt.Errorf("voice mail media verification failed")
 		}
 	}
-	return s.repo.CompleteUpload(ctx, request, senderUserID, id, s.now().UTC())
+	return s.repo.CompleteUpload(ctx, request, senderUserID, senderDeviceID, id, s.now().UTC())
 }
 
 func (s *Service) ListUnread(ctx context.Context, recipientUserID, deviceID string, limit int) ([]Item, error) {
@@ -189,8 +210,8 @@ func (s *Service) Claim(ctx context.Context, request idempotency.Request, recipi
 	return s.repo.ClaimVoiceMail(ctx, request, recipientUserID, deviceID, id, playbackID, now, now.Add(s.lease))
 }
 
-func (s *Service) OpenMedia(ctx context.Context, recipientUserID, id, playbackID string) (io.ReadCloser, error) {
-	item, ok, err := s.repo.ItemForPlayback(ctx, recipientUserID, id, playbackID, s.now().UTC())
+func (s *Service) OpenMedia(ctx context.Context, recipientUserID, recipientDeviceID, id, playbackID string) (io.ReadCloser, error) {
+	item, ok, err := s.repo.ItemForPlayback(ctx, recipientUserID, recipientDeviceID, id, playbackID, s.now().UTC())
 	if err != nil || !ok {
 		if err != nil {
 			return nil, err
@@ -200,8 +221,8 @@ func (s *Service) OpenMedia(ctx context.Context, recipientUserID, id, playbackID
 	return s.blobs.Open(ctx, item.ObjectKey)
 }
 
-func (s *Service) Playback(ctx context.Context, request idempotency.Request, recipientUserID, id, playbackID string, succeeded bool) (Item, error) {
-	item, err := s.repo.CompleteVoiceMailPlayback(ctx, request, recipientUserID, id, playbackID, succeeded, s.now().UTC())
+func (s *Service) Playback(ctx context.Context, request idempotency.Request, recipientUserID, recipientDeviceID, id, playbackID string, succeeded bool) (Item, error) {
+	item, err := s.repo.CompleteVoiceMailPlayback(ctx, request, recipientUserID, recipientDeviceID, id, playbackID, succeeded, s.now().UTC())
 	if err != nil {
 		return Item{}, err
 	}

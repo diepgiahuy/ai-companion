@@ -205,6 +205,7 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("GET /v1/admin/jobs/metrics", s.handleJobMetrics)
 	}
 	if s.voiceMail != nil && s.deviceAuth != nil {
+		mux.HandleFunc("GET /v1/voice-mail/recipients", s.handleVoiceMailRecipients)
 		mux.HandleFunc("POST /v1/voice-mail", s.handleVoiceMailCreate)
 		mux.HandleFunc("GET /v1/voice-mail", s.handleVoiceMailList)
 		mux.HandleFunc("PUT /v1/voice-mail/{id}/media", s.handleVoiceMailMediaPut)
@@ -650,7 +651,7 @@ func (s *session) handleControl(ctx context.Context, data []byte) error {
 			return err
 		}
 		return s.processInbound(message.MessageID, data, func() error {
-			item, err := s.voiceMail.Playback(ctx, request, s.userID, payload.VoiceMailID, payload.PlaybackID, payload.Result == protocol.PlaybackSucceeded)
+			item, err := s.voiceMail.Playback(ctx, request, s.userID, s.deviceID, payload.VoiceMailID, payload.PlaybackID, payload.Result == protocol.PlaybackSucceeded)
 			if err != nil {
 				return err
 			}

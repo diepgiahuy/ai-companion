@@ -52,6 +52,17 @@ func TestVoiceMailAuthenticatedApplicationLifecycle(t *testing.T) {
 	if err := data.EnrollDevice(ctx, domain.Identity{UserID: recipientUser, DeviceID: recipientDevice}, recipientToken); err != nil {
 		t.Fatal(err)
 	}
+
+	relID := prefix + "-app-rel"
+	devA, userA, devB, userB := senderDevice, senderUser, recipientDevice, recipientUser
+	if devB < devA {
+		devA, devB = devB, devA
+		userA, userB = userB, userA
+	}
+	if err := data.InsertRelationshipForTest(ctx, relID, devA, devB, userA, userB); err != nil {
+		t.Fatal(err)
+	}
+
 	blobs, err := voicemail.NewFileSystem(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -64,13 +75,32 @@ func TestVoiceMailAuthenticatedApplicationLifecycle(t *testing.T) {
 	httpServer := httptest.NewServer(app.Handler())
 	defer func() { httpServer.Close() }()
 
+	var recipientsResp struct {
+		Recipients []struct {
+			RelationshipID string `json:"relationship_id"`
+			PeerDeviceID   string `json:"peer_device_id"`
+		} `json:"recipients"`
+	}
+	doVoiceMailJSON(t, httpServer.URL, "GET", "/v1/voice-mail/recipients", senderDevice, senderToken, nil, http.StatusOK, &recipientsResp)
+	if len(recipientsResp.Recipients) != 1 || recipientsResp.Recipients[0].RelationshipID != relID || recipientsResp.Recipients[0].PeerDeviceID != recipientDevice {
+		t.Fatalf("recipients=%+v", recipientsResp)
+	}
+
 	media := []byte("synthetic ogg opus application fixture")
 	sum := sha256.Sum256(media)
 	checksum := hex.EncodeToString(sum[:])
-	create := map[string]any{"recipient_user_id": recipientUser, "recipient_device_id": recipientDevice, "duration_ms": 1200, "size_bytes": len(media), "checksum_sha256": checksum, "policy": "ephemeral", "expires_at": time.Now().Add(time.Hour).UTC(), "idempotency_key": prefix + "-create"}
+	create := map[string]any{
+		"relationship_id": relID,
+		"duration_ms":     1200,
+		"size_bytes":      len(media),
+		"checksum_sha256": checksum,
+		"policy":          "ephemeral",
+		"expires_at":      time.Now().Add(time.Hour).UTC(),
+		"idempotency_key": prefix + "-create",
+	}
 	created := voicemail.Item{}
 	doVoiceMailJSON(t, httpServer.URL, "POST", "/v1/voice-mail", senderDevice, senderToken, create, http.StatusCreated, &created)
-	if created.ID == "" || created.State != voicemail.PendingUpload || created.ObjectKey != "" {
+	if created.ID == "" || created.RelationshipID != relID || created.State != voicemail.PendingUpload || created.ObjectKey != "" {
 		t.Fatalf("created=%+v", created)
 	}
 
