@@ -1,0 +1,25 @@
+menu "Companion secure storage"
+
+config COMPANION_REQUIRE_ENCRYPTED_NVS
+    bool "Require pre-provisioned HMAC-backed NVS encryption"
+    default n
+    help
+        Production/manufacturing guard for persisted Wi-Fi and enrolled-device
+        credentials. When enabled, the build must also enable NVS encryption
+        with the HMAC key-protection scheme. At boot Companion verifies that
+        the configured eFuse key block is already provisioned with HMAC_UP
+        before nvs_flash_init() is allowed to run. Companion never burns the
+        HMAC eFuse key automatically.
+
+config COMPANION_NVS_HMAC_KEY_ID
+    int "Companion HMAC eFuse key slot"
+    range 0 5
+    default 0
+    help
+        Key slot (KEY0..KEY5) that Companion expects manufacturing to have
+        provisioned with purpose HMAC_UP. This value is compiled in all builds
+        so the preflight code stays build-covered, but it is enforced only when
+        COMPANION_REQUIRE_ENCRYPTED_NVS is enabled. In secure mode it must equal
+        CONFIG_NVS_SEC_HMAC_EFUSE_KEY_ID.
+
+endmenu
