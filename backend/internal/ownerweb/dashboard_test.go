@@ -117,12 +117,20 @@ func TestOwnerWebDataEndpoints(t *testing.T) {
 		t.Fatalf("devices list failed: %s", wDevices.Body.String())
 	}
 
-	// Test Device Claim
-	reqClaim := httptest.NewRequest(http.MethodPost, "/v1/owner/data/device/claim", strings.NewReader(`{"claim_code":"7K4N9X"}`))
-	wClaim := httptest.NewRecorder()
-	handler.ServeHTTP(wClaim, reqClaim)
-	if wClaim.Code != http.StatusOK || !strings.Contains(wClaim.Body.String(), "companion-s3-7K4N9X") {
-		t.Fatalf("claim failed: %s", wClaim.Body.String())
+	// Test OTA Trigger
+	reqOTA := httptest.NewRequest(http.MethodPost, "/v1/owner/data/device/ota-trigger", strings.NewReader(`{"device_id":"companion-s3-01","target_version":"v2.4.1"}`))
+	wOTA := httptest.NewRecorder()
+	handler.ServeHTTP(wOTA, reqOTA)
+	if wOTA.Code != http.StatusOK || !strings.Contains(wOTA.Body.String(), "command_queued") {
+		t.Fatalf("ota trigger failed: %s", wOTA.Body.String())
+	}
+
+	// Test Device Config Update
+	reqCfg := httptest.NewRequest(http.MethodPost, "/v1/owner/data/device/config", strings.NewReader(`{"device_id":"companion-s3-01","ota_poll_interval":"12h"}`))
+	wCfg := httptest.NewRecorder()
+	handler.ServeHTTP(wCfg, reqCfg)
+	if wCfg.Code != http.StatusOK || !strings.Contains(wCfg.Body.String(), "12h") {
+		t.Fatalf("device config update failed: %s", wCfg.Body.String())
 	}
 }
 

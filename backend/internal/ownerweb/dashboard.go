@@ -95,6 +95,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleDevice(w, r)
 	case path == "data/device/claim" && r.Method == http.MethodPost:
 		h.handleClaimDevice(w, r)
+	case path == "data/device/ota-trigger" && r.Method == http.MethodPost:
+		h.handleTriggerOTA(w, r)
+	case path == "data/device/config" && r.Method == http.MethodPost:
+		h.handleUpdateDeviceConfig(w, r)
 	default:
 		http.NotFound(w, r)
 	}
@@ -284,6 +288,45 @@ func (h *Handler) handleClaimDevice(w http.ResponseWriter, r *http.Request) {
 		"ok":        true,
 		"claimed":   true,
 		"device_id": fmt.Sprintf("companion-s3-%s", strings.TrimSpace(req.ClaimCode)),
+	})
+}
+
+func (h *Handler) handleTriggerOTA(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		DeviceID      string `json:"device_id"`
+		TargetVersion string `json:"target_version"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	if req.DeviceID == "" {
+		req.DeviceID = "companion-s3-01"
+	}
+	if req.TargetVersion == "" {
+		req.TargetVersion = "v2.4.1"
+	}
+	writeJSON(w, map[string]any{
+		"ok":             true,
+		"triggered":      true,
+		"device_id":      req.DeviceID,
+		"target_version": req.TargetVersion,
+		"status":         "command_queued",
+		"message":        "OTA update command queued for device twin delivery",
+	})
+}
+
+func (h *Handler) handleUpdateDeviceConfig(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		DeviceID        string `json:"device_id"`
+		OTAPollInterval string `json:"ota_poll_interval"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{
+		"ok":                true,
+		"device_id":         req.DeviceID,
+		"ota_poll_interval": req.OTAPollInterval,
+		"message":           "Device twin configuration updated",
 	})
 }
 
