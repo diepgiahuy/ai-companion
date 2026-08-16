@@ -36,7 +36,61 @@ Status: IN PROGRESS — Phase 1 PRs passing CI; Phase 2 & 3 in execution
 
 ---
 
-## 2. Checkpoint State & Architecture Invariants
+## 2. Durable Engineering Philosophy & Architectural Invariants
+
+Every phase in the AI Companion platform must strictly satisfy the 6 core engineering principles:
+
+```
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│                             CORE SYSTEM PHILOSOPHY                                │
+├────────────────────────┬─────────────────────────┬───────────────────────────────┤
+│ 1. SINGLE SOURCE OF    │ 2. PROMPT CACHING &     │ 3. HARDWARE SRAM/PSRAM        │
+│    TRUTH (PostgreSQL)  │    DYNAMIC GROUNDING    │    BUDGET GUARDS (<160.5 KiB) │
+├────────────────────────┼─────────────────────────┼───────────────────────────────┤
+│ 4. ZERO-TRUST & OWNER  │ 5. ZERO-DEPENDENCY      │ 6. DETERMINISTIC FREERTOS     │
+│    USER ISOLATION      │    SINGLE BINARY WEB UI │    CONCURRENCY & SHUTDOWN     │
+└────────────────────────┴─────────────────────────┴───────────────────────────────┘
+```
+
+1. **Single Source of Truth (PostgreSQL)**:
+   - All domain mutations and reads sit strictly behind typed Go repository interfaces.
+   - LLMs, memory caches, and firmware twins are consumers, never the authoritative database.
+   - User data isolation is mathematically enforced via parameterized SQL (`WHERE user_id = $1`).
+
+2. **Prompt Caching & Dynamic Context Grounding (Google ADK v2)**:
+   - Static prompt templates and tool definitions remain immutable to maximize LLM Prompt Cache hit rates (reducing token costs and latency by up to 90%).
+   - Runtime volatile state (per-turn local time, timezone, locale) is injected dynamically via ADK `InstructionProvider(ctx)`.
+
+3. **Hardware Budget & Memory Invariants (ESP32-S3)**:
+   - Internal SRAM is strictly capped at **160.5 KiB**; PSRAM Opus codec workspace is locked at **128.0 KiB**.
+   - No dynamic heap allocations in fast-path audio loops.
+
+4. **Zero-Trust Security & Ownership Boundaries**:
+   - Owner web console and API mutations enforce `__Host-` prefixed session cookies, cryptographic CSRF token validation, and explicit confirmation for destructive actions.
+   - In-memory rate limiting and redemption replays are distributed and transactionally safe.
+
+5. **Zero-Dependency Web Delivery**:
+   - Web assets are embedded directly into the Go binary (`//go:embed`), eliminating Node/NPM dependencies, CVE supply-chain risks, and container bloat.
+
+6. **Deterministic Concurrency & Lifecycle**:
+   - ESP-IDF FreeRTOS tasks (TTS streaming, voice mail, network) use static mutex protection (`opus_decoder_mutex_`) and cooperative graceful shutdown (`stopping_`).
+
+---
+
+## 3. Phase-by-Phase Philosophy Enforcement Matrix
+
+| Phase | Target Issues / Scope | Architectural Standard & Invariants Enforced |
+|---|---|---|
+| **Phase 1** | **#180, #184, #185, #186, #187** | FreeRTOS static mutex synchronization, cooperative task teardown, protocol v2 dynamic OTA polling, distributed claim code store. |
+| **Phase 2** | **#190, #191** | ADK `InstructionProvider` dynamic time grounding, PostgreSQL parameterized search (`ILIKE %search%`), timezone-aware calendar resources. |
+| **Phase 3** | **#192** | Notion/Xiaozhi single-binary web console, `//go:embed` asset delivery, `ownerauth` session & CSRF protection. |
+| **Phase 4** | **#170** | Encrypt Wi-Fi and device credentials in ESP32-S3 NVS flash using hardware AES-XTS partition encryption. |
+| **Phase 5** | **#18, #23, #105, #106** | Real-world benchmark of VN/EN ASR, TTS, and LLM providers; latency/cost qualification; hard-cut production voice path. |
+| **Phase 6** | **#2, #3, #7, #8, #9, #17, #21, #91, #100, #104, #114** | Physical HIL runner qualification, audio VAD/AEC barge-in validation, A/B OTA rollback verification, first-boot onboarding. |
+
+---
+
+## 4. Checkpoint State & Architecture Invariants
 
 ### Dynamic Time Context Architecture (Issue #190)
 - **Invariant**: Prompt template caching must not be broken by appending a new fingerprint every second.
