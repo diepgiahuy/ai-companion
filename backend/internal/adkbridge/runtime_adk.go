@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"google.golang.org/genai"
@@ -68,9 +69,27 @@ func newWithModel(cfg Config, llm model.LLM) (*Runtime, error) {
 	if len(tools) == 0 {
 		return nil, fmt.Errorf("tool registry is empty")
 	}
+	instructionProvider := func(agentCtx adkagent.ReadonlyContext) (string, error) {
+		base := instruction
+		if turn, ok := pipeline.CurrentTurn(agentCtx); ok {
+			loc := time.UTC
+			if tz := strings.TrimSpace(turn.Timezone); tz != "" {
+				if loaded, err := time.LoadLocation(tz); err == nil {
+					loc = loaded
+				}
+			}
+			now := time.Now().In(loc)
+			timeContext := fmt.Sprintf("Current time: %s (%s).", now.Format(time.RFC3339), loc.String())
+			if strings.TrimSpace(turn.Locale) != "" {
+				timeContext += fmt.Sprintf(" Active locale: %s.", strings.TrimSpace(turn.Locale))
+			}
+			return base + "\n\n[Runtime Context]\n" + timeContext, nil
+		}
+		return base, nil
+	}
 	agent, err := llmagent.New(llmagent.Config{
 		Name: "companion", Description: "Single-user voice companion coordinator", Model: llm,
-		Instruction: instruction, Tools: tools, Mode: llmagent.ModeChat,
+		Instruction: instruction, InstructionProvider: instructionProvider, Tools: tools, Mode: llmagent.ModeChat,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create ADK llm agent: %w", err)

@@ -27,13 +27,39 @@ func (s *Store) CreateNote(ctx context.Context, userID, key, content string) err
 }
 
 func (s *Store) ListNotes(ctx context.Context, userID string, limit int) ([]domain.Note, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id,user_id,content,created_at FROM notes WHERE user_id=$1 ORDER BY id DESC LIMIT $2`, owner(userID), boundedLimit(limit))
+	return s.QueryNotes(ctx, userID, domain.NoteQuery{Limit: limit})
+}
+
+func (s *Store) QueryNotes(ctx context.Context, userID string, query domain.NoteQuery) ([]domain.Note, error) {
+	sqlQuery := `SELECT id,user_id,content,created_at FROM notes WHERE user_id=$1`
+	args := []any{owner(userID)}
+	argIdx := 2
+	if !query.From.IsZero() {
+		sqlQuery += fmt.Sprintf(` AND created_at >= $%d`, argIdx)
+		args = append(args, query.From.UTC())
+		argIdx++
+	}
+	if !query.To.IsZero() {
+		sqlQuery += fmt.Sprintf(` AND created_at < $%d`, argIdx)
+		args = append(args, query.To.UTC())
+		argIdx++
+	}
+	if search := strings.TrimSpace(query.Search); search != "" {
+		sqlQuery += fmt.Sprintf(` AND content ILIKE $%d`, argIdx)
+		args = append(args, "%"+search+"%")
+		argIdx++
+	}
+	sqlQuery += fmt.Sprintf(` ORDER BY id DESC LIMIT $%d`, argIdx)
+	args = append(args, boundedLimit(query.Limit))
+
+	rows, err := s.pool.Query(ctx, sqlQuery, args...)
 	if err != nil { return nil, err }
 	defer rows.Close()
 	var out []domain.Note
 	for rows.Next() {
 		var x domain.Note
 		if err := rows.Scan(&x.ID, &x.UserID, &x.Content, &x.CreatedAt); err != nil { return nil, err }
+		x.CreatedAt = x.CreatedAt.UTC()
 		out = append(out, x)
 	}
 	return out, rows.Err()
@@ -358,16 +384,37 @@ func (s *Store) voiceMemo(ctx context.Context, query string, args ...any) (domai
 }
 
 func (s *Store) ListVoiceMemos(ctx context.Context, userID, deviceID string, limit int) ([]domain.VoiceMemo, error) {
-	query := `SELECT id,user_id,device_id,path,transcript,duration_ms,created_at FROM voice_memos WHERE user_id=$1`
+	return s.QueryVoiceMemos(ctx, userID, domain.VoiceMemoQuery{DeviceID: deviceID, Limit: limit})
+}
+
+func (s *Store) QueryVoiceMemos(ctx context.Context, userID string, query domain.VoiceMemoQuery) ([]domain.VoiceMemo, error) {
+	sqlQuery := `SELECT id,user_id,device_id,path,transcript,duration_ms,created_at FROM voice_memos WHERE user_id=$1`
 	args := []any{owner(userID)}
-	if strings.TrimSpace(deviceID) != "" {
-		query += ` AND (device_id=$2 OR device_id='') ORDER BY id DESC LIMIT $3`
-		args = append(args, strings.TrimSpace(deviceID), boundedLimit(limit))
-	} else {
-		query += ` ORDER BY id DESC LIMIT $2`
-		args = append(args, boundedLimit(limit))
+	argIdx := 2
+	if dev := strings.TrimSpace(query.DeviceID); dev != "" {
+		sqlQuery += fmt.Sprintf(` AND (device_id=$%d OR device_id='')`, argIdx)
+		args = append(args, dev)
+		argIdx++
 	}
-	rows, err := s.pool.Query(ctx, query, args...)
+	if !query.From.IsZero() {
+		sqlQuery += fmt.Sprintf(` AND created_at >= $%d`, argIdx)
+		args = append(args, query.From.UTC())
+		argIdx++
+	}
+	if !query.To.IsZero() {
+		sqlQuery += fmt.Sprintf(` AND created_at < $%d`, argIdx)
+		args = append(args, query.To.UTC())
+		argIdx++
+	}
+	if search := strings.TrimSpace(query.Search); search != "" {
+		sqlQuery += fmt.Sprintf(` AND transcript ILIKE $%d`, argIdx)
+		args = append(args, "%"+search+"%")
+		argIdx++
+	}
+	sqlQuery += fmt.Sprintf(` ORDER BY id DESC LIMIT $%d`, argIdx)
+	args = append(args, boundedLimit(query.Limit))
+
+	rows, err := s.pool.Query(ctx, sqlQuery, args...)
 	if err != nil { return nil, err }
 	defer rows.Close()
 	var out []domain.VoiceMemo

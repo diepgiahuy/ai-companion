@@ -63,7 +63,7 @@ func (n *Native) Read(ctx context.Context, uri *url.URL) (capability.Resource, e
 			threadID = "default"
 		}
 	}
-	now := time.Now().In(n.location)
+	now := time.Now().In(resolveLocation(ctx, n.location))
 	limit := queryLimit(uri, 10)
 	var value any
 	var err error
@@ -229,3 +229,16 @@ func trimReminders(items []domain.ScheduledItem, limit int) []domain.ScheduledIt
 	}
 	return items
 }
+
+func resolveLocation(ctx context.Context, defaultLoc *time.Location) *time.Location {
+	if turn, ok := pipeline.CurrentTurn(ctx); ok && strings.TrimSpace(turn.Timezone) != "" {
+		if loc, err := time.LoadLocation(strings.TrimSpace(turn.Timezone)); err == nil {
+			return loc
+		}
+	}
+	if defaultLoc != nil {
+		return defaultLoc
+	}
+	return time.UTC
+}
+
