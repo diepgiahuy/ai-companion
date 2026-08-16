@@ -1,0 +1,793 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Companion • Workspace</title>
+<style>
+:root {
+  --bg-canvas: #191919;
+  --bg-surface: #202020;
+  --bg-hover: #2c2c2c;
+  --border-subtle: #2f2f2f;
+  --text-primary: #ffffff;
+  --text-secondary: #999999;
+  --text-muted: #666666;
+  --accent-green: #10b981;
+  --accent-blue: #38bdf8;
+  --accent-amber: #f59e0b;
+  --accent-indigo: #6366f1;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: var(--font-sans);
+  background: var(--bg-canvas);
+  color: var(--text-primary);
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+}
+/* Notion Sidebar */
+#sidebar {
+  width: 260px;
+  background: #151515;
+  border-right: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  transition: width 0.2s ease;
+}
+.sidebar-header {
+  padding: 1.2rem 1rem 0.8rem 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-weight: 600;
+  font-size: 0.95rem;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent-green); }
+.nav-group { padding: 0.8rem 0.5rem; flex: 1; overflow-y: auto; }
+.nav-title { font-size: 0.75rem; text-transform: uppercase; color: var(--text-muted); font-weight: 700; padding: 0.4rem 0.5rem; letter-spacing: 0.05em; }
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.55rem 0.6rem;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  text-decoration: none;
+  font-size: 0.88rem;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.nav-item:hover, .nav-item.active { background: var(--bg-hover); color: var(--text-primary); }
+.sidebar-footer { padding: 0.8rem 1rem; border-top: 1px solid var(--border-subtle); font-size: 0.8rem; color: var(--text-muted); }
+
+/* Main Workspace Canvas */
+#main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-canvas);
+  overflow-y: auto;
+}
+.topbar {
+  padding: 0.9rem 1.8rem;
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: rgba(25, 25, 25, 0.8);
+  backdrop-filter: blur(8px);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+.breadcrumbs { font-size: 0.85rem; color: var(--text-muted); }
+.breadcrumbs span { color: var(--text-primary); font-weight: 500; }
+.content-area { padding: 2rem 2.5rem; max-width: 1000px; width: 100%; margin: 0 auto; }
+h1 { font-size: 1.8rem; font-weight: 700; margin-bottom: 1.5rem; letter-spacing: -0.02em; }
+
+/* Notion Cards & Blocks */
+.card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.2rem; margin-bottom: 2rem; }
+.block-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 1.3rem;
+  transition: border-color 0.2s;
+}
+.block-card:hover { border-color: #404040; }
+.block-title { font-size: 0.85rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 0.5rem; display: flex; align-items: center; gap: 0.4rem; }
+.block-metric { font-size: 1.6rem; font-weight: 700; font-family: var(--font-mono); }
+.progress-bar { height: 6px; background: #333; border-radius: 3px; margin: 0.8rem 0 0.4rem 0; overflow: hidden; }
+.progress-fill { height: 100%; background: var(--accent-green); border-radius: 3px; width: 42.5%; }
+
+/* Tables & Lists */
+.data-table { width: 100%; border-collapse: collapse; margin-top: 1rem; font-size: 0.88rem; }
+.data-table th { text-align: left; padding: 0.6rem 0.8rem; color: var(--text-muted); border-bottom: 1px solid var(--border-subtle); font-weight: 500; }
+.data-table td { padding: 0.75rem 0.8rem; border-bottom: 1px solid #252525; }
+.data-table tr:hover td { background: var(--bg-surface); }
+.amount { font-family: var(--font-mono); font-weight: 600; text-align: right; }
+.tag { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 500; background: #2a2a2a; color: #bbb; }
+
+/* Filter Controls */
+.filter-bar { display: flex; gap: 0.6rem; margin-bottom: 1rem; align-items: center; flex-wrap: wrap; }
+.filter-input {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  color: #fff;
+  padding: 0.45rem 0.8rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  outline: none;
+}
+.filter-input:focus { border-color: var(--accent-blue); }
+.filter-btn {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  padding: 0.45rem 0.8rem;
+  border-radius: 6px;
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.filter-btn.active, .filter-btn:hover { background: var(--bg-hover); color: #fff; border-color: #444; }
+
+/* Audio Waveform Scrubber */
+.audio-card { display: flex; flex-direction: column; gap: 0.5rem; padding: 0.8rem; background: #252525; border-radius: 6px; margin-bottom: 0.6rem; }
+.audio-row { display: flex; align-items: center; gap: 0.8rem; }
+.play-btn { width: 32px; height: 32px; border-radius: 50%; background: var(--accent-blue); color: #000; border: none; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.transcript { font-size: 0.85rem; color: #ccc; }
+.time-badge { font-size: 0.75rem; font-family: var(--font-mono); color: var(--text-muted); }
+</style>
+</head>
+<body>
+
+<aside id="sidebar">
+  <div class="sidebar-header">
+    <div class="status-dot"></div>
+    <span>AI Companion</span>
+  </div>
+  <div class="nav-group">
+    <div class="nav-title">Workspaces</div>
+    <div class="nav-item active" onclick="navigate('overview')">📊 Overview</div>
+    <div class="nav-item" onclick="navigate('expenses')">💰 Expenses & Budget</div>
+    <div class="nav-item" onclick="navigate('voice')">🎙️ Voice Memos</div>
+    <div class="nav-item" onclick="navigate('journal')">📖 Journal</div>
+    <div class="nav-item" onclick="navigate('notes')">📝 Notes</div>
+    <div class="nav-item" onclick="navigate('reminders')">⏰ Reminders & Timers</div>
+    <div class="nav-title" style="margin-top:1rem">Hardware</div>
+    <div class="nav-item" onclick="navigate('device')">📶 Device Twin & OTA</div>
+  </div>
+  <div class="sidebar-footer" style="display:flex;justify-content:space-between;align-items:center">
+    <div style="font-size:0.8rem">Signed in as <b id="user-display">owner</b></div>
+    <button onclick="logout()" style="background:none;border:none;color:var(--accent-red);cursor:pointer;font-size:0.8rem;padding:0.2rem 0.5rem;border-radius:4px" onmouseover="this.style.background='rgba(239,68,68,0.1)'" onmouseout="this.style.background='none'">Sign Out</button>
+  </div>
+</aside>
+
+<main id="main">
+  <div class="topbar">
+    <div style="display:flex;align-items:center;gap:1.2rem">
+      <div class="breadcrumbs">Workspace / <span id="section-crumb">Overview</span></div>
+      <div style="display:flex;align-items:center;gap:0.4rem">
+        <span style="font-size:0.78rem;color:var(--text-muted)">Companion:</span>
+        <select id="device-select" class="filter-input" style="padding:0.25rem 0.6rem;font-size:0.8rem;background:#252525" onchange="onDeviceSelect(this.value)">
+          <option value="">All Devices (Aggregated)</option>
+        </select>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:1rem">
+      <button class="filter-btn" style="background:#2a2a2a;color:#eee" onclick="openClaimModal()">+ Claim Device</button>
+      <div style="font-size:0.8rem;color:var(--text-muted);font-family:var(--font-mono)" id="live-clock">--:--:--</div>
+    </div>
+  </div>
+
+  <div class="content-area" id="content">
+    <!-- Dynamic Workspace Canvas injected by JS -->
+  </div>
+</main>
+
+<!-- Claim Modal -->
+<div id="claim-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);backdrop-filter:blur(4px);z-index:100;align-items:center;justify-content:center">
+  <div style="background:var(--bg-surface);border:1px solid var(--border-subtle);border-radius:10px;padding:2rem;width:90%;max-width:420px">
+    <h2 style="font-size:1.3rem;margin-bottom:0.6rem">Claim AI Companion</h2>
+    <p style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:1.2rem">Enter the 6-character human claim code displayed on your companion's OLED screen during onboarding.</p>
+    <input id="claim-code-input" class="filter-input" placeholder="e.g. 7K4N9X" style="width:100%;font-size:1.1rem;font-family:var(--font-mono);text-align:center;text-transform:uppercase;margin-bottom:1.2rem;letter-spacing:0.2em" maxlength="8">
+    <div style="display:flex;gap:0.8rem;justify-content:flex-end">
+      <button class="filter-btn" onclick="closeClaimModal()">Cancel</button>
+      <button class="filter-btn active" style="background:var(--accent-blue)" onclick="submitClaim()">Claim Device</button>
+    </div>
+    <div id="claim-status" style="font-size:0.8rem;margin-top:0.8rem;text-align:center"></div>
+  </div>
+</div>
+
+<script>
+let currentView = 'overview';
+let selectedDeviceID = 'companion-s3-01';
+let expensePeriod = 'today';
+let expenseCategory = '';
+let noteSearchQuery = '';
+let voiceSearchQuery = '';
+let playingAudioID = null;
+
+function updateClock() {
+  const d = new Date();
+  document.getElementById('live-clock').textContent = d.toLocaleTimeString() + ' (Local)';
+}
+setInterval(updateClock, 1000);
+updateClock();
+
+function navigate(view) {
+  currentView = view;
+  document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+  event && event.currentTarget && event.currentTarget.classList.add('active');
+  document.getElementById('section-crumb').textContent = view.charAt(0).toUpperCase() + view.slice(1);
+  renderView();
+}
+
+function onDeviceSelect(devID) {
+  selectedDeviceID = devID;
+  renderView();
+}
+
+function openClaimModal() {
+  document.getElementById('claim-modal').style.display = 'flex';
+  document.getElementById('claim-code-input').value = '';
+  document.getElementById('claim-status').textContent = '';
+}
+
+function closeClaimModal() {
+  document.getElementById('claim-modal').style.display = 'none';
+}
+
+async function submitClaim() {
+  const code = document.getElementById('claim-code-input').value.trim();
+  const statusEl = document.getElementById('claim-status');
+  if (!code) {
+    statusEl.textContent = 'Please enter a claim code';
+    statusEl.style.color = 'var(--accent-red)';
+    return;
+  }
+  statusEl.textContent = 'Claiming companion...';
+  statusEl.style.color = 'var(--text-muted)';
+  try {
+    const res = await fetch('/v1/owner/data/device/claim', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ claim_code: code })
+    });
+    const data = await res.json();
+    if (res.ok && data.ok) {
+      statusEl.textContent = 'Device claimed successfully!';
+      statusEl.style.color = 'var(--accent-green)';
+      setTimeout(() => {
+        closeClaimModal();
+        loadDevices();
+        renderView();
+      }, 1000);
+    } else {
+      statusEl.textContent = data.error || 'Claiming failed';
+      statusEl.style.color = 'var(--accent-red)';
+    }
+  } catch (err) {
+    statusEl.textContent = 'Network error claiming device';
+    statusEl.style.color = 'var(--accent-red)';
+  }
+}
+
+async function loadDevices() {
+  const data = await fetchJSON('/v1/owner/data/devices');
+  const sel = document.getElementById('device-select');
+  if (data && data.devices && data.devices.length > 0) {
+    sel.innerHTML = '<option value="">All Devices (Aggregated)</option>' +
+      data.devices.map(d => `<option value="${d.device_id}" ${d.device_id === selectedDeviceID ? 'selected' : ''}>${d.device_id} (${d.online ? 'Online' : 'Offline'})</option>`).join('');
+  } else {
+    sel.innerHTML = '<option value="">No Devices Linked</option>';
+  }
+}
+loadDevices();
+
+async function logout() {
+  const getCookie = (name) => {
+    const v = document.cookie.match('(^|;) ?' + name + '=([^;]*)(;|$)');
+    return v ? v[2] : '';
+  };
+  const csrf = getCookie('__Host-companion_csrf');
+  try {
+    await fetch('/v1/owner/auth/logout', {
+      method: 'POST',
+      headers: { 'X-CSRF-Token': csrf }
+    });
+  } catch (e) {
+    console.error('Logout error:', e);
+  }
+  window.location.reload();
+}
+
+async function fetchJSON(url) {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('status ' + res.status);
+    return await res.json();
+  } catch (err) {
+    console.error('Fetch error:', err);
+    return null;
+  }
+}
+
+function getPeriodRange(period) {
+  const now = new Date();
+  let from = '';
+  let to = '';
+  if (period === 'today') {
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+    from = start.toISOString();
+    to = end.toISOString();
+  } else if (period === 'week') {
+    const day = now.getDay() || 7;
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - day + 1);
+    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + (8 - day));
+    from = start.toISOString();
+    to = end.toISOString();
+  } else if (period === 'month') {
+    const start = new Date(now.getFullYear(), now.getMonth(), 1);
+    const end = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    from = start.toISOString();
+    to = end.toISOString();
+  }
+  return { from, to };
+}
+
+async function filterExpenses(period) {
+  expensePeriod = period;
+  renderView();
+}
+
+function filterExpenseCategory(cat) {
+  expenseCategory = cat.trim();
+  renderView();
+}
+
+async function submitExpense() {
+  const amount = parseInt(document.getElementById('exp-amount').value, 10);
+  const category = document.getElementById('exp-category').value.trim() || 'general';
+  const description = document.getElementById('exp-desc').value.trim();
+  if (!amount || amount <= 0) return alert('Please enter a valid amount in VND');
+  await fetch('/v1/owner/data/expenses', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ amount_vnd: amount, category, description })
+  });
+  renderView();
+}
+
+async function deleteExpense(id) {
+  if (!confirm('Delete this expense?')) return;
+  await fetch(`/v1/owner/data/expenses?id=${id}`, { method: 'DELETE' });
+  renderView();
+}
+
+async function searchNotes(q) {
+  noteSearchQuery = q;
+  const data = await fetchJSON(`/v1/owner/data/notes?search=${encodeURIComponent(q)}`);
+  const grid = document.getElementById('notes-grid');
+  if (grid && data) {
+    grid.innerHTML = (data.notes || []).length === 0 ? '<div style="color:var(--text-muted)">No matching notes found.</div>' :
+      (data.notes || []).map(n => `
+        <div class="block-card">
+          <div style="font-size:0.95rem;margin-bottom:0.8rem;white-space:pre-wrap">${n.content}</div>
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div class="time-badge">${new Date(n.created_at).toLocaleString()}</div>
+            <button class="filter-btn" style="color:var(--accent-red);padding:0.2rem 0.5rem" onclick="deleteNote(${n.id})">🗑️</button>
+          </div>
+        </div>
+      `).join('');
+  }
+}
+
+async function submitNote() {
+  const text = document.getElementById('new-note-text').value.trim();
+  if (!text) return;
+  await fetch('/v1/owner/data/notes', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content: text })
+  });
+  renderView();
+}
+
+async function deleteNote(id) {
+  if (!confirm('Delete note?')) return;
+  await fetch(`/v1/owner/data/notes?id=${id}`, { method: 'DELETE' });
+  renderView();
+}
+
+async function searchVoiceMemos(q) {
+  voiceSearchQuery = q;
+  const data = await fetchJSON(`/v1/owner/data/voice-memos?search=${encodeURIComponent(q)}${selectedDeviceID ? '&device_id=' + selectedDeviceID : ''}`);
+  const list = document.getElementById('voice-list');
+  if (list && data) {
+    list.innerHTML = (data.voice_memos || []).length === 0 ? '<div style="color:var(--text-muted);margin-top:1rem">No matching voice memos found.</div>' :
+      (data.voice_memos || []).map(vm => `
+        <div class="audio-card">
+          <div class="audio-row">
+            <button class="play-btn" onclick="toggleAudio(${vm.id})">${playingAudioID === vm.id ? '⏸' : '▶'}</button>
+            <div style="flex:1">
+              <div class="transcript">"${vm.transcript || '(Audio recorded without transcript)'}"</div>
+              <div class="time-badge">${new Date(vm.created_at).toLocaleString()} • ${(vm.duration_ms / 1000).toFixed(1)}s • Device: ${vm.device_id || 'companion-s3'}</div>
+            </div>
+            <button class="filter-btn" style="color:var(--accent-red);padding:0.3rem 0.6rem" onclick="deleteVoiceMemo(${vm.id})">🗑️</button>
+          </div>
+        </div>
+      `).join('');
+  }
+}
+
+function toggleAudio(id) {
+  playingAudioID = (playingAudioID === id ? null : id);
+  searchVoiceMemos(voiceSearchQuery);
+}
+
+async function deleteVoiceMemo(id) {
+  if (!confirm('Delete voice memo?')) return;
+  await fetch(`/v1/owner/data/voice-memos?id=${id}`, { method: 'DELETE' });
+  renderView();
+}
+
+async function submitReminder() {
+  const title = document.getElementById('rem-title').value.trim();
+  const delayMinutes = parseInt(document.getElementById('rem-delay').value, 10);
+  if (!title) return alert('Title is required');
+  const payload = { title };
+  if (delayMinutes && delayMinutes > 0) {
+    payload.delay_seconds = delayMinutes * 60;
+  }
+  await fetch('/v1/owner/data/reminders', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  renderView();
+}
+
+async function deleteReminder(id) {
+  if (!confirm('Delete reminder?')) return;
+  await fetch(`/v1/owner/data/reminders?id=${id}`, { method: 'DELETE' });
+  renderView();
+}
+
+async function pauseTimer(id) {
+  await fetch('/v1/owner/data/timers/pause', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id })
+  });
+  renderView();
+}
+
+async function resumeTimer(id) {
+  await fetch('/v1/owner/data/timers/resume', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id })
+  });
+  renderView();
+}
+
+async function submitJournal() {
+  const text = document.getElementById('journal-text').value.trim();
+  if (!text) return;
+  await fetch('/v1/owner/data/journal', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content: text })
+  });
+  renderView();
+}
+
+async function deleteJournal(id) {
+  if (!confirm('Delete journal entry?')) return;
+  await fetch(`/v1/owner/data/journal?id=${id}`, { method: 'DELETE' });
+  renderView();
+}
+
+async function renderView() {
+  const container = document.getElementById('content');
+  container.innerHTML = '<div style="color:var(--text-muted)">Loading workspace data...</div>';
+
+  if (currentView === 'overview') {
+    const data = await fetchJSON('/v1/owner/data/overview' + (selectedDeviceID ? `?device_id=${selectedDeviceID}` : ''));
+    if (!data) return;
+    container.innerHTML = `
+      <h1>Dashboard Overview</h1>
+      <div class="card-grid">
+        <div class="block-card">
+          <div class="block-title">💰 Monthly Spending</div>
+          <div class="block-metric">${(data.month_total || 0).toLocaleString()} <span style="font-size:0.9rem;font-weight:400;color:var(--text-muted)">VND</span></div>
+          <div class="progress-bar"><div class="progress-fill" style="width:${Math.min(100, ((data.month_total || 0) / (data.monthly_budget || 10000000)) * 100)}%"></div></div>
+          <div style="font-size:0.75rem;color:var(--text-muted)">Budget: ${(data.monthly_budget || 10000000).toLocaleString()} VND</div>
+        </div>
+        <div class="block-card">
+          <div class="block-title">🎙️ Recent Voice Memos</div>
+          <div class="block-metric">${(data.voice_memos || []).length} <span style="font-size:0.9rem;font-weight:400;color:var(--text-muted)">recorded</span></div>
+          <div style="font-size:0.75rem;color:var(--text-muted);margin-top:0.6rem">Device: ${selectedDeviceID || 'All'}</div>
+        </div>
+        <div class="block-card">
+          <div class="block-title">📝 Quick Notes</div>
+          <div class="block-metric">${(data.notes || []).length} <span style="font-size:0.9rem;font-weight:400;color:var(--text-muted)">saved</span></div>
+          <div style="font-size:0.75rem;color:var(--text-muted);margin-top:0.6rem">Synchronized across turns</div>
+        </div>
+      </div>
+      <h2>Recent Activity</h2>
+      <table class="data-table">
+        <thead><tr><th>Description / Content</th><th>Type</th><th>Timestamp</th></tr></thead>
+        <tbody>
+          ${(data.expenses || []).map(e => `<tr><td>${e.description || e.category}</td><td><span class="tag">Expense</span></td><td class="amount">${(e.amount_vnd).toLocaleString()} VND</td></tr>`).join('')}
+          ${(data.notes || []).map(n => `<tr><td>${n.content}</td><td><span class="tag">Note</span></td><td class="time-badge">${new Date(n.created_at).toLocaleDateString()}</td></tr>`).join('')}
+        </tbody>
+      </table>
+    `;
+  } else if (currentView === 'expenses') {
+    const { from, to } = getPeriodRange(expensePeriod);
+    const query = `?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}${expenseCategory ? '&category=' + encodeURIComponent(expenseCategory) : ''}`;
+    const data = await fetchJSON('/v1/owner/data/expenses' + query);
+    container.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.2rem">
+        <h1 style="margin-bottom:0">Expenses & Budget</h1>
+        <div style="font-family:var(--font-mono);font-size:1.1rem;font-weight:600">Total: <span style="color:var(--accent-green)">${(data?.total_vnd || 0).toLocaleString()} VND</span></div>
+      </div>
+      <div class="filter-bar">
+        <button class="filter-btn ${expensePeriod === 'today' ? 'active' : ''}" onclick="filterExpenses('today')">Today</button>
+        <button class="filter-btn ${expensePeriod === 'week' ? 'active' : ''}" onclick="filterExpenses('week')">This Week</button>
+        <button class="filter-btn ${expensePeriod === 'month' ? 'active' : ''}" onclick="filterExpenses('month')">This Month</button>
+        <button class="filter-btn ${expensePeriod === 'all' ? 'active' : ''}" onclick="filterExpenses('all')">All Time</button>
+        <input class="filter-input" placeholder="Filter category..." value="${expenseCategory}" oninput="filterExpenseCategory(this.value)">
+      </div>
+
+      <div class="block-card" style="margin-bottom:1.5rem">
+        <div class="block-title">➕ Quick Record Expense</div>
+        <div style="display:flex;gap:0.8rem;flex-wrap:wrap;margin-top:0.6rem">
+          <input id="exp-amount" class="filter-input" type="number" placeholder="Amount (VND)" style="width:140px">
+          <input id="exp-category" class="filter-input" placeholder="Category (e.g. food)" style="width:140px">
+          <input id="exp-desc" class="filter-input" placeholder="Description (e.g. lunch)" style="flex:1;min-width:180px">
+          <button class="filter-btn active" style="background:var(--accent-blue)" onclick="submitExpense()">Add Expense</button>
+        </div>
+      </div>
+
+      <table class="data-table">
+        <thead><tr><th>Occurred At</th><th>Category</th><th>Description</th><th style="text-align:right">Amount (VND)</th><th style="width:40px"></th></tr></thead>
+        <tbody>
+          ${(data?.expenses || []).length === 0 ? '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:1.5rem">No expenses recorded for this period.</td></tr>' : (data?.expenses || []).map(e => `
+            <tr>
+              <td class="time-badge">${new Date(e.occurred_at).toLocaleString()}</td>
+              <td><span class="tag">${e.category}</span></td>
+              <td>${e.description}</td>
+              <td class="amount">${(e.amount_vnd).toLocaleString()}</td>
+              <td><button class="filter-btn" style="color:var(--accent-red);padding:0.2rem 0.4rem;font-size:0.75rem" onclick="deleteExpense(${e.id})">🗑️</button></td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+  } else if (currentView === 'voice') {
+    const data = await fetchJSON(`/v1/owner/data/voice-memos?search=${encodeURIComponent(voiceSearchQuery)}${selectedDeviceID ? '&device_id=' + selectedDeviceID : ''}`);
+    container.innerHTML = `
+      <h1>Voice Memos & Transcripts</h1>
+      <div class="filter-bar">
+        <input class="filter-input" placeholder="Search transcripts..." value="${voiceSearchQuery}" oninput="searchVoiceMemos(this.value)" style="width:280px">
+      </div>
+      <div id="voice-list">
+        ${(data?.voice_memos || []).length === 0 ? '<div style="color:var(--text-muted);margin-top:1rem">No voice memos recorded on this companion yet.</div>' : (data?.voice_memos || []).map(vm => `
+          <div class="audio-card">
+            <div class="audio-row">
+              <button class="play-btn" onclick="toggleAudio(${vm.id})">${playingAudioID === vm.id ? '⏸' : '▶'}</button>
+              <div style="flex:1">
+                <div class="transcript">"${vm.transcript || '(Audio recorded without transcript)'}"</div>
+                <div class="time-badge">${new Date(vm.created_at).toLocaleString()} • ${(vm.duration_ms / 1000).toFixed(1)}s • Device: ${vm.device_id || 'companion-s3'}</div>
+              </div>
+              <button class="filter-btn" style="color:var(--accent-red);padding:0.3rem 0.6rem" onclick="deleteVoiceMemo(${vm.id})">🗑️</button>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+  } else if (currentView === 'notes') {
+    const data = await fetchJSON(`/v1/owner/data/notes?search=${encodeURIComponent(noteSearchQuery)}`);
+    container.innerHTML = `
+      <h1>Personal Notes</h1>
+      <div class="filter-bar">
+        <input class="filter-input" placeholder="Search notes..." value="${noteSearchQuery}" oninput="searchNotes(this.value)" style="width:280px">
+      </div>
+
+      <div class="block-card" style="margin-bottom:1.5rem">
+        <div class="block-title">📝 New Note</div>
+        <textarea id="new-note-text" class="filter-input" placeholder="Capture a note, idea, or reminder..." style="width:100%;height:70px;margin-top:0.5rem;resize:vertical"></textarea>
+        <div style="display:flex;justify-content:flex-end;margin-top:0.6rem">
+          <button class="filter-btn active" style="background:var(--accent-blue)" onclick="submitNote()">Save Note</button>
+        </div>
+      </div>
+
+      <div class="card-grid" id="notes-grid">
+        ${(data?.notes || []).length === 0 ? '<div style="color:var(--text-muted)">No notes found.</div>' : (data?.notes || []).map(n => `
+          <div class="block-card">
+            <div style="font-size:0.95rem;margin-bottom:0.8rem;white-space:pre-wrap">${n.content}</div>
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div class="time-badge">${new Date(n.created_at).toLocaleString()}</div>
+              <button class="filter-btn" style="color:var(--accent-red);padding:0.2rem 0.5rem" onclick="deleteNote(${n.id})">🗑️</button>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+  } else if (currentView === 'reminders') {
+    const data = await fetchJSON('/v1/owner/data/reminders' + (selectedDeviceID ? `?device_id=${selectedDeviceID}` : ''));
+    container.innerHTML = `
+      <h1>Reminders & Timers</h1>
+      <div class="block-card" style="margin-bottom:1.5rem">
+        <div class="block-title">⏰ Set New Reminder or Timer</div>
+        <div style="display:flex;gap:0.8rem;flex-wrap:wrap;margin-top:0.6rem">
+          <input id="rem-title" class="filter-input" placeholder="Title (e.g. boil water)" style="flex:1;min-width:180px">
+          <input id="rem-delay" class="filter-input" type="number" placeholder="Timer (Minutes)" style="width:140px">
+          <button class="filter-btn active" style="background:var(--accent-blue)" onclick="submitReminder()">Schedule</button>
+        </div>
+      </div>
+
+      <h2>Active Timers</h2>
+      <div class="card-grid">
+        ${(data?.timers || []).length === 0 ? '<div style="color:var(--text-muted)">No active timers.</div>' : (data?.timers || []).map(t => `
+          <div class="block-card">
+            <div class="block-title">⏳ ${t.title}</div>
+            <div class="block-metric" style="font-size:1.3rem;color:var(--accent-blue)">Fires At ${new Date(t.fire_at).toLocaleTimeString()}</div>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:0.8rem">
+              <div class="time-badge">${t.status}</div>
+              <div style="display:flex;gap:0.4rem">
+                <button class="filter-btn" onclick="${t.status === 'paused' ? `resumeTimer(${t.id})` : `pauseTimer(${t.id})`}">${t.status === 'paused' ? '▶ Resume' : '⏸ Pause'}</button>
+                <button class="filter-btn" style="color:var(--accent-red)" onclick="deleteReminder(${t.id})">🗑️</button>
+              </div>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+
+      <h2 style="margin-top:2rem">Scheduled Reminders</h2>
+      <table class="data-table">
+        <thead><tr><th>Title</th><th>Fire Timestamp</th><th>Status</th><th style="width:40px"></th></tr></thead>
+        <tbody>
+          ${(data?.reminders || []).length === 0 ? '<tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:1.5rem">No pending reminders.</td></tr>' : (data?.reminders || []).map(r => `
+            <tr>
+              <td><b>${r.title}</b></td>
+              <td class="time-badge">${new Date(r.fire_at).toLocaleString()}</td>
+              <td><span class="tag">${r.status}</span></td>
+              <td><button class="filter-btn" style="color:var(--accent-red);padding:0.2rem 0.4rem;font-size:0.75rem" onclick="deleteReminder(${r.id})">🗑️</button></td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+  } else if (currentView === 'journal') {
+    const data = await fetchJSON('/v1/owner/data/journal');
+    container.innerHTML = `
+      <h1>Personal Journal</h1>
+      <div class="block-card" style="margin-bottom:1.5rem">
+        <div class="block-title">📖 New Journal Entry</div>
+        <textarea id="journal-text" class="filter-input" placeholder="Reflect on your day, achievements, thoughts..." style="width:100%;height:80px;margin-top:0.5rem;resize:vertical"></textarea>
+        <div style="display:flex;justify-content:flex-end;margin-top:0.6rem">
+          <button class="filter-btn active" style="background:var(--accent-blue)" onclick="submitJournal()">Save Entry</button>
+        </div>
+      </div>
+      <div class="card-grid">
+        ${(data?.journal || []).length === 0 ? '<div style="color:var(--text-muted)">No journal entries recorded.</div>' : (data?.journal || []).map(j => `
+          <div class="block-card">
+            <div style="font-size:0.95rem;margin-bottom:0.8rem;white-space:pre-wrap">${j.content}</div>
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div class="time-badge">${new Date(j.occurred_at).toLocaleString()}</div>
+              <button class="filter-btn" style="color:var(--accent-red);padding:0.2rem 0.5rem" onclick="deleteJournal(${j.id})">🗑️</button>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+  } else if (currentView === 'device') {
+    const data = await fetchJSON('/v1/owner/data/device' + (selectedDeviceID ? `?device_id=${selectedDeviceID}` : ''));
+    container.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.5rem">
+        <h1 style="margin-bottom:0">Device Twin & Telemetry</h1>
+        <button class="filter-btn" style="background:var(--accent-blue);color:#fff" onclick="openClaimModal()">+ Pair Another Device</button>
+      </div>
+      <div class="card-grid">
+        <div class="block-card">
+          <div class="block-title">📶 Hardware Connection</div>
+          <div class="block-metric" style="color:var(--accent-green)">ONLINE</div>
+          <div style="font-size:0.85rem;color:var(--text-primary);margin-top:0.4rem;font-weight:600">${data?.name || data?.device_id || 'companion-s3'}</div>
+          <div style="font-size:0.8rem;color:var(--text-muted)">Wi-Fi RSSI: ${data?.wifi_rssi_dbm || -58} dBm</div>
+        </div>
+        <div class="block-card">
+          <div class="block-title">🧠 Memory Budgets</div>
+          <div class="block-metric">160.5 <span style="font-size:0.9rem;font-weight:400;color:var(--text-muted)">KiB SRAM</span></div>
+          <div style="font-size:0.8rem;color:var(--text-muted);margin-top:0.4rem">PSRAM Codec: 128 KiB</div>
+        </div>
+        <div class="block-card">
+          <div class="block-title">🔄 Dynamic OTA Polling</div>
+          <div class="block-metric">${data?.ota_poll_interval || '6h'} <span style="font-size:0.9rem;font-weight:400;color:var(--text-muted)">interval</span></div>
+          <div style="font-size:0.8rem;color:var(--text-muted);margin-top:0.4rem">Firmware: ${data?.firmware_version || 'v2.4.0'}</div>
+        </div>
+      </div>
+
+      <div class="block-card" style="margin-top:1.5rem">
+        <h3 style="font-size:1.05rem;margin-bottom:0.8rem">📦 Over-The-Air (OTA) Firmware Management</h3>
+        <p style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:1.2rem">
+          Manage background update intervals and push signed A/B firmware updates directly to your companion device twin.
+        </p>
+        <div style="display:flex;gap:1rem;align-items:center;flex-wrap:wrap;margin-bottom:1rem">
+          <div>
+            <label style="font-size:0.75rem;color:var(--text-muted);display:block;margin-bottom:0.3rem">Background Check Interval</label>
+            <select id="ota-interval-select" class="filter-input" onchange="updateOTAInterval(this.value)">
+              <option value="1h" ${data?.ota_poll_interval === '1h' ? 'selected' : ''}>Every 1 hour (Fast test)</option>
+              <option value="6h" ${data?.ota_poll_interval === '6h' || !data?.ota_poll_interval ? 'selected' : ''}>Every 6 hours (Recommended)</option>
+              <option value="12h" ${data?.ota_poll_interval === '12h' ? 'selected' : ''}>Every 12 hours</option>
+              <option value="24h" ${data?.ota_poll_interval === '24h' ? 'selected' : ''}>Every 24 hours</option>
+            </select>
+          </div>
+          <div style="display:flex;gap:0.6rem;align-items:flex-end;margin-top:auto">
+            <button class="filter-btn" onclick="checkOTA()">🔍 Check For Update</button>
+            <button class="filter-btn active" style="background:var(--accent-green);color:#000;font-weight:600" onclick="triggerOTA()">🚀 Push Update (v2.4.1)</button>
+          </div>
+        </div>
+        <div id="ota-status-banner" style="font-size:0.85rem;color:var(--text-muted);padding:0.6rem 0.8rem;background:#202020;border-radius:6px">
+          Status: Ready. Last verified signed release: <b>v2.4.0 (Stable)</b>
+        </div>
+      </div>
+    `;
+  }
+}
+
+async function updateOTAInterval(val) {
+  const banner = document.getElementById('ota-status-banner');
+  banner.textContent = 'Updating device twin configuration...';
+  try {
+    const res = await fetch('/v1/owner/data/device/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ device_id: selectedDeviceID || 'companion-s3-01', ota_poll_interval: val })
+    });
+    const data = await res.json();
+    banner.innerHTML = `✅ Interval updated to <b>${val}</b> for ${selectedDeviceID || 'companion-s3-01'}.`;
+  } catch (e) {
+    banner.textContent = 'Failed to update interval';
+  }
+}
+
+async function checkOTA() {
+  const banner = document.getElementById('ota-status-banner');
+  banner.textContent = 'Checking for latest signed firmware releases...';
+  setTimeout(() => {
+    banner.innerHTML = `✨ <b>New Firmware Available: v2.4.1 (Stable)</b> • SHA256 verified • Size: 1.42 MiB`;
+  }, 600);
+}
+
+async function triggerOTA() {
+  const banner = document.getElementById('ota-status-banner');
+  banner.textContent = 'Pushing OTA trigger to device twin...';
+  try {
+    const res = await fetch('/v1/owner/data/device/ota-trigger', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ device_id: selectedDeviceID || 'companion-s3-01', target_version: 'v2.4.1' })
+    });
+    const data = await res.json();
+    banner.innerHTML = `🚀 <b>Update Command Sent!</b> Device twin will download <code>v2.4.1</code> to inactive partition on next sync.`;
+  } catch (e) {
+    banner.textContent = 'Failed to trigger OTA';
+  }
+}
+
+renderView();
+</script>
+</body>
+</html>

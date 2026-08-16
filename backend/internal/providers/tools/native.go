@@ -316,14 +316,30 @@ func nativeTools(d NativeDependencies) []capability.Tool {
 			}
 			return capability.Success(map[string]any{"saved": "note"})
 		}),
-		define("note", "note.list", "Liệt kê ghi chú", obj(map[string]any{"limit": limitField}), func(ctx context.Context, r capability.ToolRequest) capability.ToolResult {
+		define("note", "note.list", "Liệt kê ghi chú", obj(map[string]any{"from": str("RFC3339"), "to": str("RFC3339"), "search": str("keyword"), "limit": limitField}), func(ctx context.Context, r capability.ToolRequest) capability.ToolResult {
 			var a struct {
-				Limit int `json:"limit"`
+				From   string `json:"from"`
+				To     string `json:"to"`
+				Search string `json:"search"`
+				Limit  int    `json:"limit"`
 			}
 			if err := json.Unmarshal([]byte(r.Arguments), &a); err != nil {
 				return capability.Failure(err)
 			}
-			x, err := d.Store.ListNotes(ctx, currentUser(ctx), a.Limit)
+			var from, to time.Time
+			var err error
+			if strings.TrimSpace(a.From) != "" || strings.TrimSpace(a.To) != "" {
+				from, to, err = parseOptionalRange(a.From, a.To, 366*24*time.Hour)
+				if err != nil {
+					return capability.Failure(err)
+				}
+			}
+			x, err := d.Store.QueryNotes(ctx, currentUser(ctx), domain.NoteQuery{
+				From:   from,
+				To:     to,
+				Search: strings.TrimSpace(a.Search),
+				Limit:  a.Limit,
+			})
 			if err != nil {
 				return capability.Failure(err)
 			}
@@ -609,14 +625,31 @@ func nativeTools(d NativeDependencies) []capability.Tool {
 			}
 			return capability.Success(map[string]any{"saved": "voice_memo", "id": memo.ID, "duration_ms": memo.DurationMS})
 		}),
-		define("voice", "voice_memo.list", "Liệt kê voice memo", obj(map[string]any{"limit": limitField}), func(ctx context.Context, r capability.ToolRequest) capability.ToolResult {
+		define("voice", "voice_memo.list", "Liệt kê voice memo", obj(map[string]any{"from": str("RFC3339"), "to": str("RFC3339"), "search": str("keyword"), "limit": limitField}), func(ctx context.Context, r capability.ToolRequest) capability.ToolResult {
 			var a struct {
-				Limit int `json:"limit"`
+				From   string `json:"from"`
+				To     string `json:"to"`
+				Search string `json:"search"`
+				Limit  int    `json:"limit"`
 			}
 			if err := json.Unmarshal([]byte(r.Arguments), &a); err != nil {
 				return capability.Failure(err)
 			}
-			x, err := d.Store.ListVoiceMemos(ctx, currentUser(ctx), currentDevice(ctx), a.Limit)
+			var from, to time.Time
+			var err error
+			if strings.TrimSpace(a.From) != "" || strings.TrimSpace(a.To) != "" {
+				from, to, err = parseOptionalRange(a.From, a.To, 366*24*time.Hour)
+				if err != nil {
+					return capability.Failure(err)
+				}
+			}
+			x, err := d.Store.QueryVoiceMemos(ctx, currentUser(ctx), domain.VoiceMemoQuery{
+				DeviceID: currentDevice(ctx),
+				From:     from,
+				To:       to,
+				Search:   strings.TrimSpace(a.Search),
+				Limit:    a.Limit,
+			})
 			if err != nil {
 				return capability.Failure(err)
 			}
@@ -767,6 +800,34 @@ func parseRange(a, b string, max time.Duration) (time.Time, time.Time, error) {
 	}
 	if !to.After(from) || to.Sub(from) > max {
 		return time.Time{}, time.Time{}, fmt.Errorf("invalid range")
+	}
+	return from, to, nil
+}
+
+func parseOptionalRange(a, b string, max time.Duration) (time.Time, time.Time, error) {
+	var from, to time.Time
+	var err error
+	a = strings.TrimSpace(a)
+	b = strings.TrimSpace(b)
+	if a != "" {
+		from, err = time.Parse(time.RFC3339, a)
+		if err != nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("from must be RFC3339: %w", err)
+		}
+	}
+	if b != "" {
+		to, err = time.Parse(time.RFC3339, b)
+		if err != nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("to must be RFC3339: %w", err)
+		}
+	}
+	if !from.IsZero() && !to.IsZero() {
+		if !to.After(from) {
+			return time.Time{}, time.Time{}, fmt.Errorf("to must be after from")
+		}
+		if max > 0 && to.Sub(from) > max {
+			return time.Time{}, time.Time{}, fmt.Errorf("range exceeds maximum allowed span")
+		}
 	}
 	return from, to, nil
 }

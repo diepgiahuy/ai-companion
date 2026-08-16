@@ -3,11 +3,21 @@ package domain
 import (
 	"context"
 	"time"
+
+	"companion-server/internal/privacy"
 )
+
+type NoteQuery struct {
+	From   time.Time
+	To     time.Time
+	Search string
+	Limit  int
+}
 
 type NoteRepository interface {
 	CreateNote(ctx context.Context, userID, key, content string) error
 	ListNotes(ctx context.Context, userID string, limit int) ([]Note, error)
+	QueryNotes(ctx context.Context, userID string, query NoteQuery) ([]Note, error)
 	UpdateNote(ctx context.Context, userID string, id int64, content string) error
 	DeleteNote(ctx context.Context, userID string, id int64) error
 }
@@ -46,12 +56,30 @@ type ScheduleRepository interface {
 	DeleteScheduledItem(ctx context.Context, userID string, id int64) error
 }
 
+type VoiceMemoQuery struct {
+	DeviceID string
+	From     time.Time
+	To       time.Time
+	Search   string
+	Limit    int
+}
+
 type VoiceMemoRepository interface {
 	CreateVoiceMemo(ctx context.Context, userID, key, deviceID, path, transcript string, durationMS int64) error
 	VoiceMemoByKey(ctx context.Context, userID, key string) (VoiceMemo, bool, error)
 	VoiceMemoByID(ctx context.Context, userID string, id int64) (VoiceMemo, bool, error)
 	ListVoiceMemos(ctx context.Context, userID, deviceID string, limit int) ([]VoiceMemo, error)
+	QueryVoiceMemos(ctx context.Context, userID string, query VoiceMemoQuery) ([]VoiceMemo, error)
 	DeleteVoiceMemo(ctx context.Context, userID string, id int64) error
+}
+
+type DeviceRepository interface {
+	ListUserDevices(ctx context.Context, userID string) ([]DeviceItem, error)
+}
+
+type PrivacyRepository interface {
+	GetPrivacyPolicy(ctx context.Context, userID string) (privacy.Policy, bool, error)
+	SetPrivacyPolicy(ctx context.Context, p privacy.Policy) error
 }
 
 type ReadRepositories interface {
@@ -61,6 +89,8 @@ type ReadRepositories interface {
 	JournalRepository
 	ScheduleRepository
 	VoiceMemoRepository
+	DeviceRepository
+	PrivacyRepository
 }
 
 type Repositories interface{ ReadRepositories }

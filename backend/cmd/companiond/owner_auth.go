@@ -7,13 +7,16 @@ import (
 	"strings"
 
 	"companion-server/internal/controlplane"
+	"companion-server/internal/domain"
 	"companion-server/internal/onboarding"
 	"companion-server/internal/ownerauth"
+	"companion-server/internal/ownerweb"
+	"companion-server/internal/pgstore"
 )
 
 const ownerPathPrefix = "/v1/owner/"
 
-func ownerAuthFromEnvironment(next http.Handler, claimRepository controlplane.DeviceClaimRepository) http.Handler {
+func ownerAuthFromEnvironment(next http.Handler, store domain.ReadRepositories, claimRepository controlplane.DeviceClaimRepository) http.Handler {
 	cfg := ownerauth.Config{
 		AuthorizationURL: strings.TrimSpace(os.Getenv("COMPANION_OWNER_OIDC_AUTH_URL")),
 		TokenURL:         strings.TrimSpace(os.Getenv("COMPANION_OWNER_OIDC_TOKEN_URL")),
@@ -22,11 +25,22 @@ func ownerAuthFromEnvironment(next http.Handler, claimRepository controlplane.De
 		ClientSecret:     os.Getenv("COMPANION_OWNER_OIDC_CLIENT_SECRET"),
 		RedirectURL:      strings.TrimSpace(os.Getenv("COMPANION_OWNER_OIDC_REDIRECT_URL")),
 		Scopes:           ownerScopes(os.Getenv("COMPANION_OWNER_OIDC_SCOPES")),
+		ClaimCodeStore:   pgstore.NewPgClaimCodeStore(nil),
 	}
 	configured := cfg.AuthorizationURL != "" || cfg.TokenURL != "" || cfg.UserInfoURL != "" ||
 		cfg.ClientID != "" || cfg.ClientSecret != "" || cfg.RedirectURL != "" ||
 		strings.TrimSpace(os.Getenv("COMPANION_OWNER_OIDC_SCOPES")) != ""
 	if !configured {
+		if store != nil {
+			webHandler := ownerweb.NewHandler(ownerweb.Dependencies{Store: store, Auth: nil})
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/v1/owner/dashboard" || strings.HasPrefix(r.URL.Path, "/v1/owner/data/") {
+					webHandler.ServeHTTP(w, r)
+					return
+				}
+				next.ServeHTTP(w, r)
+			})
+		}
 		return next
 	}
 	service, err := ownerauth.New(cfg)
@@ -53,25 +67,30 @@ func ownerAuthFromEnvironment(next http.Handler, claimRepository controlplane.De
 			claims = claimService.Handler()
 		}
 	}
+	var webHandler http.Handler
+	if store != nil {
+		webHandler = ownerweb.NewHandler(ownerweb.Dependencies{Store: store, Auth: service})
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/v1/owner/claim-authorizations":
-			// Product composition hard-cuts the older bootstrap-only handler inside
-			// ownerauth.Service.Handler: authorization must bind bootstrap + device.
+		switch {
+		case r.URL.Path == "/v1/owner/claim-authorizations":
 			service.HandleBoundClaimAuthorization(w, r)
 			return
-		case "/v1/owner/device-claim-code":
+		case r.URL.Path == "/v1/owner/device-claim-code":
 			service.HandleHumanClaimCode(w, r)
 			return
-		case "/v1/owner/device-claim-codes/redeem":
+		case r.URL.Path == "/v1/owner/device-claim-codes/redeem":
 			claimCodeRedeem.ServeHTTP(w, r)
 			return
-		case "/v1/owner/device-claims":
+		case r.URL.Path == "/v1/owner/device-claims":
 			if claims == nil {
 				http.Error(w, "device claim bootstrap unavailable", http.StatusServiceUnavailable)
 				return
 			}
 			claims.ServeHTTP(w, r)
+			return
+		case webHandler != nil && (r.URL.Path == "/v1/owner/dashboard" || strings.HasPrefix(r.URL.Path, "/v1/owner/data/")):
+			webHandler.ServeHTTP(w, r)
 			return
 		}
 		if strings.HasPrefix(r.URL.Path, ownerPathPrefix) {

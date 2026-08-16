@@ -13,6 +13,7 @@ A checkpoint is created only after its stated gates pass, an independent static 
 | `CP-SW2.1-20260812` | Google ADK anti-corruption seam | Partial integration checkpoint at creation time |
 | `CP-SW2.2-20260812` | Tool-loop, media ordering and safety hardening | Passed static-review checkpoint |
 | `CP-SW2.3-20260812` | Exact Go 1.26.5 production dependency lock | Latest stable software checkpoint |
+| `CP-SW2.4-20260816` | Temporal correctness, personal-data queries & Notion dashboard | Active work checkpoint |
 
 Older tags such as `CP4.1-20260812` and `CP5.1-20260812` are retained for audit/history but predate the current CP-SW naming scheme.
 

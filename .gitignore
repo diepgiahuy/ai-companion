@@ -4,7 +4,11 @@
 /sdkconfig
 /sdkconfig.old
 /.cache/
-
+.idea/
+__pycache__/
+*.pyc
+.aider*
+run_aider.sh
 /backend/data/
 /backend/*.db
 .aider*

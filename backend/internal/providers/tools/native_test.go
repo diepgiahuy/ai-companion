@@ -76,3 +76,63 @@ func TestNativeRegistrySeparatesTimerFromReminderAndReadsResources(t *testing.T)
 		t.Fatal("legacy/resource tools should remain callable but hidden from model discovery")
 	}
 }
+
+func TestNotesAndVoiceMemosQueryFiltering(t *testing.T) {
+	data, err := store.Open(filepath.Join(t.TempDir(), "query_tools.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer data.Close()
+
+	registry := capability.NewToolRegistry()
+	now := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
+	if err := RegisterNative(registry, NativeDependencies{Store: data, Now: func() time.Time { return now }}); err != nil {
+		t.Fatal(err)
+	}
+	ctx := pipeline.WithTurnContext(context.Background(), pipeline.TurnContext{UserID: "user-query", DeviceID: "device-query"})
+
+	// Create notes
+	_ = registry.Execute(ctx, "note.create", capability.ToolRequest{Key: "n1", Arguments: `{"content":"buy coffee and oats"}`})
+	_ = registry.Execute(ctx, "note.create", capability.ToolRequest{Key: "n2", Arguments: `{"content":"review Q3 roadmap"}`})
+	_ = registry.Execute(ctx, "note.create", capability.ToolRequest{Key: "n3", Arguments: `{"content":"call mechanic about bike"}`})
+
+	// Search notes by keyword
+	searchResult := registry.Execute(ctx, "note.list", capability.ToolRequest{Key: "l1", Arguments: `{"search":"coffee"}`})
+	if !strings.Contains(searchResult.Content, "buy coffee and oats") || strings.Contains(searchResult.Content, "review Q3 roadmap") {
+		t.Fatalf("note search result = %s", searchResult.Content)
+	}
+
+	// Create voice memos
+	if err := data.CreateVoiceMemo(ctx, "user-query", "vm1", "device-query", "/tmp/vm1.wav", "meeting notes about budget", 15000); err != nil {
+		t.Fatal(err)
+	}
+	if err := data.CreateVoiceMemo(ctx, "user-query", "vm2", "device-query", "/tmp/vm2.wav", "personal reflection on vacation", 30000); err != nil {
+		t.Fatal(err)
+	}
+
+	// Search voice memos by transcript
+	vmSearch := registry.Execute(ctx, "voice_memo.list", capability.ToolRequest{Key: "vl1", Arguments: `{"search":"budget"}`})
+	if !strings.Contains(vmSearch.Content, "meeting notes about budget") || strings.Contains(vmSearch.Content, "personal reflection on vacation") {
+		t.Fatalf("voice memo search result = %s", vmSearch.Content)
+	}
+
+	// User isolation: other user should see nothing
+	ctxOther := pipeline.WithTurnContext(context.Background(), pipeline.TurnContext{UserID: "user-other", DeviceID: "device-other"})
+	otherNotes := registry.Execute(ctxOther, "note.list", capability.ToolRequest{Key: "l2", Arguments: `{"search":"coffee"}`})
+	if strings.Contains(otherNotes.Content, "coffee") {
+		t.Fatalf("cross-user note leak: %s", otherNotes.Content)
+	}
+
+	// Single-bound query (from only)
+	fromOnly := registry.Execute(ctx, "note.list", capability.ToolRequest{Key: "l3", Arguments: `{"from":"2026-08-01T00:00:00Z"}`})
+	if !strings.Contains(fromOnly.Content, `"ok":true`) || !strings.Contains(fromOnly.Content, "buy coffee and oats") {
+		t.Fatalf("from-only query failed: %s", fromOnly.Content)
+	}
+
+	// Single-bound query (to only)
+	toOnly := registry.Execute(ctx, "note.list", capability.ToolRequest{Key: "l4", Arguments: `{"to":"2030-01-01T00:00:00Z"}`})
+	if !strings.Contains(toOnly.Content, `"ok":true`) || !strings.Contains(toOnly.Content, "buy coffee and oats") {
+		t.Fatalf("to-only query failed: %s", toOnly.Content)
+	}
+}
+

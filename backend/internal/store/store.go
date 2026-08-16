@@ -17,9 +17,11 @@ type Store struct{ db *sql.DB }
 type ExpenseInput = domain.ExpenseInput
 type Expense = domain.Expense
 type Note = domain.Note
+type NoteQuery = domain.NoteQuery
 type JournalEntry = domain.JournalEntry
 type Reminder = domain.ScheduledItem
 type VoiceMemo = domain.VoiceMemo
+type VoiceMemoQuery = domain.VoiceMemoQuery
 
 type ConversationMessage struct {
 	Role      string    `json:"role"`
@@ -288,7 +290,28 @@ func (s *Store) CreateNote(ctx context.Context, userID, key, content string) err
 	return err
 }
 func (s *Store) ListNotes(ctx context.Context, userID string, limit int) ([]Note, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,user_id,content,created_at FROM notes WHERE user_id=? ORDER BY id DESC LIMIT ?`, owner(userID), boundedLimit(limit))
+	return s.QueryNotes(ctx, userID, NoteQuery{Limit: limit})
+}
+
+func (s *Store) QueryNotes(ctx context.Context, userID string, query NoteQuery) ([]Note, error) {
+	q := `SELECT id,user_id,content,created_at FROM notes WHERE user_id=?`
+	args := []any{owner(userID)}
+	if !query.From.IsZero() {
+		q += ` AND created_at >= ?`
+		args = append(args, query.From.UTC().Format(time.RFC3339Nano))
+	}
+	if !query.To.IsZero() {
+		q += ` AND created_at < ?`
+		args = append(args, query.To.UTC().Format(time.RFC3339Nano))
+	}
+	if search := strings.TrimSpace(query.Search); search != "" {
+		q += ` AND content LIKE ?`
+		args = append(args, "%"+search+"%")
+	}
+	q += ` ORDER BY id DESC LIMIT ?`
+	args = append(args, boundedLimit(query.Limit))
+
+	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -807,14 +830,30 @@ func (s *Store) VoiceMemoByID(ctx context.Context, userID string, id int64) (Voi
 }
 
 func (s *Store) ListVoiceMemos(ctx context.Context, userID, deviceID string, limit int) ([]VoiceMemo, error) {
+	return s.QueryVoiceMemos(ctx, userID, VoiceMemoQuery{DeviceID: deviceID, Limit: limit})
+}
+
+func (s *Store) QueryVoiceMemos(ctx context.Context, userID string, query VoiceMemoQuery) ([]VoiceMemo, error) {
 	q := `SELECT id,user_id,device_id,path,transcript,duration_ms,created_at FROM voice_memos WHERE user_id=?`
 	args := []any{owner(userID)}
-	if deviceID != "" {
+	if query.DeviceID != "" {
 		q += ` AND (device_id=? OR device_id='')`
-		args = append(args, deviceID)
+		args = append(args, query.DeviceID)
+	}
+	if !query.From.IsZero() {
+		q += ` AND created_at >= ?`
+		args = append(args, query.From.UTC().Format(time.RFC3339Nano))
+	}
+	if !query.To.IsZero() {
+		q += ` AND created_at < ?`
+		args = append(args, query.To.UTC().Format(time.RFC3339Nano))
+	}
+	if search := strings.TrimSpace(query.Search); search != "" {
+		q += ` AND transcript LIKE ?`
+		args = append(args, "%"+search+"%")
 	}
 	q += ` ORDER BY id DESC LIMIT ?`
-	args = append(args, boundedLimit(limit))
+	args = append(args, boundedLimit(query.Limit))
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
@@ -896,4 +935,24 @@ func boundedLimit(n int) int {
 // Backward-compatible helpers used by older tests and migrations.
 func (s *Store) CreateReminder(ctx context.Context, key, title string, fireAt time.Time) error {
 	return s.CreateReminderForDevice(ctx, "", key, "", title, fireAt)
+}
+
+func (s *Store) ListUserDevices(ctx context.Context, userID string) ([]domain.DeviceItem, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT device_id, user_id, COALESCE(plan,''), status, created_at, rotated_at FROM device_credentials WHERE user_id=? AND status='active' ORDER BY created_at ASC`, owner(userID))
+	if err != nil {
+		return nil, nil
+	}
+	defer rows.Close()
+	var out []domain.DeviceItem
+	for rows.Next() {
+		var d domain.DeviceItem
+		var rawCreated, rawRotated string
+		if err := rows.Scan(&d.DeviceID, &d.UserID, &d.Plan, &d.Status, &rawCreated, &rawRotated); err != nil {
+			return nil, err
+		}
+		d.CreatedAt, _ = parseStoredTime(rawCreated)
+		d.RotatedAt, _ = parseStoredTime(rawRotated)
+		out = append(out, d)
+	}
+	return out, rows.Err()
 }
