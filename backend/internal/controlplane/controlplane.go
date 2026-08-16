@@ -14,9 +14,10 @@ type RuntimeConfig struct {
 	VADThreshold    *int   `json:"vad_threshold,omitempty"`
 	VADSilenceMS    *int   `json:"vad_silence_ms,omitempty"`
 	VADMinSpeechMS  *int   `json:"vad_min_speech_ms,omitempty"`
-	IdleAfterMS     *int   `json:"idle_after_ms,omitempty"`
-	AlarmVisibleMS  *int   `json:"alarm_visible_ms,omitempty"`
-	Locale          string `json:"locale,omitempty"`
+	IdleAfterMS           *int   `json:"idle_after_ms,omitempty"`
+	AlarmVisibleMS        *int   `json:"alarm_visible_ms,omitempty"`
+	OTAPollIntervalSeconds *int  `json:"ota_poll_interval_s,omitempty"`
+	Locale                string `json:"locale,omitempty"`
 	Timezone        string `json:"timezone,omitempty"`
 	VoiceKey        string `json:"voice_key,omitempty"`
 }
@@ -148,6 +149,9 @@ func Validate(c RuntimeConfig) error {
 	if e := chk("alarm_visible_ms", c.AlarmVisibleMS, 1000, 3600000); e != nil {
 		return e
 	}
+	if e := chk("ota_poll_interval_s", c.OTAPollIntervalSeconds, 3600, 604800); e != nil {
+		return e
+	}
 	if c.Locale != "" {
 		parts := strings.Split(c.Locale, "-")
 		if len(parts[0]) < 2 || len(parts[0]) > 3 {
@@ -182,6 +186,9 @@ func merge(a, b RuntimeConfig) RuntimeConfig {
 	}
 	if b.AlarmVisibleMS != nil {
 		a.AlarmVisibleMS = b.AlarmVisibleMS
+	}
+	if b.OTAPollIntervalSeconds != nil {
+		a.OTAPollIntervalSeconds = b.OTAPollIntervalSeconds
 	}
 	if b.Locale != "" {
 		a.Locale = b.Locale
