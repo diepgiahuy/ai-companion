@@ -40,7 +40,8 @@ func ownerAuthFromEnvironment(next http.Handler, claimRepository controlplane.De
 			next.ServeHTTP(w, r)
 		})
 	}
-	owner := service.Handler()
+	owner := limitOwnerLogins(service.Handler())
+	claimCodeRedeem := limitOwnerClaimCodeRedeems(http.HandlerFunc(service.HandleHumanClaimCodeRedeem))
 	var claims http.Handler
 	if claimRepository != nil {
 		key, keyErr := onboarding.DecodeEncryptionKey(os.Getenv("COMPANION_BOOTSTRAP_ENCRYPTION_KEY"))
@@ -63,7 +64,7 @@ func ownerAuthFromEnvironment(next http.Handler, claimRepository controlplane.De
 			service.HandleHumanClaimCode(w, r)
 			return
 		case "/v1/owner/device-claim-codes/redeem":
-			service.HandleHumanClaimCodeRedeem(w, r)
+			claimCodeRedeem.ServeHTTP(w, r)
 			return
 		case "/v1/owner/device-claims":
 			if claims == nil {
