@@ -113,6 +113,64 @@ func TestNativeResourcesResolveTurnTimezone(t *testing.T) {
 	}
 }
 
+func TestNativeResourcesExtendedCoverage(t *testing.T) {
+	data, err := store.Open(filepath.Join(t.TempDir(), "extended_resources.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer data.Close()
+
+	registry := capability.NewResourceRegistry()
+	if err := registry.Register(NewNative(data, nil, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := pipeline.WithTurnContext(context.Background(), pipeline.TurnContext{UserID: "user-ext", DeviceID: "dev-ext"})
+
+	// Create notes
+	_ = data.CreateNote(ctx, "user-ext", "n1", "groceries: milk and matcha")
+	_ = data.CreateNote(ctx, "user-ext", "n2", "architecture review notes")
+
+	// Read notes with search
+	notesSearch, err := registry.Read(ctx, "notes://recent?search=matcha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsJSON(notesSearch.Text, "milk and matcha") || containsJSON(notesSearch.Text, "architecture review") {
+		t.Fatalf("notes search resource failed: %s", notesSearch.Text)
+	}
+
+	// Create voice memos
+	_ = data.CreateVoiceMemo(ctx, "user-ext", "vm1", "dev-ext", "/tmp/vm1.wav", "discussion on voice codecs", 10000)
+
+	// Read voice memos
+	vms, err := registry.Read(ctx, "voicememos://recent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsJSON(vms.Text, "discussion on voice codecs") {
+		t.Fatalf("voicememos recent resource failed: %s", vms.Text)
+	}
+
+	// Read yesterday expenses
+	yesterdayExp, err := registry.Read(ctx, "expenses://yesterday")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsJSON(yesterdayExp.Text, `"total_vnd":0`) {
+		t.Fatalf("yesterday expenses failed: %s", yesterdayExp.Text)
+	}
+
+	// Verify List() descriptors
+	descriptors, err := registry.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(descriptors) < 15 {
+		t.Fatalf("expected at least 15 descriptors, got %d", len(descriptors))
+	}
+}
+
 func containsJSON(text, fragment string) bool {
 	for i := 0; i+len(fragment) <= len(text); i++ {
 		if text[i:i+len(fragment)] == fragment {
@@ -121,4 +179,5 @@ func containsJSON(text, fragment string) bool {
 	}
 	return false
 }
+
 

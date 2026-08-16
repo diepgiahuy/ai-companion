@@ -29,23 +29,28 @@ func NewNative(data domain.ReadRepositories, conversation *conversationctx.Servi
 }
 
 func (n *Native) Schemes() []string {
-	return []string{"expenses", "budget", "reminders", "timers", "notes", "journal", "conversation"}
+	return []string{"expenses", "budget", "reminders", "timers", "notes", "journal", "voicememos", "conversation"}
 }
 
 func (n *Native) List(context.Context) ([]capability.ResourceDescriptor, error) {
 	return []capability.ResourceDescriptor{
-		{URI: "expenses://today", Name: "Today's expenses", Description: "Expense total and items for the current local day"},
-		{URI: "expenses://week/current", Name: "Current week expenses", Description: "Expense total and items for the current local week"},
-		{URI: "expenses://month/current", Name: "Current month expenses", Description: "Expense total and items for the current local month"},
-		{URI: "budget://daily", Name: "Daily budget", Description: "Current daily spending limit"},
-		{URI: "budget://weekly", Name: "Weekly budget", Description: "Current weekly spending limit"},
-		{URI: "budget://monthly", Name: "Monthly budget", Description: "Current monthly spending limit"},
-		{URI: "reminders://today", Name: "Today's reminders", Description: "Pending reminders due today"},
-		{URI: "reminders://upcoming", Name: "Upcoming reminders", Description: "Pending scheduled reminders"},
-		{URI: "timers://active", Name: "Active timers", Description: "Pending timers with remaining seconds"},
-		{URI: "notes://recent", Name: "Recent notes", Description: "Recently saved notes"},
-		{URI: "journal://today", Name: "Today's journal", Description: "Journal entries from the current local day"},
-		{URI: "conversation://recent", Name: "Recent conversation", Description: "Bounded hot/durable working conversation context"},
+		{URI: "expenses://today", Name: "Today's expenses", Description: "Expense total and items for the current local day", MIMEType: "application/json"},
+		{URI: "expenses://yesterday", Name: "Yesterday's expenses", Description: "Expense total and items for the previous local day", MIMEType: "application/json"},
+		{URI: "expenses://week/current", Name: "Current week expenses", Description: "Expense total and items for the current local week", MIMEType: "application/json"},
+		{URI: "expenses://month/current", Name: "Current month expenses", Description: "Expense total and items for the current local month", MIMEType: "application/json"},
+		{URI: "budget://daily", Name: "Daily budget", Description: "Current daily spending limit", MIMEType: "application/json"},
+		{URI: "budget://weekly", Name: "Weekly budget", Description: "Current weekly spending limit", MIMEType: "application/json"},
+		{URI: "budget://monthly", Name: "Monthly budget", Description: "Current monthly spending limit", MIMEType: "application/json"},
+		{URI: "reminders://today", Name: "Today's reminders", Description: "Pending reminders due today", MIMEType: "application/json"},
+		{URI: "reminders://upcoming", Name: "Upcoming reminders", Description: "Pending scheduled reminders", MIMEType: "application/json"},
+		{URI: "timers://active", Name: "Active timers", Description: "Pending timers with remaining seconds", MIMEType: "application/json"},
+		{URI: "notes://recent", Name: "Recent notes", Description: "Recently saved notes", MIMEType: "application/json"},
+		{URI: "journal://today", Name: "Today's journal", Description: "Journal entries from the current local day", MIMEType: "application/json"},
+		{URI: "journal://yesterday", Name: "Yesterday's journal", Description: "Journal entries from the previous local day", MIMEType: "application/json"},
+		{URI: "journal://recent", Name: "Recent journal", Description: "Recent journal entries across past days", MIMEType: "application/json"},
+		{URI: "voicememos://recent", Name: "Recent voice memos", Description: "Recently recorded voice memos with transcripts and durations", MIMEType: "application/json"},
+		{URI: "voicememos://today", Name: "Today's voice memos", Description: "Voice memos recorded during the current local day", MIMEType: "application/json"},
+		{URI: "conversation://recent", Name: "Recent conversation", Description: "Bounded hot/durable working conversation context", MIMEType: "application/json"},
 	}, nil
 }
 
@@ -65,6 +70,7 @@ func (n *Native) Read(ctx context.Context, uri *url.URL) (capability.Resource, e
 	}
 	now := time.Now().In(resolveLocation(ctx, n.location))
 	limit := queryLimit(uri, 10)
+	search := strings.TrimSpace(uri.Query().Get("search"))
 	var value any
 	var err error
 
@@ -74,6 +80,8 @@ func (n *Native) Read(ctx context.Context, uri *url.URL) (capability.Resource, e
 		switch resourceKey(uri) {
 		case "today":
 			from, to = dayRange(now)
+		case "yesterday":
+			from, to = dayRange(now.AddDate(0, 0, -1))
 		case "week/current":
 			from, to = weekRange(now)
 		case "month/current":
@@ -156,14 +164,52 @@ func (n *Native) Read(ctx context.Context, uri *url.URL) (capability.Resource, e
 		if resourceKey(uri) != "recent" {
 			return capability.Resource{}, fmt.Errorf("unsupported note resource %q", uri.String())
 		}
-		value, err = n.store.ListNotes(ctx, userID, limit)
+		if search != "" {
+			value, err = n.store.QueryNotes(ctx, userID, domain.NoteQuery{Search: search, Limit: limit})
+		} else {
+			value, err = n.store.ListNotes(ctx, userID, limit)
+		}
 
 	case "journal":
-		if resourceKey(uri) != "today" {
+		switch resourceKey(uri) {
+		case "today":
+			from, to := dayRange(now)
+			value, err = n.store.ListJournal(ctx, userID, from, to, limit)
+		case "yesterday":
+			from, to := dayRange(now.AddDate(0, 0, -1))
+			value, err = n.store.ListJournal(ctx, userID, from, to, limit)
+		case "recent":
+			from := now.AddDate(0, 0, -30)
+			to := now.AddDate(0, 0, 1)
+			value, err = n.store.ListJournal(ctx, userID, from, to, limit)
+		default:
 			return capability.Resource{}, fmt.Errorf("unsupported journal resource %q", uri.String())
 		}
-		from, to := dayRange(now)
-		value, err = n.store.ListJournal(ctx, userID, from, to, limit)
+
+	case "voicememos":
+		switch resourceKey(uri) {
+		case "today":
+			from, to := dayRange(now)
+			value, err = n.store.QueryVoiceMemos(ctx, userID, domain.VoiceMemoQuery{
+				DeviceID: deviceID,
+				From:     from,
+				To:       to,
+				Search:   search,
+				Limit:    limit,
+			})
+		case "recent":
+			if search != "" {
+				value, err = n.store.QueryVoiceMemos(ctx, userID, domain.VoiceMemoQuery{
+					DeviceID: deviceID,
+					Search:   search,
+					Limit:    limit,
+				})
+			} else {
+				value, err = n.store.ListVoiceMemos(ctx, userID, deviceID, limit)
+			}
+		default:
+			return capability.Resource{}, fmt.Errorf("unsupported voicememos resource %q", uri.String())
+		}
 
 	case "conversation":
 		if resourceKey(uri) != "recent" {

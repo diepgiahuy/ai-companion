@@ -19,6 +19,7 @@ type ResourceDescriptor struct {
 	URI         string `json:"uri"`
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
+	MIMEType    string `json:"mime_type,omitempty"`
 }
 
 // ResourceProvider intentionally resembles MCP resources while remaining an
