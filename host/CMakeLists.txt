@@ -31,6 +31,12 @@ target_link_libraries(audio_frontend_app_tests PRIVATE companion_app)
 target_compile_options(audio_frontend_app_tests PRIVATE -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
 add_test(NAME audio_frontend_app_tests COMMAND audio_frontend_app_tests)
 
+add_executable(pairing_fsm_tests tests/pairing_fsm.cpp)
+target_include_directories(pairing_fsm_tests PRIVATE ../components/companion_app/include)
+target_compile_features(pairing_fsm_tests PRIVATE cxx_std_20)
+target_compile_options(pairing_fsm_tests PRIVATE -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
+add_test(NAME pairing_fsm_tests COMMAND pairing_fsm_tests)
+
 add_executable(transport_policy_tests tests/transport_policy.cpp)
 target_include_directories(transport_policy_tests PRIVATE ../components/esp32_network/include)
 target_compile_features(transport_policy_tests PRIVATE cxx_std_20)
