@@ -39,9 +39,6 @@ enum class BootGesture {
   factory_reset,
 };
 
-// CompanionApp owns normal short-press behavior. This adapter delays that short
-// action until release so the same physical press can be claimed as a runtime
-// hold without first leaking a PTT action into the app state machine.
 class RuntimeButton final : public companion::Button {
 public:
   explicit RuntimeButton(companion::GpioButton& physical)
@@ -49,6 +46,10 @@ public:
                                       .hold_ms = kRuntimePairingHoldMs}) {}
 
   void reset(uint64_t now) { gesture_.reset(physical_.is_pressed(), now); }
+
+  void suppress_current_press(uint64_t now) {
+    gesture_.suppress_current_press(physical_.is_pressed(), now);
+  }
 
   bool consume_press(uint64_t now) override {
     gesture_.sample(physical_.is_pressed(), now);
@@ -417,13 +418,16 @@ extern "C" void app_main() {
 
     (void)backend.advertise_user_confirmation();
     if (!confirmation_pending && backend.poll_user_confirmation(confirmation)) {
+      button.suppress_current_press(now);
       confirmation_pending = true;
       confirmation_deadline_ms = now + confirmation.deadline_ms;
     }
     if (confirmation_pending) {
       if (!backend.user_confirmation_current(confirmation)) {
+        button.suppress_current_press(now);
         confirmation_pending = false;
       } else if (now >= confirmation_deadline_ms) {
+        button.suppress_current_press(now);
         (void)backend.respond_user_confirmation(confirmation, false);
         confirmation_pending = false;
       } else if (button.consume_press(now)) {
