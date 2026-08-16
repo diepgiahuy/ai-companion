@@ -84,4 +84,29 @@ func TestOwnerWebDataEndpoints(t *testing.T) {
 	if !strings.Contains(wDevice.Body.String(), "ESP32-S3-WROOM-1-N16R8") {
 		t.Fatalf("device body missing hardware info: %s", wDevice.Body.String())
 	}
+
+	// Test Create Note
+	reqCreateNote := httptest.NewRequest(http.MethodPost, "/v1/owner/data/notes", strings.NewReader(`{"content":"plan weekend hike"}`))
+	wCreateNote := httptest.NewRecorder()
+	handler.ServeHTTP(wCreateNote, reqCreateNote)
+	if wCreateNote.Code != http.StatusOK {
+		t.Fatalf("create note status = %d: %s", wCreateNote.Code, wCreateNote.Body.String())
+	}
+
+	// Test Create Expense
+	reqCreateExp := httptest.NewRequest(http.MethodPost, "/v1/owner/data/expenses", strings.NewReader(`{"amount_vnd":120000,"category":"food","description":"dinner"}`))
+	wCreateExp := httptest.NewRecorder()
+	handler.ServeHTTP(wCreateExp, reqCreateExp)
+	if wCreateExp.Code != http.StatusOK {
+		t.Fatalf("create expense status = %d: %s", wCreateExp.Code, wCreateExp.Body.String())
+	}
+
+	// Test Set Budget
+	reqBudget := httptest.NewRequest(http.MethodPost, "/v1/owner/data/budget", strings.NewReader(`{"period":"monthly","limit_vnd":15000000}`))
+	wBudget := httptest.NewRecorder()
+	handler.ServeHTTP(wBudget, reqBudget)
+	if wBudget.Code != http.StatusOK {
+		t.Fatalf("set budget status = %d: %s", wBudget.Code, wBudget.Body.String())
+	}
 }
+

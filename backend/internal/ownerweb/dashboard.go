@@ -3,6 +3,7 @@ package ownerweb
 import (
 	_ "embed"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -68,14 +69,26 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleOverview(w, r)
 	case path == "data/expenses" && r.Method == http.MethodGet:
 		h.handleExpenses(w, r)
+	case path == "data/expenses" && r.Method == http.MethodPost:
+		h.handleCreateExpense(w, r)
+	case path == "data/expenses" && r.Method == http.MethodDelete:
+		h.handleDeleteExpense(w, r)
+	case path == "data/budget" && r.Method == http.MethodPost:
+		h.handleSetBudget(w, r)
 	case path == "data/notes" && r.Method == http.MethodGet:
 		h.handleNotes(w, r)
+	case path == "data/notes" && r.Method == http.MethodPost:
+		h.handleCreateNote(w, r)
+	case path == "data/notes" && r.Method == http.MethodDelete:
+		h.handleDeleteNote(w, r)
 	case path == "data/voice-memos" && r.Method == http.MethodGet:
 		h.handleVoiceMemos(w, r)
 	case path == "data/journal" && r.Method == http.MethodGet:
 		h.handleJournal(w, r)
 	case path == "data/reminders" && r.Method == http.MethodGet:
 		h.handleReminders(w, r)
+	case path == "data/reminders" && r.Method == http.MethodPost:
+		h.handleCreateReminder(w, r)
 	case path == "data/device" && r.Method == http.MethodGet:
 		h.handleDevice(w, r)
 	default:
@@ -208,6 +221,130 @@ func (h *Handler) handleDevice(w http.ResponseWriter, r *http.Request) {
 		"firmware_version":  "v2.4.0",
 		"wifi_rssi_dbm":     -58,
 	})
+}
+
+func (h *Handler) handleCreateExpense(w http.ResponseWriter, r *http.Request) {
+	userID := h.userID(r)
+	var req struct {
+		Amount      int64  `json:"amount_vnd"`
+		Category    string `json:"category"`
+		Description string `json:"description"`
+		OccurredAt  string `json:"occurred_at"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Amount <= 0 {
+		http.Error(w, "invalid expense payload", http.StatusBadRequest)
+		return
+	}
+	occurred := time.Now().UTC()
+	if req.OccurredAt != "" {
+		if t, err := time.Parse(time.RFC3339, req.OccurredAt); err == nil {
+			occurred = t.UTC()
+		}
+	}
+	key := fmt.Sprintf("web-exp-%d", time.Now().UnixNano())
+	if err := h.deps.Store.CreateExpense(r.Context(), userID, key, req.Amount, req.Category, req.Description, occurred); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "saved": "expense"})
+}
+
+func (h *Handler) handleSetBudget(w http.ResponseWriter, r *http.Request) {
+	userID := h.userID(r)
+	var req struct {
+		Period   string `json:"period"`
+		LimitVND int64  `json:"limit_vnd"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Period == "" || req.LimitVND < 0 {
+		http.Error(w, "invalid budget payload", http.StatusBadRequest)
+		return
+	}
+	if err := h.deps.Store.SetBudget(r.Context(), userID, req.Period, req.LimitVND); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "period": req.Period, "limit_vnd": req.LimitVND})
+}
+
+func (h *Handler) handleCreateNote(w http.ResponseWriter, r *http.Request) {
+	userID := h.userID(r)
+	var req struct {
+		Content string `json:"content"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Content) == "" {
+		http.Error(w, "content is required", http.StatusBadRequest)
+		return
+	}
+	key := fmt.Sprintf("web-note-%d", time.Now().UnixNano())
+	if err := h.deps.Store.CreateNote(r.Context(), userID, key, strings.TrimSpace(req.Content)); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "saved": "note"})
+}
+
+func (h *Handler) handleCreateReminder(w http.ResponseWriter, r *http.Request) {
+	userID := h.userID(r)
+	var req struct {
+		Title        string `json:"title"`
+		FireAt       string `json:"fire_at"`
+		DelaySeconds int64  `json:"delay_seconds"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Title) == "" {
+		http.Error(w, "title is required", http.StatusBadRequest)
+		return
+	}
+	key := fmt.Sprintf("web-rem-%d", time.Now().UnixNano())
+	if req.DelaySeconds > 0 {
+		fireAt := time.Now().UTC().Add(time.Duration(req.DelaySeconds) * time.Second)
+		if err := h.deps.Store.CreateTimerForDevice(r.Context(), userID, key, "", strings.TrimSpace(req.Title), fireAt); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true, "kind": "timer"})
+		return
+	}
+	fireAt := time.Now().UTC().Add(1 * time.Hour)
+	if req.FireAt != "" {
+		if t, err := time.Parse(time.RFC3339, req.FireAt); err == nil {
+			fireAt = t.UTC()
+		}
+	}
+	if err := h.deps.Store.CreateReminderForDevice(r.Context(), userID, key, "", strings.TrimSpace(req.Title), fireAt); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "kind": "reminder"})
+}
+
+func (h *Handler) handleDeleteNote(w http.ResponseWriter, r *http.Request) {
+	userID := h.userID(r)
+	idStr := r.URL.Query().Get("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil || id <= 0 {
+		http.Error(w, "valid id is required", http.StatusBadRequest)
+		return
+	}
+	if err := h.deps.Store.DeleteNote(r.Context(), userID, id); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "deleted": "note", "id": id})
+}
+
+func (h *Handler) handleDeleteExpense(w http.ResponseWriter, r *http.Request) {
+	userID := h.userID(r)
+	idStr := r.URL.Query().Get("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil || id <= 0 {
+		http.Error(w, "valid id is required", http.StatusBadRequest)
+		return
+	}
+	if err := h.deps.Store.DeleteExpense(r.Context(), userID, id); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "deleted": "expense", "id": id})
 }
 
 func (h *Handler) userID(r *http.Request) string {
