@@ -1,97 +1,19 @@
-name: product-v1-project-migration-once
+name: product-v1-project-migration-retired
 
+# The one-shot Product-v1 graph/Project migration completed and was verified in
+# issue #210. The executable migration scripts were removed immediately after
+# success. This inert manual-only marker is retained only because the connected
+# GitHub write surface does not permit deleting workflow files safely.
 on:
-  pull_request:
-    paths:
-      - scripts/migrate_product_v1_project_plan.py
-      - scripts/test_product_v1_project_migration.py
-      - .github/workflows/product-v1-project-migration-once.yml
-  push:
-    branches:
-      - main
-    paths:
-      - scripts/migrate_product_v1_project_plan.py
-      - .github/workflows/product-v1-project-migration-once.yml
+  workflow_dispatch:
 
 permissions:
   contents: read
 
-concurrency:
-  group: product-v1-project-migration-once-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref || github.run_id }}
-  cancel-in-progress: false
-
 jobs:
-  validate:
-    if: github.event_name == 'pull_request'
+  retired:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-      issues: read
-    env:
-      REPO_TOKEN: ${{ github.token }}
-      PROJECT_REPOSITORY: diepgiahuy/ai-companion
+    timeout-minutes: 1
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Compile migration tooling
-        run: >-
-          python3 -m py_compile
-          scripts/migrate_product_v1_project_plan.py
-          scripts/test_product_v1_project_migration.py
-      - name: Test static migration plan
-        run: python3 scripts/test_product_v1_project_migration.py
-      - name: Dry-run native graph against live GitHub
-        run: python3 scripts/migrate_product_v1_project_plan.py --dry-run --skip-project
-
-  migrate:
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    permissions:
-      contents: read
-      issues: write
-    env:
-      REPO_TOKEN: ${{ github.token }}
-      PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}
-      PROJECT_OWNER: diepgiahuy
-      PROJECT_REPOSITORY: diepgiahuy/ai-companion
-      PROJECT_TITLE: AI Companion — Production v1
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Validate required credentials
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -n "${REPO_TOKEN:-}" || { echo "::error::REPO_TOKEN is unavailable"; exit 1; }
-          test -n "${PROJECT_TOKEN:-}" || { echo "::error::PROJECT_TOKEN is not configured"; exit 1; }
-      - name: Compile and test migration plan
-        run: |
-          set -euo pipefail
-          python3 -m py_compile scripts/migrate_product_v1_project_plan.py scripts/test_product_v1_project_migration.py
-          python3 scripts/test_product_v1_project_migration.py
-      - name: Full dry-run before first write
-        run: python3 scripts/migrate_product_v1_project_plan.py --dry-run
-      - name: Apply native graph and planning fields
-        run: python3 scripts/migrate_product_v1_project_plan.py --apply
-      - name: Reconcile execution labels from final native graph
-        run: python3 scripts/reconcile_github_issue_status.py --all
-      - name: Reconcile Project membership and Status
-        run: python3 scripts/bootstrap_github_project.py --sync-all
-      - name: Re-fetch and verify final graph, fields, labels and Status
-        run: python3 scripts/migrate_product_v1_project_plan.py --verify --check-execution
-      - name: Record bounded migration summary
-        run: |
-          {
-            echo '## Product-v1 GitHub plan migration'
-            echo
-            echo '- native parent/sub-issue graph: verified'
-            echo '- native blocked-by graph: verified'
-            echo '- planning fields: verified using existing Project options only'
-            echo '- compatibility execution labels: reconciled from final native graph'
-            echo '- Project Status: reconciled and verified'
-            echo '- steady-state cleanup: remove this one-shot workflow/script in the immediate follow-up PR'
-          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Migration already completed
+        run: echo 'Product-v1 Project migration completed under issue #210; no migration action remains.'
