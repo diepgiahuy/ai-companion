@@ -16,10 +16,10 @@ import (
 )
 
 const (
-	VolumeSetName              = "device.volume.set"
-	VolumeSetVersion           = "1"
-	UserConfirmationName       = "device.user_confirmation"
-	UserConfirmationVersion    = "1"
+	VolumeSetName           = "device.volume.set"
+	VolumeSetVersion        = "1"
+	UserConfirmationName    = "device.user_confirmation"
+	UserConfirmationVersion = "1"
 )
 
 var (
@@ -178,7 +178,7 @@ func RegisterTools(registry *capability.ToolRegistry, router *Router) error {
 			payload, _ := json.Marshal(map[string]any{"volume": args.Volume})
 			result, err := router.Call(ctx, turn.DeviceID, Call{
 				Name: VolumeSetName, Version: VolumeSetVersion, Arguments: payload,
-				TurnID: turn.TurnID, Deadline: time.Now().Add(3 * time.Second),
+				Deadline: time.Now().Add(3 * time.Second),
 			})
 			if err != nil {
 				return capability.Failure(err)
