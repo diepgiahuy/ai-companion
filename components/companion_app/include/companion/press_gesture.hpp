@@ -27,6 +27,15 @@ public:
     hold_claimed_ = false;
   }
 
+  // Discard any action already in progress and, if currently pressed, claim
+  // that press until release. Security-sensitive prompts use this so approval
+  // must come from a fresh press that begins after the prompt is visible; the
+  // discarded press also cannot later leak into PTT or pairing-hold behavior.
+  void suppress_current_press(bool raw_pressed, uint64_t now_ms) {
+    reset(raw_pressed, now_ms);
+    hold_claimed_ = raw_pressed;
+  }
+
   void sample(bool raw_pressed, uint64_t now_ms) {
     if (raw_pressed != raw_pressed_) {
       raw_pressed_ = raw_pressed;
