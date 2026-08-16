@@ -87,17 +87,18 @@ public:
     return playback_sample_rate_hz_.load();
   }
 
-  // Server-internal capability. It is advertised only to the authenticated
-  // server and never appears in the model ToolRegistry.
+  // Server-internal capability. This extension registers on the same
+  // authenticated WebSocket and is never exposed to the model ToolRegistry.
+  bool enable_confirmation_protocol();
   bool advertise_user_confirmation();
   bool poll_user_confirmation(UserConfirmationRequest& request);
   bool user_confirmation_current(const UserConfirmationRequest& request);
   bool respond_user_confirmation(const UserConfirmationRequest& request,
                                  bool approved);
 
-  // Pairing and confirmation reuse this exact authenticated Protocol-v2 client.
-  // Enabling the extension before start() swaps in one composite event handler;
-  // no second WebSocket or runtime is created.
+  // Pairing reuses this exact authenticated Protocol-v2 client. Enabling it
+  // before start() installs a composite pairing handler; no second WebSocket is
+  // created.
   bool enable_pairing_protocol();
   bool pairing_discovery_alias(std::array<char, 20>& output);
   bool create_pairing_session(std::string_view candidate_discovery_id,
@@ -173,6 +174,7 @@ private:
   std::atomic<bool> socket_connected_{false};
   std::atomic<bool> protocol_connected_{false};
   std::atomic<bool> pairing_protocol_enabled_{false};
+  std::atomic<bool> confirmation_protocol_enabled_{false};
   std::atomic<bool> confirmation_advertised_{false};
   std::atomic<bool> turn_active_{false};
   std::atomic<bool> tts_active_{false};
@@ -196,6 +198,9 @@ private:
   UserConfirmationRequest active_confirmation_{};
   bool confirmation_ready_{};
   bool confirmation_active_{};
+  std::array<char, 8'193> confirmation_text_payload_{};
+  size_t confirmation_text_payload_size_{};
+  int confirmation_receive_opcode_{};
   std::array<char, 8'193> text_payload_{};
   size_t text_payload_size_{};
   int receive_opcode_{};
@@ -241,10 +246,13 @@ private:
                             int32_t event_id, void* event_data);
   static void pairing_event_handler(void* context, esp_event_base_t base,
                                     int32_t event_id, void* event_data);
+  static void confirmation_event_handler(void* context, esp_event_base_t base,
+                                         int32_t event_id, void* event_data);
   static void writer_entry(void* context);
   static void media_entry(void* context);
   void on_event(int32_t event_id, esp_websocket_event_data_t* data);
   void on_pairing_event(int32_t event_id, esp_websocket_event_data_t* data);
+  void on_confirmation_event(int32_t event_id, esp_websocket_event_data_t* data);
   void writer_loop();
   void media_loop();
   void handle_text(std::string_view json);
