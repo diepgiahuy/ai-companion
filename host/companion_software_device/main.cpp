@@ -262,6 +262,28 @@ std::string read_binary_file(const std::string& path) {
   return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
 }
 
+std::string resolve_voice_mail_relationship(const std::string& host,
+                                            const std::string& port,
+                                            const std::string& sender_device,
+                                            const std::string& sender_token,
+                                            const std::string& recipient_device) {
+  const auto response = device_request(host, port, http::verb::get,
+                                       "/v1/voice-mail/recipients",
+                                       sender_device, sender_token);
+  require(response.result() == http::status::ok,
+          "voice-mail recipient selector did not return 200");
+  const auto payload = json::parse(response.body());
+  for (const auto& recipient : payload.at("recipients")) {
+    if (recipient.value("peer_device_id", std::string{}) == recipient_device) {
+      const std::string relationship_id =
+          recipient.value("relationship_id", std::string{});
+      require(!relationship_id.empty(), "voice-mail recipient relationship id missing");
+      return relationship_id;
+    }
+  }
+  throw std::runtime_error("authorized voice-mail recipient relationship not found");
+}
+
 std::string provision_voice_mail(const std::string& host, const std::string& port,
                                  const std::string& sender_device,
                                  const std::string& sender_token,
@@ -271,8 +293,9 @@ std::string provision_voice_mail(const std::string& host, const std::string& por
                                  std::string_view suffix) {
   const std::string media = read_binary_file(media_path);
   const std::string key = "tier1-voice-mail-" + std::string(suffix);
-  const json create{{"recipient_user_id", "default"},
-                    {"recipient_device_id", recipient_device},
+  const std::string relationship_id = resolve_voice_mail_relationship(
+      host, port, sender_device, sender_token, recipient_device);
+  const json create{{"relationship_id", relationship_id},
                     {"duration_ms", 240},
                     {"size_bytes", media.size()},
                     {"checksum_sha256", checksum},

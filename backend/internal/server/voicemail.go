@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 
 	"companion-server/internal/events"
 	"companion-server/internal/idempotency"
+	"companion-server/internal/pairing"
 	"companion-server/internal/protocol"
 	"companion-server/internal/voicemail"
 )
@@ -104,15 +106,30 @@ func (s *Server) allowVoiceMailRequest(actor string, now time.Time) bool {
 	return true
 }
 
+func (s *Server) handleVoiceMailRecipients(w http.ResponseWriter, r *http.Request) {
+	userID, deviceID, ok := s.voiceMailIdentity(w, r)
+	if !ok {
+		return
+	}
+	recipients, err := s.voiceMail.ListRecipients(r.Context(), userID, deviceID)
+	if err != nil {
+		voiceMailError(w, err)
+		return
+	}
+	if recipients == nil {
+		recipients = []pairing.RecipientDescriptor{}
+	}
+	writeVoiceMailJSON(w, http.StatusOK, map[string]any{"recipients": recipients})
+}
+
 type voiceMailCreateRequest struct {
-	RecipientUserID   string           `json:"recipient_user_id"`
-	RecipientDeviceID string           `json:"recipient_device_id,omitempty"`
-	DurationMS        int64            `json:"duration_ms"`
-	SizeBytes         int64            `json:"size_bytes"`
-	ChecksumSHA256    string           `json:"checksum_sha256"`
-	Policy            voicemail.Policy `json:"policy"`
-	ExpiresAt         time.Time        `json:"expires_at"`
-	IdempotencyKey    string           `json:"idempotency_key"`
+	RelationshipID string           `json:"relationship_id"`
+	DurationMS     int64            `json:"duration_ms"`
+	SizeBytes      int64            `json:"size_bytes"`
+	ChecksumSHA256 string           `json:"checksum_sha256"`
+	Policy         voicemail.Policy `json:"policy"`
+	ExpiresAt      time.Time        `json:"expires_at"`
+	IdempotencyKey string           `json:"idempotency_key"`
 }
 
 func (s *Server) handleVoiceMailCreate(w http.ResponseWriter, r *http.Request) {
@@ -124,8 +141,18 @@ func (s *Server) handleVoiceMailCreate(w http.ResponseWriter, r *http.Request) {
 	if err := decodeVoiceMailJSON(w, r, &body); err != nil {
 		return
 	}
-	create := voicemail.Create{SenderUserID: userID, SenderDeviceID: deviceID, RecipientUserID: body.RecipientUserID, RecipientDeviceID: body.RecipientDeviceID, DurationMS: body.DurationMS, SizeBytes: body.SizeBytes, ChecksumSHA256: body.ChecksumSHA256, Policy: body.Policy, ExpiresAt: body.ExpiresAt}
-	request, err := voiceMailRequest(userID, "voice_mail.create", body.IdempotencyKey, create)
+	create := voicemail.Create{
+		RelationshipID: body.RelationshipID,
+		SenderUserID:   userID,
+		SenderDeviceID: deviceID,
+		DurationMS:     body.DurationMS,
+		SizeBytes:      body.SizeBytes,
+		ChecksumSHA256: body.ChecksumSHA256,
+		Policy:         body.Policy,
+		ExpiresAt:      body.ExpiresAt,
+	}
+	actor := userID + ":device:" + deviceID
+	request, err := voiceMailRequest(actor, "voice_mail.create", body.IdempotencyKey, create)
 	if err != nil {
 		voiceMailError(w, err)
 		return
@@ -139,12 +166,12 @@ func (s *Server) handleVoiceMailCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleVoiceMailMediaPut(w http.ResponseWriter, r *http.Request) {
-	userID, _, ok := s.voiceMailIdentity(w, r)
+	userID, deviceID, ok := s.voiceMailIdentity(w, r)
 	if !ok {
 		return
 	}
 	body := http.MaxBytesReader(w, r.Body, voicemail.MaxSize+1)
-	if err := s.voiceMail.PutMedia(r.Context(), userID, r.PathValue("id"), body); err != nil {
+	if err := s.voiceMail.PutMedia(r.Context(), userID, deviceID, r.PathValue("id"), body); err != nil {
 		voiceMailError(w, err)
 		return
 	}
@@ -152,7 +179,7 @@ func (s *Server) handleVoiceMailMediaPut(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleVoiceMailComplete(w http.ResponseWriter, r *http.Request) {
-	userID, _, ok := s.voiceMailIdentity(w, r)
+	userID, deviceID, ok := s.voiceMailIdentity(w, r)
 	if !ok {
 		return
 	}
@@ -162,12 +189,13 @@ func (s *Server) handleVoiceMailComplete(w http.ResponseWriter, r *http.Request)
 	if err := decodeVoiceMailJSON(w, r, &body); err != nil {
 		return
 	}
-	request, err := voiceMailRequest(userID, "voice_mail.complete", body.IdempotencyKey, map[string]string{"id": r.PathValue("id")})
+	actor := userID + ":device:" + deviceID
+	request, err := voiceMailRequest(actor, "voice_mail.complete", body.IdempotencyKey, map[string]string{"id": r.PathValue("id")})
 	if err != nil {
 		voiceMailError(w, err)
 		return
 	}
-	item, err := s.voiceMail.CompleteUpload(r.Context(), request, userID, r.PathValue("id"))
+	item, err := s.voiceMail.CompleteUpload(r.Context(), request, userID, deviceID, r.PathValue("id"))
 	if err != nil {
 		voiceMailError(w, err)
 		return
@@ -218,11 +246,11 @@ func (s *Server) handleVoiceMailClaim(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleVoiceMailMediaGet(w http.ResponseWriter, r *http.Request) {
-	userID, _, ok := s.voiceMailIdentity(w, r)
+	userID, deviceID, ok := s.voiceMailIdentity(w, r)
 	if !ok {
 		return
 	}
-	reader, err := s.voiceMail.OpenMedia(r.Context(), userID, r.PathValue("id"), r.URL.Query().Get("playback_id"))
+	reader, err := s.voiceMail.OpenMedia(r.Context(), userID, deviceID, r.PathValue("id"), r.URL.Query().Get("playback_id"))
 	if err != nil {
 		voiceMailError(w, err)
 		return
@@ -241,7 +269,7 @@ type voiceMailPlaybackRequest struct {
 }
 
 func (s *Server) handleVoiceMailPlayback(w http.ResponseWriter, r *http.Request) {
-	userID, _, ok := s.voiceMailIdentity(w, r)
+	userID, deviceID, ok := s.voiceMailIdentity(w, r)
 	if !ok {
 		return
 	}
@@ -253,13 +281,13 @@ func (s *Server) handleVoiceMailPlayback(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "invalid result", http.StatusBadRequest)
 		return
 	}
-	semantic := map[string]any{"id": r.PathValue("id"), "playback_id": body.PlaybackID, "result": body.Result}
+	semantic := map[string]any{"id": r.PathValue("id"), "playback_id": body.PlaybackID, "result": body.Result, "device_id": deviceID}
 	request, err := voiceMailRequest(userID, "voice_mail.playback", body.IdempotencyKey, semantic)
 	if err != nil {
 		voiceMailError(w, err)
 		return
 	}
-	item, err := s.voiceMail.Playback(r.Context(), request, userID, r.PathValue("id"), body.PlaybackID, body.Result == protocol.PlaybackSucceeded)
+	item, err := s.voiceMail.Playback(r.Context(), request, userID, deviceID, r.PathValue("id"), body.PlaybackID, body.Result == protocol.PlaybackSucceeded)
 	if err != nil {
 		voiceMailError(w, err)
 		return
@@ -310,6 +338,15 @@ func voiceMailError(w http.ResponseWriter, err error) {
 	if idempotency.IsConflict(err) {
 		status = http.StatusConflict
 		message = idempotency.ConflictCode
+	} else if errors.Is(err, voicemail.ErrUnauthorized) {
+		status = http.StatusForbidden
+		message = "forbidden"
+	} else if errors.Is(err, voicemail.ErrRelationshipNotFound) || errors.Is(err, voicemail.ErrItemNotFound) {
+		status = http.StatusNotFound
+		message = "not found"
+	} else if errors.Is(err, voicemail.ErrRelationshipRevoked) {
+		status = http.StatusConflict
+		message = "relationship revoked"
 	}
 	http.Error(w, message, status)
 }

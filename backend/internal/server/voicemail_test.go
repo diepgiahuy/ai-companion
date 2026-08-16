@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"companion-server/internal/idempotency"
+	"companion-server/internal/pairing"
 	"companion-server/internal/pipeline"
 	"companion-server/internal/protocol"
 	"companion-server/internal/voicemail"
@@ -37,15 +38,40 @@ func TestVoiceMailRateLimitIsBoundedPerActorWindow(t *testing.T) {
 type voiceMailRepositoryStub struct {
 	claimed, played bool
 	unread          []voicemail.Item
+	recipients      []pairing.RecipientDescriptor
+	createdItem     voicemail.Item
 }
 
-func (r *voiceMailRepositoryStub) CreateUpload(context.Context, idempotency.Request, voicemail.Create, time.Time) (voicemail.Item, error) {
+func (r *voiceMailRepositoryStub) ListRecipients(context.Context, string, string) ([]pairing.RecipientDescriptor, error) {
+	return r.recipients, nil
+}
+func (r *voiceMailRepositoryStub) CreateUpload(_ context.Context, _ idempotency.Request, create voicemail.Create, now time.Time) (voicemail.Item, error) {
+	if create.RelationshipID == "" {
+		return voicemail.Item{}, voicemail.ErrRelationshipNotFound
+	}
+	r.createdItem = voicemail.Item{
+		ID:                "vm-created-1",
+		RelationshipID:    create.RelationshipID,
+		SenderUserID:      create.SenderUserID,
+		SenderDeviceID:    create.SenderDeviceID,
+		RecipientUserID:   "user-b",
+		RecipientDeviceID: "device-b",
+		MediaFormat:       voicemail.MediaFormat,
+		DurationMS:        create.DurationMS,
+		SizeBytes:         create.SizeBytes,
+		ChecksumSHA256:    create.ChecksumSHA256,
+		Policy:            create.Policy,
+		State:             voicemail.PendingUpload,
+		ExpiresAt:         create.ExpiresAt,
+		CreatedAt:         now,
+		UpdatedAt:         now,
+	}
+	return r.createdItem, nil
+}
+func (r *voiceMailRepositoryStub) ItemForSender(context.Context, string, string, string) (voicemail.Item, bool, error) {
 	panic("unexpected")
 }
-func (r *voiceMailRepositoryStub) ItemForSender(context.Context, string, string) (voicemail.Item, bool, error) {
-	panic("unexpected")
-}
-func (r *voiceMailRepositoryStub) CompleteUpload(context.Context, idempotency.Request, string, string, time.Time) (voicemail.Item, error) {
+func (r *voiceMailRepositoryStub) CompleteUpload(context.Context, idempotency.Request, string, string, string, time.Time) (voicemail.Item, error) {
 	panic("unexpected")
 }
 func (r *voiceMailRepositoryStub) ListUnread(context.Context, string, string, time.Time, int) ([]voicemail.Item, error) {
@@ -103,14 +129,14 @@ func TestVoiceMailUnreadIsRecoveredForNewSession(t *testing.T) {
 		t.Fatalf("envelope=%+v payload=%+v", envelope, payload)
 	}
 }
-func (r *voiceMailRepositoryStub) CompleteVoiceMailPlayback(_ context.Context, request idempotency.Request, userID, id, playbackID string, succeeded bool, _ time.Time) (voicemail.Item, error) {
+func (r *voiceMailRepositoryStub) CompleteVoiceMailPlayback(_ context.Context, request idempotency.Request, userID, deviceID, id, playbackID string, succeeded bool, _ time.Time) (voicemail.Item, error) {
 	if request.Operation != "voice_mail.playback" || userID != "default" || !succeeded {
 		return voicemail.Item{}, context.Canceled
 	}
 	r.played = true
 	return voicemail.Item{ID: id, PlaybackID: playbackID, State: voicemail.Deleted}, nil
 }
-func (r *voiceMailRepositoryStub) ItemForPlayback(context.Context, string, string, string, time.Time) (voicemail.Item, bool, error) {
+func (r *voiceMailRepositoryStub) ItemForPlayback(context.Context, string, string, string, string, time.Time) (voicemail.Item, bool, error) {
 	panic("unexpected")
 }
 func (r *voiceMailRepositoryStub) RequestDelete(context.Context, idempotency.Request, string, string, time.Time) (voicemail.Item, error) {
