@@ -155,7 +155,7 @@ func (r *ToolRegistry) Execute(ctx context.Context, name string, req ToolRequest
 	return t.Execute(ctx, req)
 }
 func Success(v map[string]any) ToolResult {
-	out := make(map[string]any, len(v)+1)
+	out := make(map[string]any)
 	for key, value := range v {
 		out[key] = value
 	}
