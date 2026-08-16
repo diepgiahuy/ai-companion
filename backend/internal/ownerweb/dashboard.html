@@ -208,12 +208,27 @@ h1 { font-size: 1.8rem; font-weight: 700; margin-bottom: 1.5rem; letter-spacing:
 
 <script>
 let currentView = 'overview';
-let selectedDeviceID = 'companion-s3-01';
+let selectedDeviceID = '';
 let expensePeriod = 'today';
 let expenseCategory = '';
 let noteSearchQuery = '';
 let voiceSearchQuery = '';
 let playingAudioID = null;
+
+function getCookie(name) {
+  const v = document.cookie.match('(^|;) ?' + name + '=([^;]*)(;|$)');
+  return v ? decodeURIComponent(v[2]) : '';
+}
+
+async function mutate(url, method, body) {
+  const csrf = getCookie('__Host-companion_csrf');
+  const headers = { 'X-CSRF-Token': csrf };
+  if (body) headers['Content-Type'] = 'application/json';
+  const opts = { method, headers };
+  if (body) opts.body = typeof body === 'string' ? body : JSON.stringify(body);
+  const res = await fetch(url, opts);
+  return res;
+}
 
 function updateClock() {
   const d = new Date();
@@ -225,7 +240,7 @@ updateClock();
 function navigate(view) {
   currentView = view;
   document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
-  event && event.currentTarget && event.currentTarget.classList.add('active');
+  if (window.event && window.event.currentTarget) window.event.currentTarget.classList.add('active');
   document.getElementById('section-crumb').textContent = view.charAt(0).toUpperCase() + view.slice(1);
   renderView();
 }
@@ -256,11 +271,7 @@ async function submitClaim() {
   statusEl.textContent = 'Claiming companion...';
   statusEl.style.color = 'var(--text-muted)';
   try {
-    const res = await fetch('/v1/owner/data/device/claim', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ claim_code: code })
-    });
+    const res = await mutate('/v1/owner/data/device/claim', 'POST', { claim_code: code });
     const data = await res.json();
     if (res.ok && data.ok) {
       statusEl.textContent = 'Device claimed successfully!';
@@ -284,6 +295,7 @@ async function loadDevices() {
   const data = await fetchJSON('/v1/owner/data/devices');
   const sel = document.getElementById('device-select');
   if (data && data.devices && data.devices.length > 0) {
+    if (!selectedDeviceID) selectedDeviceID = data.devices[0].device_id;
     sel.innerHTML = '<option value="">All Devices (Aggregated)</option>' +
       data.devices.map(d => `<option value="${d.device_id}" ${d.device_id === selectedDeviceID ? 'selected' : ''}>${d.device_id} (${d.online ? 'Online' : 'Offline'})</option>`).join('');
   } else {
@@ -293,16 +305,8 @@ async function loadDevices() {
 loadDevices();
 
 async function logout() {
-  const getCookie = (name) => {
-    const v = document.cookie.match('(^|;) ?' + name + '=([^;]*)(;|$)');
-    return v ? v[2] : '';
-  };
-  const csrf = getCookie('__Host-companion_csrf');
   try {
-    await fetch('/v1/owner/auth/logout', {
-      method: 'POST',
-      headers: { 'X-CSRF-Token': csrf }
-    });
+    await mutate('/v1/owner/auth/logout', 'POST');
   } catch (e) {
     console.error('Logout error:', e);
   }
@@ -359,17 +363,13 @@ async function submitExpense() {
   const category = document.getElementById('exp-category').value.trim() || 'general';
   const description = document.getElementById('exp-desc').value.trim();
   if (!amount || amount <= 0) return alert('Please enter a valid amount in VND');
-  await fetch('/v1/owner/data/expenses', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ amount_vnd: amount, category, description })
-  });
+  await mutate('/v1/owner/data/expenses', 'POST', { amount_vnd: amount, category, description });
   renderView();
 }
 
 async function deleteExpense(id) {
   if (!confirm('Delete this expense?')) return;
-  await fetch(`/v1/owner/data/expenses?id=${id}`, { method: 'DELETE' });
+  await mutate(`/v1/owner/data/expenses?id=${id}`, 'DELETE');
   renderView();
 }
 
@@ -394,17 +394,13 @@ async function searchNotes(q) {
 async function submitNote() {
   const text = document.getElementById('new-note-text').value.trim();
   if (!text) return;
-  await fetch('/v1/owner/data/notes', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content: text })
-  });
+  await mutate('/v1/owner/data/notes', 'POST', { content: text });
   renderView();
 }
 
 async function deleteNote(id) {
   if (!confirm('Delete note?')) return;
-  await fetch(`/v1/owner/data/notes?id=${id}`, { method: 'DELETE' });
+  await mutate(`/v1/owner/data/notes?id=${id}`, 'DELETE');
   renderView();
 }
 
@@ -436,7 +432,7 @@ function toggleAudio(id) {
 
 async function deleteVoiceMemo(id) {
   if (!confirm('Delete voice memo?')) return;
-  await fetch(`/v1/owner/data/voice-memos?id=${id}`, { method: 'DELETE' });
+  await mutate(`/v1/owner/data/voice-memos?id=${id}`, 'DELETE');
   renderView();
 }
 
@@ -444,56 +440,40 @@ async function submitReminder() {
   const title = document.getElementById('rem-title').value.trim();
   const delayMinutes = parseInt(document.getElementById('rem-delay').value, 10);
   if (!title) return alert('Title is required');
-  const payload = { title };
+  const payload = { title, device_id: selectedDeviceID };
   if (delayMinutes && delayMinutes > 0) {
     payload.delay_seconds = delayMinutes * 60;
   }
-  await fetch('/v1/owner/data/reminders', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  });
+  await mutate('/v1/owner/data/reminders', 'POST', payload);
   renderView();
 }
 
 async function deleteReminder(id) {
   if (!confirm('Delete reminder?')) return;
-  await fetch(`/v1/owner/data/reminders?id=${id}`, { method: 'DELETE' });
+  await mutate(`/v1/owner/data/reminders?id=${id}`, 'DELETE');
   renderView();
 }
 
 async function pauseTimer(id) {
-  await fetch('/v1/owner/data/timers/pause', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id })
-  });
+  await mutate('/v1/owner/data/timers/pause', 'POST', { id });
   renderView();
 }
 
 async function resumeTimer(id) {
-  await fetch('/v1/owner/data/timers/resume', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id })
-  });
+  await mutate('/v1/owner/data/timers/resume', 'POST', { id });
   renderView();
 }
 
 async function submitJournal() {
   const text = document.getElementById('journal-text').value.trim();
   if (!text) return;
-  await fetch('/v1/owner/data/journal', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content: text })
-  });
+  await mutate('/v1/owner/data/journal', 'POST', { content: text });
   renderView();
 }
 
 async function deleteJournal(id) {
   if (!confirm('Delete journal entry?')) return;
-  await fetch(`/v1/owner/data/journal?id=${id}`, { method: 'DELETE' });
+  await mutate(`/v1/owner/data/journal?id=${id}`, 'DELETE');
   renderView();
 }
 
@@ -751,11 +731,7 @@ async function updateOTAInterval(val) {
   const banner = document.getElementById('ota-status-banner');
   banner.textContent = 'Updating device twin configuration...';
   try {
-    const res = await fetch('/v1/owner/data/device/config', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ device_id: selectedDeviceID || 'companion-s3-01', ota_poll_interval: val })
-    });
+    const res = await mutate('/v1/owner/data/device/config', 'POST', { device_id: selectedDeviceID || 'companion-s3-01', ota_poll_interval: val });
     const data = await res.json();
     banner.innerHTML = `✅ Interval updated to <b>${val}</b> for ${selectedDeviceID || 'companion-s3-01'}.`;
   } catch (e) {
@@ -775,11 +751,7 @@ async function triggerOTA() {
   const banner = document.getElementById('ota-status-banner');
   banner.textContent = 'Pushing OTA trigger to device twin...';
   try {
-    const res = await fetch('/v1/owner/data/device/ota-trigger', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ device_id: selectedDeviceID || 'companion-s3-01', target_version: 'v2.4.1' })
-    });
+    const res = await mutate('/v1/owner/data/device/ota-trigger', 'POST', { device_id: selectedDeviceID || 'companion-s3-01', target_version: 'v2.4.1' });
     const data = await res.json();
     banner.innerHTML = `🚀 <b>Update Command Sent!</b> Device twin will download <code>v2.4.1</code> to inactive partition on next sync.`;
   } catch (e) {

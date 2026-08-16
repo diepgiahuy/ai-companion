@@ -130,6 +130,20 @@ Production v1 focuses on:
 
 Non-goals include premature Kubernetes/microservices, direct unrestricted Internet/tool access from the LLM, MCP on firmware, arbitrary executable remote UI, and permanent duplicate product runtimes kept only as fallback.
 
+## Quick start
+
+```bash
+# 1. Configure API credentials (required — backend won't start without them)
+cp .env.example .env
+$EDITOR .env          # set ADK_OPENAI_BASE_URL, ADK_MODEL, ADK_OPENAI_API_KEY
+
+# 2. Launch the stack (PostgreSQL, migrations, backend daemon)
+./scripts/run_app.sh
+```
+
+- 🌐 **Owner Web Dashboard:** [http://localhost:8000/v1/owner/dashboard](http://localhost:8000/v1/owner/dashboard)
+- 📖 **User Guide & Feature Manual:** [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md)
+
 ## Development and verification
 
 Backend production toolchain: **Go 1.26.6**.

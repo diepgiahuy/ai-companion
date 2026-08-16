@@ -46,3 +46,29 @@
 {"input":"personal memory của tôi","must_pack":["memory"]}
 {"input":"gold price hiện tại","must_pack":["market"]}
 {"input":"exchange rate USD/VND","must_pack":["market"]}
+{"input":"Sáng nay làm bát bún bò 50 cành","must_pack":["expense","budget"]}
+{"input":"Hôm qua mua sách hết 120 nghìn đồng","must_pack":["expense","budget"]}
+{"input":"Tổng tiền cafe tháng này của tôi là bao nhiêu?","must_pack":["expense","budget"]}
+{"input":"Nhắc tôi uống thuốc sau 45 phút nữa","must_pack":["schedule"]}
+{"input":"Hẹn giờ luộc trứng 6 phút","must_pack":["schedule"]}
+{"input":"Tạm dừng timer đang đếm ngược","must_pack":["schedule"]}
+{"input":"Tiếp tục timer vừa dừng","must_pack":["schedule"]}
+{"input":"Lịch họp tuần này có những gì?","must_pack":["schedule"]}
+{"input":"Tìm ghi chú có chữ espresso","must_pack":["note"]}
+{"input":"Note lại địa chỉ công ty mới ở quận 1","must_pack":["note"]}
+{"input":"Tìm đoạn voice memo nói về đi chợ","must_pack":["voice"]}
+{"input":"Lưu đoạn ghi âm này làm voice note","must_pack":["voice"]}
+{"input":"Nhật ký hôm nay: hoàn thành xong dự án lớn","must_pack":["journal"]}
+{"input":"Đọc lại journal tuần này của tôi","must_pack":["journal"]}
+{"input":"Tôi có hay bị dị ứng hải sản không?","must_pack":["memory"]}
+{"input":"Ghi nhớ ngày sinh nhật của mẹ là 20 tháng 10","must_pack":["memory"]}
+{"input":"Quên thông tin thẻ tín dụng cũ","must_pack":["memory"]}
+{"input":"Xóa sạch toàn bộ lịch sử trò chuyện","must_pack":["context"],"exact":true}
+{"input":"Clear all conversation history","must_pack":["context"],"exact":true}
+{"input":"Giá vàng SJC hôm nay bao nhiêu một lượng?","must_pack":["market"]}
+{"input":"Ethereum đang giá bao nhiêu đô?","must_pack":["market"]}
+{"input":"Tỷ giá EUR/VND hôm nay","must_pack":["market"]}
+{"input":"Thời tiết Hà Nội hôm nay thế nào?","fallback":true}
+{"input":"Giải thích cho tôi định lý Pythagoras","fallback":true}
+{"input":"Bạn có thể giúp tôi những gì trong ngày?","fallback":true}
+{"input":"Chúc ngủ ngon companion","fallback":true}

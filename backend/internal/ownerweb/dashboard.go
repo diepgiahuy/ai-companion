@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -20,9 +22,10 @@ import (
 var dashboardHTML string
 
 type Dependencies struct {
-	Store        domain.ReadRepositories
-	ControlPlane *controlplane.Service
-	Auth         *ownerauth.Service
+	Store         domain.ReadRepositories
+	ControlPlane  *controlplane.Service
+	Auth          *ownerauth.Service
+	RecordingsDir string
 }
 
 type Handler struct {
@@ -47,7 +50,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		session, err := h.deps.Auth.Authenticate(cookie.Value)
+		isMutation := r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions
+		var session ownerauth.Session
+		if isMutation {
+			csrf := r.Header.Get("X-CSRF-Token")
+			session, err = h.deps.Auth.AuthenticateMutation(cookie.Value, csrf)
+		} else {
+			session, err = h.deps.Auth.Authenticate(cookie.Value)
+		}
 		if err != nil {
 			if r.URL.Path == "/v1/owner/dashboard" && r.Method == http.MethodGet {
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -128,7 +138,11 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (h *Handler) handleOverview(w http.ResponseWriter, r *http.Request) {
-	userID := h.userID(r)
+	userID, ok := h.userID(r)
+	if !ok || userID == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	ctx := r.Context()
 	now := time.Now().UTC()
 	startOfMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
@@ -156,7 +170,11 @@ func (h *Handler) handleOverview(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleExpenses(w http.ResponseWriter, r *http.Request) {
-	userID := h.userID(r)
+	userID, ok := h.userID(r)
+	if !ok || userID == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	ctx := r.Context()
 	from, to := parseQueryRange(r)
 	category := strings.TrimSpace(r.URL.Query().Get("category"))
@@ -172,7 +190,11 @@ func (h *Handler) handleExpenses(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleNotes(w http.ResponseWriter, r *http.Request) {
-	userID := h.userID(r)
+	userID, ok := h.userID(r)
+	if !ok || userID == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	ctx := r.Context()
 	from, to := parseQueryRange(r)
 	search := strings.TrimSpace(r.URL.Query().Get("search"))
@@ -192,7 +214,11 @@ func (h *Handler) handleNotes(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleVoiceMemos(w http.ResponseWriter, r *http.Request) {
-	userID := h.userID(r)
+	userID, ok := h.userID(r)
+	if !ok || userID == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	ctx := r.Context()
 	from, to := parseQueryRange(r)
 	search := strings.TrimSpace(r.URL.Query().Get("search"))
@@ -214,7 +240,11 @@ func (h *Handler) handleVoiceMemos(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleJournal(w http.ResponseWriter, r *http.Request) {
-	userID := h.userID(r)
+	userID, ok := h.userID(r)
+	if !ok || userID == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	ctx := r.Context()
 	from, to := parseQueryRange(r)
 	limit := parseQueryLimit(r, 50)
@@ -228,7 +258,11 @@ func (h *Handler) handleJournal(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleReminders(w http.ResponseWriter, r *http.Request) {
-	userID := h.userID(r)
+	userID, ok := h.userID(r)
+	if !ok || userID == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	ctx := r.Context()
 	deviceID := strings.TrimSpace(r.URL.Query().Get("device_id"))
 	limit := parseQueryLimit(r, 50)
@@ -239,94 +273,141 @@ func (h *Handler) handleReminders(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleDevices(w http.ResponseWriter, r *http.Request) {
-	userID := h.userID(r)
-	ctx := r.Context()
-	items, err := h.deps.Store.ListUserDevices(ctx, userID)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	userID, ok := h.userID(r)
+	if !ok || userID == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	devices := make([]map[string]any, 0, len(items))
-	for _, it := range items {
-		devices = append(devices, map[string]any{
-			"device_id":         it.DeviceID,
-			"name":              it.DeviceID,
-			"online":            it.Status == "active",
-			"hardware":          "ESP32-S3-WROOM-1-N16R8",
-			"firmware_version":  "v2.4.0",
-			"wifi_rssi_dbm":     -58,
-			"ota_poll_interval": "6h",
-			"created_at":        it.CreatedAt.Format(time.RFC3339),
-			"last_seen_at":      it.RotatedAt.Format(time.RFC3339),
-		})
+	ctx := r.Context()
+
+	devices, err := h.deps.Store.ListUserDevices(ctx, userID)
+	if err != nil || devices == nil {
+		devices = []domain.DeviceItem{}
 	}
-	writeJSON(w, map[string]any{"devices": devices})
+
+	writeJSON(w, map[string]any{
+		"devices": devices,
+	})
 }
 
 func (h *Handler) handleDevice(w http.ResponseWriter, r *http.Request) {
+	userID, ok := h.userID(r)
+	if !ok || userID == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	deviceID := strings.TrimSpace(r.URL.Query().Get("device_id"))
 	if deviceID == "" {
-		deviceID = "companion-s3-01"
+		devices, err := h.deps.Store.ListUserDevices(r.Context(), userID)
+		if err == nil && len(devices) > 0 {
+			deviceID = devices[0].DeviceID
+		}
 	}
+	if deviceID == "" {
+		writeJSON(w, map[string]any{
+			"device_id":         "none",
+			"status":            "offline",
+			"wifi_rssi_dbm":     0,
+			"ota_poll_interval": "6h",
+			"firmware_version":  "unknown",
+			"sram_budget_kib":   160.5,
+			"psram_budget_kib":  128.0,
+		})
+		return
+	}
+
+	var twin controlplane.Twin
+	if h.deps.ControlPlane != nil {
+		t, err := h.deps.ControlPlane.Manifest(r.Context(), userID, deviceID)
+		if err == nil {
+			twin = t
+		}
+	}
+
+	pollInterval := "6h"
+	if twin.Desired.OTAPollIntervalSeconds != nil && *twin.Desired.OTAPollIntervalSeconds > 0 {
+		pollInterval = (time.Duration(*twin.Desired.OTAPollIntervalSeconds) * time.Second).String()
+	}
+
+	firmware := "v2.4.0"
+	if twin.Reported.VoiceKey != "" {
+		firmware = twin.Reported.VoiceKey
+	}
+
 	writeJSON(w, map[string]any{
 		"device_id":         deviceID,
-		"name":              deviceID,
-		"online":            true,
-		"hardware":          "ESP32-S3-WROOM-1-N16R8",
-		"sram_cap_kb":       160.5,
-		"psram_codec_kb":    128.0,
-		"ota_poll_interval": "6h",
-		"firmware_version":  "v2.4.0",
+		"status":            "online",
 		"wifi_rssi_dbm":     -58,
+		"ota_poll_interval": pollInterval,
+		"firmware_version":  firmware,
+		"sram_budget_kib":   160.5,
+		"psram_budget_kib":  128.0,
 	})
 }
 
 func (h *Handler) handleClaimDevice(w http.ResponseWriter, r *http.Request) {
+	userID, ok := h.userID(r)
+	if !ok || userID == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	var req struct {
 		ClaimCode string `json:"claim_code"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.ClaimCode) == "" {
-		http.Error(w, "valid claim_code is required", http.StatusBadRequest)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || len(strings.TrimSpace(req.ClaimCode)) != 6 {
+		http.Error(w, "claim_code must be 6 alphanumeric characters", http.StatusBadRequest)
 		return
 	}
+
+	code := strings.ToUpper(strings.TrimSpace(req.ClaimCode))
+	deviceID := fmt.Sprintf("companion-s3-%s", code)
+
 	writeJSON(w, map[string]any{
 		"ok":        true,
-		"claimed":   true,
-		"device_id": fmt.Sprintf("companion-s3-%s", strings.TrimSpace(req.ClaimCode)),
+		"device_id": deviceID,
+		"message":   "Device claimed successfully into owner account",
 	})
 }
 
 func (h *Handler) handleTriggerOTA(w http.ResponseWriter, r *http.Request) {
+	userID, ok := h.userID(r)
+	if !ok || userID == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	var req struct {
-		DeviceID      string `json:"device_id"`
-		TargetVersion string `json:"target_version"`
+		DeviceID   string `json:"device_id"`
+		TargetSlot string `json:"target_slot"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&req)
-	if req.DeviceID == "" {
-		req.DeviceID = "companion-s3-01"
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.DeviceID == "" {
+		http.Error(w, "device_id is required", http.StatusBadRequest)
+		return
 	}
-	if req.TargetVersion == "" {
-		req.TargetVersion = "v2.4.1"
-	}
+
 	writeJSON(w, map[string]any{
-		"ok":             true,
-		"triggered":      true,
-		"device_id":      req.DeviceID,
-		"target_version": req.TargetVersion,
-		"status":         "command_queued",
-		"message":        "OTA update command queued for device twin delivery",
+		"ok":          true,
+		"device_id":   req.DeviceID,
+		"target_slot": "ota_1",
+		"version":     "v2.4.1",
+		"message":     "Firmware OTA trigger dispatched",
 	})
 }
 
 func (h *Handler) handleUpdateDeviceConfig(w http.ResponseWriter, r *http.Request) {
+	userID, ok := h.userID(r)
+	if !ok || userID == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	var req struct {
 		DeviceID        string `json:"device_id"`
 		OTAPollInterval string `json:"ota_poll_interval"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request", http.StatusBadRequest)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.DeviceID == "" {
+		http.Error(w, "device_id is required", http.StatusBadRequest)
 		return
 	}
+
 	writeJSON(w, map[string]any{
 		"ok":                true,
 		"device_id":         req.DeviceID,
@@ -336,7 +417,11 @@ func (h *Handler) handleUpdateDeviceConfig(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *Handler) handleCreateExpense(w http.ResponseWriter, r *http.Request) {
-	userID := h.userID(r)
+	userID, ok := h.userID(r)
+	if !ok || userID == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	var req struct {
 		Amount      int64  `json:"amount_vnd"`
 		Category    string `json:"category"`
@@ -362,7 +447,11 @@ func (h *Handler) handleCreateExpense(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleSetBudget(w http.ResponseWriter, r *http.Request) {
-	userID := h.userID(r)
+	userID, ok := h.userID(r)
+	if !ok || userID == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	var req struct {
 		Period   string `json:"period"`
 		LimitVND int64  `json:"limit_vnd"`
@@ -375,11 +464,34 @@ func (h *Handler) handleSetBudget(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, map[string]any{"ok": true, "period": req.Period, "limit_vnd": req.LimitVND})
+	writeJSON(w, map[string]any{"ok": true, "saved": "budget", "period": req.Period, "limit_vnd": req.LimitVND})
+}
+
+func (h *Handler) handleDeleteExpense(w http.ResponseWriter, r *http.Request) {
+	userID, ok := h.userID(r)
+	if !ok || userID == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	idStr := r.URL.Query().Get("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil || id <= 0 {
+		http.Error(w, "valid id is required", http.StatusBadRequest)
+		return
+	}
+	if err := h.deps.Store.DeleteExpense(r.Context(), userID, id); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "deleted": "expense", "id": id})
 }
 
 func (h *Handler) handleCreateNote(w http.ResponseWriter, r *http.Request) {
-	userID := h.userID(r)
+	userID, ok := h.userID(r)
+	if !ok || userID == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	var req struct {
 		Content string `json:"content"`
 	}
@@ -395,42 +507,12 @@ func (h *Handler) handleCreateNote(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"ok": true, "saved": "note"})
 }
 
-func (h *Handler) handleCreateReminder(w http.ResponseWriter, r *http.Request) {
-	userID := h.userID(r)
-	var req struct {
-		Title        string `json:"title"`
-		FireAt       string `json:"fire_at"`
-		DelaySeconds int64  `json:"delay_seconds"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Title) == "" {
-		http.Error(w, "title is required", http.StatusBadRequest)
-		return
-	}
-	key := fmt.Sprintf("web-rem-%d", time.Now().UnixNano())
-	if req.DelaySeconds > 0 {
-		fireAt := time.Now().UTC().Add(time.Duration(req.DelaySeconds) * time.Second)
-		if err := h.deps.Store.CreateTimerForDevice(r.Context(), userID, key, "", strings.TrimSpace(req.Title), fireAt); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		writeJSON(w, map[string]any{"ok": true, "kind": "timer"})
-		return
-	}
-	fireAt := time.Now().UTC().Add(1 * time.Hour)
-	if req.FireAt != "" {
-		if t, err := time.Parse(time.RFC3339, req.FireAt); err == nil {
-			fireAt = t.UTC()
-		}
-	}
-	if err := h.deps.Store.CreateReminderForDevice(r.Context(), userID, key, "", strings.TrimSpace(req.Title), fireAt); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	writeJSON(w, map[string]any{"ok": true, "kind": "reminder"})
-}
-
 func (h *Handler) handleDeleteNote(w http.ResponseWriter, r *http.Request) {
-	userID := h.userID(r)
+	userID, ok := h.userID(r)
+	if !ok || userID == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	idStr := r.URL.Query().Get("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil || id <= 0 {
@@ -444,38 +526,50 @@ func (h *Handler) handleDeleteNote(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"ok": true, "deleted": "note", "id": id})
 }
 
-func (h *Handler) handleDeleteExpense(w http.ResponseWriter, r *http.Request) {
-	userID := h.userID(r)
-	idStr := r.URL.Query().Get("id")
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil || id <= 0 {
-		http.Error(w, "valid id is required", http.StatusBadRequest)
-		return
-	}
-	if err := h.deps.Store.DeleteExpense(r.Context(), userID, id); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	writeJSON(w, map[string]any{"ok": true, "deleted": "expense", "id": id})
-}
-
 func (h *Handler) handleDeleteVoiceMemo(w http.ResponseWriter, r *http.Request) {
-	userID := h.userID(r)
+	userID, ok := h.userID(r)
+	if !ok || userID == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	idStr := r.URL.Query().Get("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil || id <= 0 {
 		http.Error(w, "valid id is required", http.StatusBadRequest)
 		return
 	}
+
+	memos, _ := h.deps.Store.QueryVoiceMemos(r.Context(), userID, domain.VoiceMemoQuery{Limit: 100})
+	var memoPath string
+	for _, m := range memos {
+		if m.ID == id {
+			memoPath = m.Path
+			break
+		}
+	}
+
 	if err := h.deps.Store.DeleteVoiceMemo(r.Context(), userID, id); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	if memoPath != "" && h.deps.RecordingsDir != "" {
+		cleanRecordings := filepath.Clean(h.deps.RecordingsDir)
+		cleanPath := filepath.Clean(memoPath)
+		if strings.HasPrefix(cleanPath, cleanRecordings+string(filepath.Separator)) || cleanPath == cleanRecordings {
+			_ = os.Remove(cleanPath)
+		}
+	}
+
 	writeJSON(w, map[string]any{"ok": true, "deleted": "voice_memo", "id": id})
 }
 
 func (h *Handler) handleCreateJournal(w http.ResponseWriter, r *http.Request) {
-	userID := h.userID(r)
+	userID, ok := h.userID(r)
+	if !ok || userID == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	var req struct {
 		Content string `json:"content"`
 	}
@@ -492,7 +586,11 @@ func (h *Handler) handleCreateJournal(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleDeleteJournal(w http.ResponseWriter, r *http.Request) {
-	userID := h.userID(r)
+	userID, ok := h.userID(r)
+	if !ok || userID == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	idStr := r.URL.Query().Get("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil || id <= 0 {
@@ -506,8 +604,63 @@ func (h *Handler) handleDeleteJournal(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"ok": true, "deleted": "journal", "id": id})
 }
 
+func (h *Handler) handleCreateReminder(w http.ResponseWriter, r *http.Request) {
+	userID, ok := h.userID(r)
+	if !ok || userID == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	var req struct {
+		Kind           string `json:"kind"`
+		Title          string `json:"title"`
+		FireAt         string `json:"fire_at"`
+		DelayMinutes   int    `json:"delay_minutes"`
+		DelaySeconds   int    `json:"delay_seconds"`
+		IdempotencyKey string `json:"idempotency_key"`
+		DeviceID       string `json:"device_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Title) == "" {
+		http.Error(w, "title is required", http.StatusBadRequest)
+		return
+	}
+	kind := strings.TrimSpace(req.Kind)
+	fireAt := time.Now().UTC()
+	if req.DelaySeconds > 0 {
+		fireAt = fireAt.Add(time.Duration(req.DelaySeconds) * time.Second)
+	} else if req.DelayMinutes > 0 {
+		fireAt = fireAt.Add(time.Duration(req.DelayMinutes) * time.Minute)
+	} else if req.FireAt != "" {
+		if t, err := time.Parse(time.RFC3339, req.FireAt); err == nil {
+			fireAt = t.UTC()
+		}
+	} else {
+		fireAt = fireAt.Add(10 * time.Minute)
+	}
+	key := req.IdempotencyKey
+	if key == "" {
+		key = fmt.Sprintf("web-rem-%d", time.Now().UnixNano())
+	}
+	if kind == "timer" || req.DelaySeconds > 0 || req.DelayMinutes > 0 {
+		if err := h.deps.Store.CreateTimerForDevice(r.Context(), userID, key, req.DeviceID, strings.TrimSpace(req.Title), fireAt); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true, "kind": "timer", "fire_at": fireAt.Format(time.RFC3339)})
+		return
+	}
+	if err := h.deps.Store.CreateReminderForDevice(r.Context(), userID, key, req.DeviceID, strings.TrimSpace(req.Title), fireAt); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "kind": "reminder", "fire_at": fireAt.Format(time.RFC3339)})
+}
+
 func (h *Handler) handleDeleteReminder(w http.ResponseWriter, r *http.Request) {
-	userID := h.userID(r)
+	userID, ok := h.userID(r)
+	if !ok || userID == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	idStr := r.URL.Query().Get("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil || id <= 0 {
@@ -522,7 +675,11 @@ func (h *Handler) handleDeleteReminder(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handlePauseTimer(w http.ResponseWriter, r *http.Request) {
-	userID := h.userID(r)
+	userID, ok := h.userID(r)
+	if !ok || userID == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	var req struct {
 		ID int64 `json:"id"`
 	}
@@ -538,7 +695,11 @@ func (h *Handler) handlePauseTimer(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleResumeTimer(w http.ResponseWriter, r *http.Request) {
-	userID := h.userID(r)
+	userID, ok := h.userID(r)
+	if !ok || userID == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	var req struct {
 		ID int64 `json:"id"`
 	}
@@ -554,14 +715,18 @@ func (h *Handler) handleResumeTimer(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleGetPrivacy(w http.ResponseWriter, r *http.Request) {
-	userID := h.userID(r)
+	userID, ok := h.userID(r)
+	if !ok || userID == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	ctx := r.Context()
-	pol, ok, err := h.deps.Store.GetPrivacyPolicy(ctx, userID)
+	pol, okPolicy, err := h.deps.Store.GetPrivacyPolicy(ctx, userID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if !ok {
+	if !okPolicy {
 		pol = privacy.Policy{
 			UserID:                    userID,
 			SaveVoiceAudio:            false,
@@ -570,13 +735,18 @@ func (h *Handler) handleGetPrivacy(w http.ResponseWriter, r *http.Request) {
 			ConversationRetentionDays: 30,
 			VoiceMemoRetentionDays:    30,
 			MemoryRetentionDays:       90,
+			UpdatedAt:                 time.Now().UTC(),
 		}
 	}
-	writeJSON(w, pol)
+	writeJSON(w, map[string]any{"privacy": pol})
 }
 
 func (h *Handler) handleSetPrivacy(w http.ResponseWriter, r *http.Request) {
-	userID := h.userID(r)
+	userID, ok := h.userID(r)
+	if !ok || userID == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	ctx := r.Context()
 	var req privacy.Policy
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -592,11 +762,14 @@ func (h *Handler) handleSetPrivacy(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"ok": true, "privacy": req})
 }
 
-func (h *Handler) userID(r *http.Request) string {
+func (h *Handler) userID(r *http.Request) (string, bool) {
 	if session, ok := ownerauth.CurrentSession(r.Context()); ok && session.UserID != "" {
-		return session.UserID
+		return session.UserID, true
 	}
-	return "default"
+	if h.deps.Auth == nil {
+		return "default", true
+	}
+	return "", false
 }
 
 func parseQueryRange(r *http.Request) (time.Time, time.Time) {

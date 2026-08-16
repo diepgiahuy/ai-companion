@@ -30,10 +30,10 @@ jobs:
             -e POSTGRES_DB=companion \
             "$POSTGRES_IMAGE"
           for _ in $(seq 1 60); do
-            if docker exec companion-tier1-pg pg_isready -U companion -d companion >/dev/null 2>&1; then break; fi
+            if docker exec companion-tier1-pg psql -U companion -d companion -c "SELECT 1" >/dev/null 2>&1; then break; fi
             sleep 1
           done
-          docker exec companion-tier1-pg pg_isready -U companion -d companion
+          docker exec companion-tier1-pg psql -U companion -d companion -c "SELECT 1"
           docker run --rm --network host \
             -v "$PWD/db/postgres:/migrations:ro" \
             "$ATLAS_IMAGE" migrate apply \
