@@ -49,3 +49,25 @@ func TestZeroMonthlyLLMTokenLimitExplicitlyDisablesQuota(t *testing.T) {
 		t.Fatalf("monthly token limit = %d, want 0", cfg.LLM.MonthlyTokenLimit)
 	}
 }
+
+func TestProductionRequiresSignedOTA(t *testing.T) {
+	t.Setenv("COMPANION_PROFILE", "production")
+	t.Setenv("COMPANION_ALLOW_MOCK_PROVIDERS", "false")
+	t.Setenv("OTA_REQUIRE_SIGNATURE", "false")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected unsigned OTA rejection in production")
+	}
+
+	t.Setenv("OTA_REQUIRE_SIGNATURE", "true")
+	if _, err := Load(); err != nil {
+		t.Fatalf("expected signed OTA production config to load: %v", err)
+	}
+}
+
+func TestInvalidOTARequireSignatureFailsClosed(t *testing.T) {
+	t.Setenv("COMPANION_PROFILE", "development")
+	t.Setenv("OTA_REQUIRE_SIGNATURE", "tru")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected malformed OTA_REQUIRE_SIGNATURE to fail")
+	}
+}
