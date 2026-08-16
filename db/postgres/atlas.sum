@@ -1,7 +1,8 @@
-h1:wD5J5WNwyEDF+svtVugbWPYLxcuTXW3+khC9R0hHOFs=
+h1:oK/U+HDbscITd6QSl5DuI2tsqxte6PhtKC5VR54mtKk=
 20260814070000_initial.sql h1:sWDEn0p5dtJknSA4zU5Sjl3UZlcvvDeu9r6jeYFUOJc=
 20260815093000_voice_mail.sql h1:N/bXUxabvaIs0cGOdiN2ieOX0PTf26W96zfckNFaVoM=
 20260815160000_device_claim_delivery.sql h1:xcoHLkEXCW9Esi6bjAxFwItNyZ56/RYbodn3m8P09mk=
 20260815170000_pairing.sql h1:R5j2/8YNYTw1h/hfJkhfYP/fjqLzbbmzjRZcSl2PUtg=
 20260816220000_savings_goals.sql h1:qay8XLds8YYZddiLYs3RblZMwr4xnAryt8gfk/OaKKU=
 20260817000000_device_relationships_revocation.sql h1:7aBlp1So21nbqeP96+q83YoQz/6u0OZQO7pZ9kTXc+4=
+20260817010000_device_settings_state.sql h1:rAB5NqhvRjiB61UMPEpCyPTm/g0mNVR8aSCIvr9ktVc=
