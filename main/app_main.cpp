@@ -225,6 +225,15 @@ extern "C" void app_main() {
 
   const BootGesture gesture = boot_gesture(button, display);
 
+  // A secure-storage build must never let nvs_flash_init() implicitly create
+  // an irreversible HMAC eFuse key. Manufacturing provisions the key first;
+  // this preflight verifies its purpose before NVS code can run.
+  if (!provisioning::secure_storage_preflight()) {
+    ESP_LOGE(kTag, "secure storage preflight failed before NVS initialization");
+    display.show(UiState::error, "SECURE STORAGE");
+    return;
+  }
+
   // Product identity now lives in NVS. Never auto-erase an initialized product
   // identity merely because NVS reports a version/space problem. If NVS cannot
   // mount, only the explicit long factory-reset gesture may erase the full

@@ -5,6 +5,11 @@
 
 namespace companion::provisioning {
 
+// Must run before nvs_flash_init(). In the normal development build this is a
+// no-op. A secure-storage build fails closed unless its configured eFuse block
+// was deliberately provisioned with an HMAC_UP key outside the application.
+bool secure_storage_preflight();
+
 enum class PersistedState {
   unprovisioned,
   pending_claim,
