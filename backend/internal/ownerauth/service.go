@@ -50,6 +50,20 @@ type Session struct {
 	ExpiresAt time.Time
 }
 
+type sessionContextKey struct{}
+
+func WithSession(ctx context.Context, session Session) context.Context {
+	return context.WithValue(ctx, sessionContextKey{}, session)
+}
+
+func CurrentSession(ctx context.Context) (Session, bool) {
+	if ctx == nil {
+		return Session{}, false
+	}
+	s, ok := ctx.Value(sessionContextKey{}).(Session)
+	return s, ok
+}
+
 type ClaimAuthorization struct {
 	UserID      string
 	BootstrapID string
