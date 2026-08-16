@@ -2,12 +2,13 @@
 
 #include "cJSON.h"
 #include "esp_random.h"
-#include "mbedtls/md.h"
+#include "psa/crypto.h"
 
 #include <array>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
+#include <string>
 #include <string_view>
 
 namespace companion {
@@ -141,6 +142,31 @@ bool encode_base32_10(const uint8_t* input, std::array<char, 20>& output) {
   return true;
 }
 
+bool hmac_sha256(std::string_view key, std::string_view message,
+                 std::array<uint8_t, 32>& output) {
+  if (key.empty() || message.empty() || psa_crypto_init() != PSA_SUCCESS) return false;
+
+  psa_key_attributes_t attributes = PSA_KEY_ATTRIBUTES_INIT;
+  psa_set_key_type(&attributes, PSA_KEY_TYPE_HMAC);
+  psa_set_key_usage_flags(&attributes, PSA_KEY_USAGE_SIGN_MESSAGE);
+  psa_set_key_algorithm(&attributes, PSA_ALG_HMAC(PSA_ALG_SHA_256));
+
+  psa_key_id_t key_id = 0;
+  const psa_status_t import_status = psa_import_key(
+      &attributes, reinterpret_cast<const uint8_t*>(key.data()), key.size(), &key_id);
+  psa_reset_key_attributes(&attributes);
+  if (import_status != PSA_SUCCESS) return false;
+
+  size_t output_length = 0;
+  const psa_status_t mac_status = psa_mac_compute(
+      key_id, PSA_ALG_HMAC(PSA_ALG_SHA_256),
+      reinterpret_cast<const uint8_t*>(message.data()), message.size(),
+      output.data(), output.size(), &output_length);
+  const psa_status_t destroy_status = psa_destroy_key(key_id);
+  return mac_status == PSA_SUCCESS && destroy_status == PSA_SUCCESS &&
+         output_length == output.size();
+}
+
 bool validate_pairing_envelope(const cJSON* root,
                                std::string_view expected_session,
                                const cJSON*& payload,
@@ -208,18 +234,13 @@ bool WebSocketVoiceBackend::pairing_discovery_alias(std::array<char, 20>& output
   const std::time_t now = std::time(nullptr);
   if (session.size() < 8 || now < 1'577'836'800) return false;
 
-  const mbedtls_md_info_t* sha256 = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
-  if (sha256 == nullptr) return false;
   std::array<char, 64> message{};
   const long long slot = static_cast<long long>(now / 30);
   const int length = std::snprintf(message.data(), message.size(),
                                    "companion-pairing-v1:%lld", slot);
   if (length <= 0 || static_cast<size_t>(length) >= message.size()) return false;
   std::array<uint8_t, 32> digest{};
-  if (mbedtls_md_hmac(
-          sha256, reinterpret_cast<const unsigned char*>(session.data()), session.size(),
-          reinterpret_cast<const unsigned char*>(message.data()), static_cast<size_t>(length),
-          digest.data()) != 0) {
+  if (!hmac_sha256(session, {message.data(), static_cast<size_t>(length)}, digest)) {
     return false;
   }
   return encode_base32_10(digest.data(), output);
