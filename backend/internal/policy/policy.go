@@ -14,6 +14,8 @@ import (
 	"companion-server/internal/pipeline"
 )
 
+const destructiveConfirmationTTL = 15 * time.Second
+
 type Entitlements interface {
 	Allowed(context.Context, string, string) bool
 }
@@ -59,9 +61,9 @@ type DestructiveConfirmation struct {
 type destructiveConfirmationKey struct{}
 
 // NewDestructiveConfirmation scopes approval to one owner, one exact tool, and
-// one canonical argument payload. The opaque confirmation can be persisted by
-// a future confirmation service, then injected into the execution context only
-// after explicit user approval. Model text alone can never create this value.
+// one canonical argument payload. Trusted in-process callers may inject this
+// value after an explicit approval. Product model ingress instead uses the
+// ConfirmationRequester boundary below so the model never receives authority.
 func NewDestructiveConfirmation(userID, toolName, arguments string, expiresAt time.Time) (DestructiveConfirmation, error) {
 	userID = strings.TrimSpace(userID)
 	toolName = strings.TrimSpace(toolName)
@@ -105,30 +107,56 @@ func CanonicalArgumentsHash(arguments string) (string, error) {
 }
 
 func (a Authorizer) authorizeDestructive(ctx context.Context, turn pipeline.TurnContext, d capability.ToolDefinition, req capability.ToolRequest) error {
-	confirmation, ok := DestructiveConfirmationFromContext(ctx)
-	if !ok {
-		return fmt.Errorf("destructive action requires scoped user confirmation")
-	}
 	userID := strings.TrimSpace(turn.UserID)
 	if userID == "" {
 		userID = strings.TrimSpace(turn.DeviceID)
-	}
-	if confirmation.UserID != userID {
-		return fmt.Errorf("destructive confirmation owner mismatch")
-	}
-	if confirmation.ToolName != d.Name {
-		return fmt.Errorf("destructive confirmation tool mismatch")
 	}
 	hash, err := CanonicalArgumentsHash(req.Arguments)
 	if err != nil {
 		return err
 	}
-	if confirmation.ArgumentsHash != hash {
-		return fmt.Errorf("destructive confirmation arguments mismatch")
-	}
-	now := time.Now()
+	now := time.Now().UTC()
 	if a.Now != nil {
-		now = a.Now()
+		now = a.Now().UTC()
+	}
+
+	if confirmation, ok := DestructiveConfirmationFromContext(ctx); ok {
+		return validateDestructiveConfirmation(confirmation, userID, d.Name, hash, now)
+	}
+
+	requester, ok := capability.ConfirmationRequesterFromContext(ctx)
+	if !ok {
+		return fmt.Errorf("destructive action requires explicit user confirmation")
+	}
+	prompt := strings.TrimSpace(d.Description)
+	if prompt == "" {
+		prompt = "Confirm " + d.Name
+	}
+	expiresAt := now.Add(destructiveConfirmationTTL)
+	approved, err := requester.RequestConfirmation(ctx, capability.ConfirmationIntent{
+		ToolName:      d.Name,
+		Description:   prompt,
+		ArgumentsHash: hash,
+		ExpiresAt:     expiresAt,
+	})
+	if err != nil {
+		return fmt.Errorf("destructive confirmation failed: %w", err)
+	}
+	if !approved {
+		return fmt.Errorf("destructive action not approved")
+	}
+	return nil
+}
+
+func validateDestructiveConfirmation(confirmation DestructiveConfirmation, userID, toolName, argumentsHash string, now time.Time) error {
+	if confirmation.UserID != userID {
+		return fmt.Errorf("destructive confirmation owner mismatch")
+	}
+	if confirmation.ToolName != toolName {
+		return fmt.Errorf("destructive confirmation tool mismatch")
+	}
+	if confirmation.ArgumentsHash != argumentsHash {
+		return fmt.Errorf("destructive confirmation arguments mismatch")
 	}
 	if !confirmation.ExpiresAt.After(now) {
 		return fmt.Errorf("destructive confirmation expired")
