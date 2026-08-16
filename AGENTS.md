@@ -18,7 +18,30 @@ Use one source of truth per concern:
    decisions. They must not duplicate live PR/branch queues.
 
 If prose conflicts with current `main`, inspect the merged implementation and recent
-PR evidence before changing code or status claims.
+PR evidence before changing code or status claims. An issue can become stale: use it for
+the requested outcome/acceptance, not as an unquestioned snapshot of current code or
+live dependency status.
+
+## No silent assumptions
+
+Before relying on a material fact, verify it from the most authoritative available
+source. Material facts include current files/symbols, schema/API shape, issue blockers,
+CI/test state, dependency/provider behavior, security/authorization boundaries, and
+hardware capabilities.
+
+Use this verification order:
+
+1. current repository/GitHub state for facts about this project;
+2. current primary/official source for external APIs, frameworks, protocols, security,
+   hardware, provider behavior, or version-sensitive claims;
+3. established current repository pattern when the official source does not decide a
+   project-specific design question;
+4. common industry practice only as a candidate approach, never as repository truth.
+
+If a correctness-, security-, data-integrity-, migration-, concurrency-, or product-
+semantic fact remains unknown after those checks, mark it unknown and run a focused
+spike or request a decision instead of silently guessing. Common practice is not a
+substitute for a verifiable fact.
 
 ## Start with repository truth
 
@@ -26,7 +49,8 @@ PR evidence before changing code or status claims.
   can affect the requested outcome. Do not audit the entire repository by default.
 - Verify referenced paths, commands, APIs, dependencies, and hardware before relying
   on them. Mark a new path explicitly when creating one.
-- Separate requirement, implementation decision, and benchmark/spike hypothesis.
+- Separate requirement, verified fact, implementation decision, and benchmark/spike
+  hypothesis.
 - Never describe planned infrastructure, providers, CI, simulation, or hardware proof
   as active until it exists and has relevant evidence.
 - Prefer primary documentation for time-sensitive framework, protocol, security, and
@@ -50,7 +74,7 @@ PR evidence before changing code or status claims.
 - `wokwi/`: simulator configuration.
 - `ai_development_workflow.md`: canonical implementation, review, delegation, and
   verification lifecycle.
-- `.agents/rules/github_issue_generation.md`: ready-issue specification contract.
+- `.agents/rules/github_issue_generation.md`: issue-type and executable-issue contract.
 - `docs/TEST_EVIDENCE_LADDER.md`: evidence classification and promotion boundaries.
 
 ## Architecture invariants
@@ -73,7 +97,13 @@ PR evidence before changing code or status claims.
 
 - Planning/review/research requests are read-only unless implementation is explicitly
   authorized.
-- For authorized implementation, make the in-scope reversible changes and run the
+- For authorized implementation, first revalidate the issue against exact current
+  `main`, live blockers, relevant code, and any version-sensitive external facts.
+- Non-material drift may change the implementation approach but must not silently
+  change the requested output or acceptance criteria.
+- Material drift, conflicting product intent, or an unresolved material fact requires
+  a spike/decision/replan before code changes continue.
+- For valid implementation work, make the in-scope reversible changes and run the
   narrowest relevant non-destructive oracle without asking first.
 - Require explicit human authorization for purchases, production migrations,
   deployment, irreversible eFuse/secure-boot operations, secret rotation, destructive
@@ -84,11 +114,12 @@ PR evidence before changing code or status claims.
 
 ## Canonical pointers
 
-For implementation lifecycle, risk classification, delegation, review, PR execution
-records, verification, and definition of done, follow `ai_development_workflow.md`.
+For implementation lifecycle, issue revalidation, risk classification, delegation,
+independent final review, PR execution records, verification, and definition of done,
+follow `ai_development_workflow.md`.
 
-For issue specification and clean splitting, follow
-`.agents/rules/github_issue_generation.md`.
+For issue types, strict output/acceptance/scenario specification, and clean splitting,
+follow `.agents/rules/github_issue_generation.md`.
 
 For engineering operating philosophy, invariants, and quality gates, follow
 `.agents/rules/senior_engineering_invariants.md`.
@@ -97,4 +128,5 @@ For what host tests, software-device Tier 1, Wokwi, and physical HIL can prove, 
 `docs/TEST_EVIDENCE_LADDER.md`.
 
 Do not duplicate those procedures into vendor-specific `.codex`, `.claude`, `.gemini`,
-nested `AGENTS.md`, or ad-hoc workflow files without measured need.
+nested `AGENTS.md`, ad-hoc workflow frameworks, or new Skills without measured repeated
+need.
