@@ -15,6 +15,7 @@ import (
 
 type capabilityPending struct {
 	generation uint64
+	turnID     string
 	result     chan protocol.CapabilityResultPayload
 }
 
@@ -43,9 +44,15 @@ func capabilityKey(name, version string) string {
 }
 
 func allowedDeviceCapability(descriptor protocol.CapabilityDescriptor) bool {
-	return descriptor.Name == devicecap.VolumeSetName &&
-		descriptor.Version == devicecap.VolumeSetVersion &&
-		descriptor.Kind == "command"
+	if descriptor.Version != "1" || descriptor.Kind != "command" {
+		return false
+	}
+	switch descriptor.Name {
+	case devicecap.VolumeSetName, devicecap.UserConfirmationName:
+		return true
+	default:
+		return false
+	}
 }
 
 func capabilityState(s *session, create bool) *sessionCapabilityState {
@@ -87,6 +94,10 @@ func (s *session) Call(ctx context.Context, call devicecap.Call) (devicecap.Resu
 	if err := ctx.Err(); err != nil {
 		return devicecap.Result{}, err
 	}
+	turnID := strings.TrimSpace(call.TurnID)
+	if len(turnID) > 128 {
+		return devicecap.Result{}, fmt.Errorf("device capability turn_id exceeds size limit")
+	}
 
 	s.mu.Lock()
 	generation := s.generation
@@ -115,7 +126,7 @@ func (s *session) Call(ctx context.Context, call devicecap.Call) (devicecap.Resu
 	}
 
 	correlationID := "cap-" + s.nextMessageID()
-	waiter := &capabilityPending{generation: generation, result: make(chan protocol.CapabilityResultPayload, 1)}
+	waiter := &capabilityPending{generation: generation, turnID: turnID, result: make(chan protocol.CapabilityResultPayload, 1)}
 	state.mu.Lock()
 	if state.closed {
 		state.mu.Unlock()
@@ -133,7 +144,7 @@ func (s *session) Call(ctx context.Context, call devicecap.Call) (devicecap.Resu
 	defer removePending()
 
 	payload := protocol.CapabilityCallPayload{Name: call.Name, Version: call.Version, Arguments: call.Arguments, DeadlineMS: deadlineMS}
-	if err := s.sendJSONMeta(ctx, protocol.CapabilityCallType, protocol.Metadata{CorrelationID: correlationID, GenerationID: generation}, payload); err != nil {
+	if err := s.sendJSONMeta(ctx, protocol.CapabilityCallType, protocol.Metadata{CorrelationID: correlationID, TurnID: turnID, GenerationID: generation}, payload); err != nil {
 		return devicecap.Result{}, err
 	}
 
@@ -142,7 +153,7 @@ func (s *session) Call(ctx context.Context, call devicecap.Call) (devicecap.Resu
 	select {
 	case <-waitCtx.Done():
 		cancelCtx, cancelSend := context.WithTimeout(context.Background(), 250*time.Millisecond)
-		_ = s.sendJSONMeta(cancelCtx, protocol.CapabilityCancelType, protocol.Metadata{CorrelationID: correlationID, GenerationID: generation}, protocol.CapabilityCancelPayload{Reason: capabilityCancelReason(waitCtx.Err())})
+		_ = s.sendJSONMeta(cancelCtx, protocol.CapabilityCancelType, protocol.Metadata{CorrelationID: correlationID, TurnID: turnID, GenerationID: generation}, protocol.CapabilityCancelPayload{Reason: capabilityCancelReason(waitCtx.Err())})
 		cancelSend()
 		return devicecap.Result{}, waitCtx.Err()
 	case result, ok := <-waiter.result:
@@ -248,9 +259,9 @@ func (s *session) handleCapabilityControl(ctx context.Context, data []byte) (boo
 				state.mu.Unlock()
 				return fmt.Errorf("unknown capability correlation_id")
 			}
-			if message.GenerationID != waiter.generation {
+			if message.GenerationID != waiter.generation || strings.TrimSpace(message.TurnID) != waiter.turnID {
 				state.mu.Unlock()
-				return fmt.Errorf("stale capability generation")
+				return fmt.Errorf("stale capability turn or generation")
 			}
 			delete(state.pending, message.CorrelationID)
 			state.mu.Unlock()
