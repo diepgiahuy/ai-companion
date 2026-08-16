@@ -30,10 +30,10 @@ func (r *Router) Plan(ctx context.Context, query string) Plan {
 	}
 	// Destructive context controls use a narrow route and return immediately so
 	// ambiguous words such as "lịch" in "lịch sử" cannot expose unrelated packs.
-	if has("xóa lịch sử", "xoá lịch sử", "clear history", "delete conversation", "xóa hội thoại", "xoá hội thoại") {
+	if has("xóa lịch sử", "xoá lịch sử", "clear history", "delete conversation", "xóa hội thoại", "xoá hội thoại", "xóa sạch toàn bộ lịch sử", "clear all conversation") {
 		return Plan{Packs: []string{"context"}}
 	}
-	if has("tiêu", "chi ", "chi tiêu", "expense", "mua", "cafe", "cà phê", "ăn", "tiền") {
+	if has("tiêu", "chi ", "chi tiêu", "expense", "mua", "cafe", "cà phê", "ăn", "tiền", "cành", "nghìn đồng", "bún bò") {
 		packs["expense"] = true
 		packs["budget"] = true
 		switch {
@@ -59,7 +59,7 @@ func (r *Router) Plan(ctx context.Context, query string) Plan {
 		packs["schedule"] = true
 		uris = append(uris, "timers://active")
 	}
-	if has("nhắc", "reminder", "calendar", "schedule", "lịch hôm", "lịch sắp", "lịch tới", "lịch ngày", "lịch tuần", "cuộc hẹn", "appointment") {
+	if has("nhắc", "reminder", "calendar", "schedule", "lịch hôm", "lịch sắp", "lịch tới", "lịch ngày", "lịch tuần", "lịch họp", "cuộc hẹn", "appointment") {
 		packs["schedule"] = true
 		if has("hôm nay", "today") {
 			uris = append(uris, "reminders://today")
@@ -78,10 +78,10 @@ func (r *Router) Plan(ctx context.Context, query string) Plan {
 	if has("ghi âm", "voice memo", "voice note", "recording") {
 		packs["voice"] = true
 	}
-	if has("giá vàng", "xau", "gold", "market", "chứng khoán", "stock", "crypto", "bitcoin", "ethereum", "tỷ giá", "exchange rate", "usd/vnd") {
+	if has("giá vàng", "xau", "gold", "market", "chứng khoán", "stock", "crypto", "bitcoin", "ethereum", "tỷ giá", "exchange rate", "usd/vnd", "eur/vnd", "sjc") {
 		packs["market"] = true
 	}
-	if has("nhớ", "ghi nhớ", "remember", "quên", "forget", "từng nói", "sở thích", "thích ", "ghét ", "mục tiêu", "personal memory") {
+	if has("nhớ", "ghi nhớ", "remember", "quên", "forget", "từng nói", "sở thích", "dị ứng", "sinh nhật", "mục tiêu", "personal memory") || ((has("thích ", "ghét ") || strings.HasSuffix(q, "thích")) && !has("giải thích")) {
 		packs["memory"] = true
 	}
 	// Unknown/general conversation keeps all native packs available for compatibility,
