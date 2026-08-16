@@ -87,8 +87,6 @@ public:
     return playback_sample_rate_hz_.load();
   }
 
-  // Server-internal capability. This extension registers on the same
-  // authenticated WebSocket and is never exposed to the model ToolRegistry.
   bool enable_confirmation_protocol();
   bool advertise_user_confirmation();
   bool poll_user_confirmation(UserConfirmationRequest& request);
@@ -96,9 +94,6 @@ public:
   bool respond_user_confirmation(const UserConfirmationRequest& request,
                                  bool approved);
 
-  // Pairing reuses this exact authenticated Protocol-v2 client. Enabling it
-  // before start() installs a composite pairing handler; no second WebSocket is
-  // created.
   bool enable_pairing_protocol();
   bool pairing_discovery_alias(std::array<char, 20>& output);
   bool create_pairing_session(std::string_view candidate_discovery_id,
@@ -119,6 +114,7 @@ private:
   static constexpr size_t kOpusFrameSamples = 960;
   static constexpr size_t kMaximumOpusPacketBytes = 1'275;
   static constexpr size_t kMaximumDecodedSamples = 1'440;
+  static constexpr size_t kConfirmationControlBytes = 2'049;
 
   enum class CommandType : uint8_t {
     hello,
@@ -198,7 +194,7 @@ private:
   UserConfirmationRequest active_confirmation_{};
   bool confirmation_ready_{};
   bool confirmation_active_{};
-  std::array<char, 8'193> confirmation_text_payload_{};
+  std::array<char, kConfirmationControlBytes> confirmation_text_payload_{};
   size_t confirmation_text_payload_size_{};
   int confirmation_receive_opcode_{};
   std::array<char, 8'193> text_payload_{};
