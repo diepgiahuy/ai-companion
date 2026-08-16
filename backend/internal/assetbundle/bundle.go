@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image/png"
 	"io"
 	"path"
 	"sort"
@@ -124,6 +125,11 @@ func Pack(m Manifest, files map[string][]byte, keyID string, privateKey ed25519.
 	m.Signature = SignatureMetadata{Algorithm: "ed25519", KeyID: keyID}
 	if err := validateManifestShape(m, false); err != nil {
 		return nil, err
+	}
+	for _, a := range m.Assets {
+		if err := validateAssetPayload(a, files[a.Path]); err != nil {
+			return nil, err
+		}
 	}
 	unsigned, err := signingBytes(m)
 	if err != nil {
@@ -266,18 +272,8 @@ func Validate(raw []byte, opts ValidateOptions) (Report, error) {
 	if len(entries) != len(m.Assets)+1 {
 		return report, errors.New("archive contains payloads not declared by manifest")
 	}
-	seenPath := map[string]bool{}
-	seenRole := map[string]bool{}
 	var payloadBytes int64
 	for _, a := range m.Assets {
-		if seenPath[a.Path] {
-			return report, fmt.Errorf("duplicate manifest path %q", a.Path)
-		}
-		if seenRole[a.Role] {
-			return report, fmt.Errorf("duplicate asset role %q", a.Role)
-		}
-		seenPath[a.Path] = true
-		seenRole[a.Role] = true
 		data, ok := entries[a.Path]
 		if !ok {
 			return report, fmt.Errorf("missing archive payload %q", a.Path)
@@ -330,7 +326,17 @@ func validateManifestShape(m Manifest, requireSignature bool) error {
 	if len(m.Assets) == 0 || len(m.Assets) > MaxEntries {
 		return errors.New("assets count is outside allowed range")
 	}
+	seenPaths := make(map[string]bool, len(m.Assets))
+	seenRoles := make(map[string]bool, len(m.Assets))
 	for _, a := range m.Assets {
+		if seenPaths[a.Path] {
+			return fmt.Errorf("duplicate manifest path %q", a.Path)
+		}
+		if seenRoles[a.Role] {
+			return fmt.Errorf("duplicate asset role %q", a.Role)
+		}
+		seenPaths[a.Path] = true
+		seenRoles[a.Role] = true
 		if !safeRole(a.Role) || !allowedTypes[a.Type] || !safeAssetPath(a.Path) {
 			return fmt.Errorf("asset metadata is invalid for %q", a.Path)
 		}
@@ -386,6 +392,13 @@ func validateAssetPayload(a Asset, data []byte) error {
 		}
 		if a.Width != w || a.Height != h {
 			return fmt.Errorf("asset %q image dimensions do not match manifest", a.Path)
+		}
+		cfg, err := png.DecodeConfig(bytes.NewReader(data))
+		if err != nil || cfg.Width != w || cfg.Height != h {
+			return fmt.Errorf("asset %q PNG structure is invalid", a.Path)
+		}
+		if _, err := png.Decode(bytes.NewReader(data)); err != nil {
+			return fmt.Errorf("asset %q PNG payload is corrupt: %w", a.Path, err)
 		}
 	case "theme_json":
 		if a.Width != 0 || a.Height != 0 {
