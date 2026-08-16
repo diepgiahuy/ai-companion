@@ -47,5 +47,28 @@ int main() {
     assert(!gesture.consume_short());
   }
 
+  {
+    // A press that predates a security prompt is claimed until release. Its
+    // release cannot become approval, PTT, or a pairing hold. Only a fresh
+    // post-prompt press may emit a short action.
+    PressGesture gesture({.debounce_ms = 30, .hold_ms = 2'000});
+    gesture.reset(false, 0);
+    gesture.sample(true, 10);
+    gesture.sample(true, 40);
+    gesture.suppress_current_press(true, 100);
+    gesture.sample(true, 3'000);
+    assert(!gesture.consume_hold());
+    gesture.sample(false, 3'010);
+    gesture.sample(false, 3'040);
+    assert(!gesture.consume_short());
+    assert(!gesture.consume_hold());
+
+    gesture.sample(true, 3'100);
+    gesture.sample(true, 3'130);
+    gesture.sample(false, 3'200);
+    gesture.sample(false, 3'230);
+    assert(gesture.consume_short());
+  }
+
   return 0;
 }
