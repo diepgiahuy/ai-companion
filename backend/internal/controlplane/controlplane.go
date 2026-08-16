@@ -10,16 +10,16 @@ import (
 )
 
 type RuntimeConfig struct {
-	SmartVADEnabled *bool  `json:"smart_vad_enabled,omitempty"`
-	VADThreshold    *int   `json:"vad_threshold,omitempty"`
-	VADSilenceMS    *int   `json:"vad_silence_ms,omitempty"`
-	VADMinSpeechMS  *int   `json:"vad_min_speech_ms,omitempty"`
-	IdleAfterMS           *int   `json:"idle_after_ms,omitempty"`
-	AlarmVisibleMS        *int   `json:"alarm_visible_ms,omitempty"`
-	OTAPollIntervalSeconds *int  `json:"ota_poll_interval_s,omitempty"`
-	Locale                string `json:"locale,omitempty"`
-	Timezone        string `json:"timezone,omitempty"`
-	VoiceKey        string `json:"voice_key,omitempty"`
+	SmartVADEnabled        *bool  `json:"smart_vad_enabled,omitempty"`
+	VADThreshold           *int   `json:"vad_threshold,omitempty"`
+	VADSilenceMS           *int   `json:"vad_silence_ms,omitempty"`
+	VADMinSpeechMS         *int   `json:"vad_min_speech_ms,omitempty"`
+	IdleAfterMS            *int   `json:"idle_after_ms,omitempty"`
+	AlarmVisibleMS         *int   `json:"alarm_visible_ms,omitempty"`
+	OTAPollIntervalSeconds *int   `json:"ota_poll_interval_s,omitempty"`
+	Locale                 string `json:"locale,omitempty"`
+	Timezone               string `json:"timezone,omitempty"`
+	VoiceKey               string `json:"voice_key,omitempty"`
 }
 type Twin struct {
 	DeviceID        string        `json:"device_id"`
@@ -222,7 +222,10 @@ func ConfigSchema() []ConfigField {
 		{Key: "vad_min_speech_ms", Dynamic: true, Min: ptr(50), Max: ptr(5000), Scopes: scopes},
 		{Key: "idle_after_ms", Dynamic: true, Min: ptr(1000), Max: ptr(3600000), Scopes: scopes},
 		{Key: "alarm_visible_ms", Dynamic: true, Min: ptr(1000), Max: ptr(3600000), Scopes: scopes},
-		{Key: "locale", Dynamic: true, Scopes: scopes}, {Key: "timezone", Dynamic: true, Scopes: scopes}, {Key: "voice_key", Dynamic: true, Scopes: scopes},
+		{Key: "ota_poll_interval_s", Dynamic: true, Min: ptr(3600), Max: ptr(604800), Scopes: scopes},
+		{Key: "locale", Dynamic: true, Scopes: scopes},
+		{Key: "timezone", Dynamic: true, Scopes: scopes},
+		{Key: "voice_key", Dynamic: true, Scopes: scopes},
 	}
 }
 
