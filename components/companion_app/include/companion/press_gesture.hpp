@@ -14,7 +14,8 @@ public:
     uint32_t hold_ms{2'000};
   };
 
-  explicit constexpr PressGesture(Config config = {}) : config_(config) {}
+  constexpr PressGesture() = default;
+  explicit constexpr PressGesture(Config config) : config_(config) {}
 
   void reset(bool raw_pressed, uint64_t now_ms) {
     raw_pressed_ = raw_pressed;
