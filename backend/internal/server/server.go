@@ -1129,10 +1129,10 @@ func (s *session) send(ctx context.Context, message outbound) error {
 }
 
 func protocolConfig(c controlplane.RuntimeConfig) protocol.RuntimeConfig {
-	return protocol.RuntimeConfig{SmartVADEnabled: c.SmartVADEnabled, VADThreshold: c.VADThreshold, VADSilenceMS: c.VADSilenceMS, VADMinSpeechMS: c.VADMinSpeechMS, IdleAfterMS: c.IdleAfterMS, AlarmVisibleMS: c.AlarmVisibleMS, Locale: c.Locale, Timezone: c.Timezone, VoiceKey: c.VoiceKey}
+	return protocol.RuntimeConfig{SmartVADEnabled: c.SmartVADEnabled, VADThreshold: c.VADThreshold, VADSilenceMS: c.VADSilenceMS, VADMinSpeechMS: c.VADMinSpeechMS, IdleAfterMS: c.IdleAfterMS, AlarmVisibleMS: c.AlarmVisibleMS, OTAPollIntervalSeconds: c.OTAPollIntervalSeconds, Locale: c.Locale, Timezone: c.Timezone, VoiceKey: c.VoiceKey}
 }
 func controlConfig(c protocol.RuntimeConfig) controlplane.RuntimeConfig {
-	return controlplane.RuntimeConfig{SmartVADEnabled: c.SmartVADEnabled, VADThreshold: c.VADThreshold, VADSilenceMS: c.VADSilenceMS, VADMinSpeechMS: c.VADMinSpeechMS, IdleAfterMS: c.IdleAfterMS, AlarmVisibleMS: c.AlarmVisibleMS, Locale: c.Locale, Timezone: c.Timezone, VoiceKey: c.VoiceKey}
+	return controlplane.RuntimeConfig{SmartVADEnabled: c.SmartVADEnabled, VADThreshold: c.VADThreshold, VADSilenceMS: c.VADSilenceMS, VADMinSpeechMS: c.VADMinSpeechMS, IdleAfterMS: c.IdleAfterMS, AlarmVisibleMS: c.AlarmVisibleMS, OTAPollIntervalSeconds: c.OTAPollIntervalSeconds, Locale: c.Locale, Timezone: c.Timezone, VoiceKey: c.VoiceKey}
 }
 func (s *Server) adminOK(r *http.Request) bool {
 	return s.adminToken != "" && r.Header.Get("Authorization") == "Bearer "+s.adminToken

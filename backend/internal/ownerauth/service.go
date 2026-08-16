@@ -42,6 +42,7 @@ type Config struct {
 	LoginTTL         time.Duration
 	SessionTTL       time.Duration
 	ClaimTTL         time.Duration
+	ClaimCodeStore   ClaimCodeStore
 	HTTPClient       *http.Client
 }
 

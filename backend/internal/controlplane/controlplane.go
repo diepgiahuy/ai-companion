@@ -10,15 +10,16 @@ import (
 )
 
 type RuntimeConfig struct {
-	SmartVADEnabled *bool  `json:"smart_vad_enabled,omitempty"`
-	VADThreshold    *int   `json:"vad_threshold,omitempty"`
-	VADSilenceMS    *int   `json:"vad_silence_ms,omitempty"`
-	VADMinSpeechMS  *int   `json:"vad_min_speech_ms,omitempty"`
-	IdleAfterMS     *int   `json:"idle_after_ms,omitempty"`
-	AlarmVisibleMS  *int   `json:"alarm_visible_ms,omitempty"`
-	Locale          string `json:"locale,omitempty"`
-	Timezone        string `json:"timezone,omitempty"`
-	VoiceKey        string `json:"voice_key,omitempty"`
+	SmartVADEnabled        *bool  `json:"smart_vad_enabled,omitempty"`
+	VADThreshold           *int   `json:"vad_threshold,omitempty"`
+	VADSilenceMS           *int   `json:"vad_silence_ms,omitempty"`
+	VADMinSpeechMS         *int   `json:"vad_min_speech_ms,omitempty"`
+	IdleAfterMS            *int   `json:"idle_after_ms,omitempty"`
+	AlarmVisibleMS         *int   `json:"alarm_visible_ms,omitempty"`
+	OTAPollIntervalSeconds *int   `json:"ota_poll_interval_s,omitempty"`
+	Locale                 string `json:"locale,omitempty"`
+	Timezone               string `json:"timezone,omitempty"`
+	VoiceKey               string `json:"voice_key,omitempty"`
 }
 type Twin struct {
 	DeviceID        string        `json:"device_id"`
@@ -133,7 +134,7 @@ func Validate(c RuntimeConfig) error {
 		}
 		return nil
 	}
-	if e := chk("vad_threshold", c.VADThreshold, 1, 100000); e != nil {
+	if e := chk("vad_threshold", c.VADThreshold, 1, 65535); e != nil {
 		return e
 	}
 	if e := chk("vad_silence_ms", c.VADSilenceMS, 100, 5000); e != nil {
@@ -146,6 +147,9 @@ func Validate(c RuntimeConfig) error {
 		return e
 	}
 	if e := chk("alarm_visible_ms", c.AlarmVisibleMS, 1000, 3600000); e != nil {
+		return e
+	}
+	if e := chk("ota_poll_interval_s", c.OTAPollIntervalSeconds, 3600, 604800); e != nil {
 		return e
 	}
 	if c.Locale != "" {
@@ -183,6 +187,9 @@ func merge(a, b RuntimeConfig) RuntimeConfig {
 	if b.AlarmVisibleMS != nil {
 		a.AlarmVisibleMS = b.AlarmVisibleMS
 	}
+	if b.OTAPollIntervalSeconds != nil {
+		a.OTAPollIntervalSeconds = b.OTAPollIntervalSeconds
+	}
 	if b.Locale != "" {
 		a.Locale = b.Locale
 	}
@@ -207,7 +214,7 @@ type ConfigField struct {
 
 func ConfigSchema() []ConfigField {
 	ptr := func(v int) *int { return &v }
-	scopes := []string{"global", "tenant", "plan", "user", "device"}
+	scopes := []string{"global", "tenant", "plan", "user"}
 	return []ConfigField{
 		{Key: "smart_vad_enabled", Dynamic: true, Scopes: scopes},
 		{Key: "vad_threshold", Dynamic: true, Min: ptr(1), Max: ptr(65535), Scopes: scopes},
@@ -215,7 +222,10 @@ func ConfigSchema() []ConfigField {
 		{Key: "vad_min_speech_ms", Dynamic: true, Min: ptr(50), Max: ptr(5000), Scopes: scopes},
 		{Key: "idle_after_ms", Dynamic: true, Min: ptr(1000), Max: ptr(3600000), Scopes: scopes},
 		{Key: "alarm_visible_ms", Dynamic: true, Min: ptr(1000), Max: ptr(3600000), Scopes: scopes},
-		{Key: "locale", Dynamic: true, Scopes: scopes}, {Key: "timezone", Dynamic: true, Scopes: scopes}, {Key: "voice_key", Dynamic: true, Scopes: scopes},
+		{Key: "ota_poll_interval_s", Dynamic: true, Min: ptr(3600), Max: ptr(604800), Scopes: scopes},
+		{Key: "locale", Dynamic: true, Scopes: scopes},
+		{Key: "timezone", Dynamic: true, Scopes: scopes},
+		{Key: "voice_key", Dynamic: true, Scopes: scopes},
 	}
 }
 
@@ -283,7 +293,7 @@ func (f *FeatureProvider) Enabled(ctx context.Context, key string, e EvalContext
 		if x.Key != key {
 			continue
 		}
-		if x.Lifecycle == "removed" || x.Lifecycle == "deprecated" && !x.Enabled {
+		if x.Lifecycle == "removed" || (x.Lifecycle == "deprecated" && !x.Enabled) {
 			return false
 		}
 		if x.ExpiresAt != nil && !x.ExpiresAt.After(time.Now()) {

@@ -18,6 +18,7 @@
 #include "esp_websocket_client.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 
 namespace companion {
@@ -183,8 +184,11 @@ private:
   std::array<char, 129> active_result_key_{};
   bool voice_mail_claim_pending_{};
   bool voice_mail_result_pending_{};
+  std::atomic<bool> stopping_{false};
   void* opus_encoder_{};
   void* opus_decoder_{};
+  StaticSemaphore_t opus_decoder_mutex_storage_{};
+  SemaphoreHandle_t opus_decoder_mutex_{};
   int encoder_output_bytes_{};
 
   StaticQueue_t outbound_queue_storage_{};

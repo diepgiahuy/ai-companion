@@ -357,10 +357,12 @@ void runtime_config_is_versioned_and_last_known_good() {
   good.vad_min_speech_ms = 200;
   good.idle_after_ms = 9'000;
   good.alarm_visible_ms = 12'000;
+  good.ota_poll_interval_s = 7'200;
   const bool good_queued = backend.inject_config(good); (void)good_queued;
   assert(good_queued);
   app.tick(1);
   assert(app.runtime_config_version() == 3);
+  assert(app.config().ota_poll_interval_s == 7'200);
   assert(backend.reported_config_version() == 3);
   assert(backend.reported_config_applied());
 
@@ -380,6 +382,16 @@ void runtime_config_is_versioned_and_last_known_good() {
   app.tick(3);
   assert(app.runtime_config_version() == 3);
   assert(backend.reported_config_version() == 4);
+  assert(!backend.reported_config_applied());
+
+  RuntimeConfigPatch invalid_ota = good;
+  invalid_ota.version = 5;
+  invalid_ota.ota_poll_interval_s = 500; // < 3600s
+  const bool invalid_ota_queued = backend.inject_config(invalid_ota); (void)invalid_ota_queued;
+  assert(invalid_ota_queued);
+  app.tick(4);
+  assert(app.runtime_config_version() == 3);
+  assert(backend.reported_config_version() == 5);
   assert(!backend.reported_config_applied());
 }
 
