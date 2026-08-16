@@ -14,10 +14,16 @@ import subprocess
 import sys
 from typing import Any
 
+from github_issue_status import (
+    STATUS_LABELS,
+    derive_execution_label,
+    issue_label_names,
+    normalized_issue_labels,
+)
+
 REPO = os.getenv("PROJECT_REPOSITORY", "diepgiahuy/ai-companion")
 TOKEN = os.getenv("REPO_TOKEN") or os.getenv("GH_TOKEN", "")
 API_VERSION = "2026-03-10"
-STATUS_LABELS = {"status:ready", "status:in-progress", "status:blocked"}
 
 
 def die(message: str) -> None:
@@ -49,28 +55,23 @@ def api(path: str, *, method: str = "GET", body: dict[str, Any] | None = None) -
     return json.loads(raw) if raw else None
 
 
-def labels(item: dict[str, Any]) -> set[str]:
-    return {label["name"] for label in item.get("labels", [])}
-
-
 def issue_info(number: int) -> dict[str, Any]:
     return api(f"repos/{REPO}/issues/{number}")
 
 
-def remove_label(number: int, label: str) -> None:
-    api(f"repos/{REPO}/issues/{number}/labels/{label}", method="DELETE")
+def set_status(number: int, current: set[str], desired: str | None) -> bool:
+    """Converge execution labels with one idempotent Set-labels request when needed."""
+    desired_status = {desired} if desired else set()
+    if STATUS_LABELS & current == desired_status:
+        return False
 
-
-def add_label(number: int, label: str) -> None:
-    api(f"repos/{REPO}/issues/{number}/labels", method="POST", body={"labels": [label]})
-
-
-def set_status(number: int, current: set[str], desired: str | None) -> None:
-    for label in sorted(STATUS_LABELS & current):
-        if label != desired:
-            remove_label(number, label)
-    if desired and desired not in current:
-        add_label(number, desired)
+    labels = normalized_issue_labels(current, desired)
+    api(
+        f"repos/{REPO}/issues/{number}/labels",
+        method="PUT",
+        body={"labels": labels},
+    )
+    return True
 
 
 def dependency_numbers(number: int, relation: str) -> list[int]:
@@ -92,31 +93,12 @@ def reconcile(item: dict[str, Any]) -> None:
     if "pull_request" in item:
         return
     number = int(item["number"])
-    current = labels(item)
-
-    if item.get("state") == "closed":
-        set_status(number, current, None)
-        return
-
-    if int(item.get("sub_issues_summary", {}).get("total", 0)) > 0:
-        set_status(number, current, None)
-        return
-
+    current = issue_label_names(item)
     blockers = open_blockers(number)
-    if blockers:
-        set_status(number, current, "status:blocked")
-        print(f"#{number}: blocked by open native dependencies {blockers}")
-        return
-
-    if "status:blocked" in current:
-        set_status(number, current, "status:ready")
-        print(f"#{number}: blockers cleared; promoted blocked -> ready")
-        return
-
-    if "status:in-progress" in current:
-        set_status(number, current, "status:in-progress")
-    elif "status:ready" in current:
-        set_status(number, current, "status:ready")
+    desired, reason = derive_execution_label(item, blockers)
+    changed = set_status(number, current, desired)
+    if changed:
+        print(f"#{number}: execution status -> {desired or 'none'} ({reason})")
 
 
 def reconcile_number(number: int) -> None:
