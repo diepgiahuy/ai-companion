@@ -1,10 +1,12 @@
 package devicecap
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"time"
@@ -14,8 +16,10 @@ import (
 )
 
 const (
-	VolumeSetName    = "device.volume.set"
-	VolumeSetVersion = "1"
+	VolumeSetName              = "device.volume.set"
+	VolumeSetVersion           = "1"
+	UserConfirmationName       = "device.user_confirmation"
+	UserConfirmationVersion    = "1"
 )
 
 var (
@@ -33,6 +37,7 @@ type Call struct {
 	Name      string
 	Version   string
 	Arguments json.RawMessage
+	TurnID    string
 	Deadline  time.Time
 }
 
@@ -100,6 +105,50 @@ func (r *Router) Call(ctx context.Context, deviceID string, call Call) (Result, 
 	return endpoint.Call(ctx, call)
 }
 
+// RequestConfirmation implements capability.ConfirmationRequester using the
+// existing authenticated device capability channel. ArgumentsHash is purposely
+// not transmitted: the server-side policy keeps that exact-arguments binding,
+// while the device can approve only the unique correlated call it received.
+func (r *Router) RequestConfirmation(ctx context.Context, target capability.ConfirmationTarget, intent capability.ConfirmationIntent) (bool, error) {
+	if strings.TrimSpace(target.DeviceID) == "" || strings.TrimSpace(target.TurnID) == "" {
+		return false, fmt.Errorf("confirmation requires authenticated device and turn")
+	}
+	toolName := strings.TrimSpace(intent.ToolName)
+	prompt := strings.TrimSpace(intent.Description)
+	if toolName == "" || len(toolName) > 96 || prompt == "" || len(prompt) > 192 {
+		return false, fmt.Errorf("confirmation intent is invalid")
+	}
+	if intent.ExpiresAt.IsZero() || !intent.ExpiresAt.After(time.Now()) || time.Until(intent.ExpiresAt) > 5*time.Second {
+		return false, fmt.Errorf("confirmation expiry is invalid")
+	}
+	arguments, err := json.Marshal(map[string]any{"tool_name": toolName, "prompt": prompt})
+	if err != nil {
+		return false, err
+	}
+	result, err := r.Call(ctx, target.DeviceID, Call{
+		Name: UserConfirmationName, Version: UserConfirmationVersion,
+		Arguments: arguments, TurnID: target.TurnID, Deadline: intent.ExpiresAt,
+	})
+	if err != nil {
+		return false, err
+	}
+	var decoded struct {
+		Approved bool `json:"approved"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(result.Value))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&decoded); err != nil {
+		return false, fmt.Errorf("invalid confirmation result: %w", err)
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		return false, fmt.Errorf("invalid confirmation result trailing data")
+	}
+	return decoded.Approved, nil
+}
+
+var _ capability.ConfirmationRequester = (*Router)(nil)
+
 func RegisterTools(registry *capability.ToolRegistry, router *Router) error {
 	if registry == nil || router == nil {
 		return fmt.Errorf("device capability ToolRegistry and router are required")
@@ -128,7 +177,8 @@ func RegisterTools(registry *capability.ToolRegistry, router *Router) error {
 			}
 			payload, _ := json.Marshal(map[string]any{"volume": args.Volume})
 			result, err := router.Call(ctx, turn.DeviceID, Call{
-				Name: VolumeSetName, Version: VolumeSetVersion, Arguments: payload, Deadline: time.Now().Add(3 * time.Second),
+				Name: VolumeSetName, Version: VolumeSetVersion, Arguments: payload,
+				TurnID: turn.TurnID, Deadline: time.Now().Add(3 * time.Second),
 			})
 			if err != nil {
 				return capability.Failure(err)
