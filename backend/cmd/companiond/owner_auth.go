@@ -11,6 +11,7 @@ import (
 	"companion-server/internal/onboarding"
 	"companion-server/internal/ownerauth"
 	"companion-server/internal/ownerweb"
+	"companion-server/internal/pgstore"
 )
 
 const ownerPathPrefix = "/v1/owner/"
@@ -24,6 +25,7 @@ func ownerAuthFromEnvironment(next http.Handler, store domain.ReadRepositories, 
 		ClientSecret:     os.Getenv("COMPANION_OWNER_OIDC_CLIENT_SECRET"),
 		RedirectURL:      strings.TrimSpace(os.Getenv("COMPANION_OWNER_OIDC_REDIRECT_URL")),
 		Scopes:           ownerScopes(os.Getenv("COMPANION_OWNER_OIDC_SCOPES")),
+		ClaimCodeStore:   pgstore.NewPgClaimCodeStore(nil),
 	}
 	configured := cfg.AuthorizationURL != "" || cfg.TokenURL != "" || cfg.UserInfoURL != "" ||
 		cfg.ClientID != "" || cfg.ClientSecret != "" || cfg.RedirectURL != "" ||
