@@ -90,6 +90,9 @@ records, verification, and definition of done, follow `ai_development_workflow.m
 For issue specification and clean splitting, follow
 `.agents/rules/github_issue_generation.md`.
 
+For engineering operating philosophy, invariants, and quality gates, follow
+`.agents/rules/senior_engineering_invariants.md`.
+
 For what host tests, software-device Tier 1, Wokwi, and physical HIL can prove, follow
 `docs/TEST_EVIDENCE_LADDER.md`.
 
