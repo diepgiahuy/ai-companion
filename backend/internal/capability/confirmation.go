@@ -5,6 +5,12 @@ import (
 	"time"
 )
 
+type ConfirmationTarget struct {
+	UserID   string
+	DeviceID string
+	TurnID   string
+}
+
 // ConfirmationIntent is created by the policy layer from the exact destructive
 // tool invocation. ArgumentsHash is server-internal binding material; transport
 // adapters must not expose raw arbitrary tool arguments or treat device output
@@ -20,19 +26,5 @@ type ConfirmationIntent struct {
 // explicit local approval. Implementations must fail closed on timeout,
 // disconnect, stale turn/generation, replay, or transport failure.
 type ConfirmationRequester interface {
-	RequestConfirmation(context.Context, ConfirmationIntent) (bool, error)
-}
-
-type confirmationRequesterKey struct{}
-
-func WithConfirmationRequester(ctx context.Context, requester ConfirmationRequester) context.Context {
-	if requester == nil {
-		return ctx
-	}
-	return context.WithValue(ctx, confirmationRequesterKey{}, requester)
-}
-
-func ConfirmationRequesterFromContext(ctx context.Context) (ConfirmationRequester, bool) {
-	requester, ok := ctx.Value(confirmationRequesterKey{}).(ConfirmationRequester)
-	return requester, ok && requester != nil
+	RequestConfirmation(context.Context, ConfirmationTarget, ConfirmationIntent) (bool, error)
 }
