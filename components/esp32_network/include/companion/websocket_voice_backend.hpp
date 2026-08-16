@@ -43,6 +43,21 @@ struct PairingBackendEvent {
   std::string_view reason_view() const;
 };
 
+struct UserConfirmationRequest {
+  std::array<char, 129> correlation_id{};
+  std::array<char, 129> turn_id{};
+  std::array<char, 97> tool_name{};
+  std::array<char, 193> prompt{};
+  uint64_t generation_id{};
+  uint32_t deadline_ms{};
+
+  std::string_view correlation_id_view() const;
+  std::string_view turn_id_view() const;
+  std::string_view tool_name_view() const;
+  std::string_view prompt_view() const;
+  bool valid() const;
+};
+
 class WebSocketVoiceBackend final : public VoiceBackend {
 public:
   WebSocketVoiceBackend();
@@ -73,10 +88,13 @@ public:
     return playback_sample_rate_hz_.load();
   }
 
-  // Pairing reuses this exact authenticated Protocol-v2 client. Enabling it
-  // before start() swaps in a composite event handler that intercepts only
-  // pairing server events and delegates all existing control/media traffic to
-  // the canonical implementation. It never creates a second WebSocket.
+  bool enable_confirmation_protocol();
+  bool advertise_user_confirmation();
+  bool poll_user_confirmation(UserConfirmationRequest& request);
+  bool user_confirmation_current(const UserConfirmationRequest& request);
+  bool respond_user_confirmation(const UserConfirmationRequest& request,
+                                 bool approved);
+
   bool enable_pairing_protocol();
   bool pairing_discovery_alias(std::array<char, 20>& output);
   bool create_pairing_session(std::string_view candidate_discovery_id,
@@ -94,9 +112,10 @@ private:
   static constexpr size_t kMediaQueueCapacity = 2;
   static constexpr size_t kWriterStackDepth = 5'120;
   static constexpr size_t kMediaStackDepth = 6'144;
-  static constexpr size_t kOpusFrameSamples = 960; // 60 ms at 16 kHz.
+  static constexpr size_t kOpusFrameSamples = 960;
   static constexpr size_t kMaximumOpusPacketBytes = 1'275;
-  static constexpr size_t kMaximumDecodedSamples = 1'440; // 60 ms at 24 kHz.
+  static constexpr size_t kMaximumDecodedSamples = 1'440;
+  static constexpr size_t kConfirmationControlBytes = 2'049;
 
   enum class CommandType : uint8_t {
     hello,
@@ -152,6 +171,8 @@ private:
   std::atomic<bool> socket_connected_{false};
   std::atomic<bool> protocol_connected_{false};
   std::atomic<bool> pairing_protocol_enabled_{false};
+  std::atomic<bool> confirmation_protocol_enabled_{false};
+  std::atomic<bool> confirmation_advertised_{false};
   std::atomic<bool> turn_active_{false};
   std::atomic<bool> tts_active_{false};
   std::atomic<uint32_t> playback_sample_rate_hz_{24'000};
@@ -170,6 +191,13 @@ private:
   portMUX_TYPE session_id_lock_ = portMUX_INITIALIZER_UNLOCKED;
   std::array<char, 40> active_turn_id_{};
   portMUX_TYPE turn_id_lock_ = portMUX_INITIALIZER_UNLOCKED;
+  portMUX_TYPE confirmation_lock_ = portMUX_INITIALIZER_UNLOCKED;
+  UserConfirmationRequest active_confirmation_{};
+  bool confirmation_ready_{};
+  bool confirmation_active_{};
+  std::array<char, kConfirmationControlBytes> confirmation_text_payload_{};
+  size_t confirmation_text_payload_size_{};
+  int confirmation_receive_opcode_{};
   std::array<char, 8'193> text_payload_{};
   size_t text_payload_size_{};
   int receive_opcode_{};
@@ -218,18 +246,25 @@ private:
                             int32_t event_id, void* event_data);
   static void pairing_event_handler(void* context, esp_event_base_t base,
                                     int32_t event_id, void* event_data);
+  static void confirmation_event_handler(void* context, esp_event_base_t base,
+                                         int32_t event_id, void* event_data);
   static void writer_entry(void* context);
   static void media_entry(void* context);
   void on_event(int32_t event_id, esp_websocket_event_data_t* data);
   void on_pairing_event(int32_t event_id, esp_websocket_event_data_t* data);
+  void on_confirmation_event(int32_t event_id, esp_websocket_event_data_t* data);
   void writer_loop();
   void media_loop();
   void handle_text(std::string_view json);
+  bool handle_confirmation_text(std::string_view json);
   bool handle_pairing_text(std::string_view json);
   void handle_binary(const esp_websocket_event_data_t& data);
   bool enqueue_command(CommandType type, std::string_view turn = {}, ListenMode mode = ListenMode::manual);
   bool enqueue_pong(std::string_view correlation_id);
   bool enqueue_protocol_error(std::string_view code, std::string_view message);
+  bool enqueue_confirmation_result(const UserConfirmationRequest& request,
+                                   bool approved);
+  void clear_user_confirmation();
   bool encode_and_enqueue(std::span<const int16_t, kOpusFrameSamples> pcm,
                           uint64_t media_generation);
   bool configure_decoder(uint32_t sample_rate_hz);
