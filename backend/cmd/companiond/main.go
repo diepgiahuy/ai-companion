@@ -223,7 +223,9 @@ func main() {
 
 	supervisor.Go("server-background", false, func(ctx context.Context) error { service.RunBackground(ctx); return nil })
 	supervisor.Go("river", true, jobRuntime.Run)
-	_ = data.RecoverOutbox(supervisor.Context())
+	if err := data.RecoverOutbox(supervisor.Context()); err != nil {
+		logger.Warn("recover outbox dispatch state failed", "error", err)
+	}
 	supervisor.Go("outbox", false, func(ctx context.Context) error { runOutbox(ctx, data, service.HandleEvent, logger); return nil })
 	supervisor.Go("market-watcher", false, func(ctx context.Context) error { runMarketWatcher(ctx, data, marketService, logger); return nil })
 
@@ -320,13 +322,15 @@ func runOutbox(ctx context.Context, out events.Outbox, handler events.Handler, l
 		case <-ctx.Done():
 			return
 		case now := <-ticker.C:
-			_ = events.Dispatch(ctx, out, func(eventCtx context.Context, e events.Event) error {
+			if err := events.Dispatch(ctx, out, func(eventCtx context.Context, e events.Event) error {
 				logger.Debug("domain event", "type", e.Type, "subject", e.Subject, "event_id", e.ID)
 				if handler != nil {
 					return handler(eventCtx, e)
 				}
 				return nil
-			}, now, 50)
+			}, now, 50); err != nil {
+				logger.Warn("outbox dispatch failed", "error", err)
+			}
 		}
 	}
 }

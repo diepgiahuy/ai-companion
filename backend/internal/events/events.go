@@ -3,6 +3,8 @@ package events
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"time"
 )
 
@@ -31,18 +33,24 @@ type Outbox interface {
 type Handler func(context.Context, Event) error
 
 func Dispatch(ctx context.Context, repo Outbox, h Handler, now time.Time, limit int) error {
-	xs, e := repo.Claim(ctx, now, limit)
-	if e != nil {
-		return e
+	xs, err := repo.Claim(ctx, now, limit)
+	if err != nil {
+		return fmt.Errorf("claim outbox events: %w", err)
 	}
+	var dispatchErrors []error
 	for _, x := range xs {
-		if e := h(ctx, x.Event); e != nil {
-			_ = repo.Retry(ctx, x.RowID, e.Error(), now.Add(time.Duration(1<<min(x.Attempts, 8))*time.Second))
+		if err := h(ctx, x.Event); err != nil {
+			next := now.Add(time.Duration(1<<min(x.Attempts, 8)) * time.Second)
+			if retryErr := repo.Retry(ctx, x.RowID, err.Error(), next); retryErr != nil {
+				dispatchErrors = append(dispatchErrors, fmt.Errorf("retry outbox row %d: %w", x.RowID, retryErr))
+			}
 			continue
 		}
-		_ = repo.MarkSent(ctx, x.RowID)
+		if err := repo.MarkSent(ctx, x.RowID); err != nil {
+			dispatchErrors = append(dispatchErrors, fmt.Errorf("mark outbox row %d sent: %w", x.RowID, err))
+		}
 	}
-	return nil
+	return errors.Join(dispatchErrors...)
 }
 func min(a, b int) int {
 	if a < b {
