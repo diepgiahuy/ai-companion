@@ -87,17 +87,17 @@ public:
     return playback_sample_rate_hz_.load();
   }
 
-  // This capability is server-internal and never advertised to the model. The
-  // firmware advertises it only to the authenticated server after session.ready.
+  // Server-internal capability. It is advertised only to the authenticated
+  // server and never appears in the model ToolRegistry.
+  bool advertise_user_confirmation();
   bool poll_user_confirmation(UserConfirmationRequest& request);
   bool user_confirmation_current(const UserConfirmationRequest& request);
   bool respond_user_confirmation(const UserConfirmationRequest& request,
                                  bool approved);
 
-  // Pairing reuses this exact authenticated Protocol-v2 client. Enabling it
-  // before start() swaps in a composite event handler that intercepts only
-  // pairing server events and delegates all existing control/media traffic to
-  // the canonical implementation. It never creates a second WebSocket.
+  // Pairing and confirmation reuse this exact authenticated Protocol-v2 client.
+  // Enabling the extension before start() swaps in one composite event handler;
+  // no second WebSocket or runtime is created.
   bool enable_pairing_protocol();
   bool pairing_discovery_alias(std::array<char, 20>& output);
   bool create_pairing_session(std::string_view candidate_discovery_id,
@@ -115,9 +115,9 @@ private:
   static constexpr size_t kMediaQueueCapacity = 2;
   static constexpr size_t kWriterStackDepth = 5'120;
   static constexpr size_t kMediaStackDepth = 6'144;
-  static constexpr size_t kOpusFrameSamples = 960; // 60 ms at 16 kHz.
+  static constexpr size_t kOpusFrameSamples = 960;
   static constexpr size_t kMaximumOpusPacketBytes = 1'275;
-  static constexpr size_t kMaximumDecodedSamples = 1'440; // 60 ms at 24 kHz.
+  static constexpr size_t kMaximumDecodedSamples = 1'440;
 
   enum class CommandType : uint8_t {
     hello,
@@ -128,16 +128,14 @@ private:
     alarm_ack,
     config_report,
     protocol_error,
-    capability_advertise,
-    capability_result,
     voice_mail_claim,
     voice_mail_playback_result,
   };
   struct Command {
     CommandType type{};
     ListenMode mode{ListenMode::manual};
-    std::array<char, 129> turn_id{};
-    std::array<char, 129> correlation_id{};
+    std::array<char, 40> turn_id{};
+    std::array<char, 48> correlation_id{};
     std::array<char, 40> code{};
     std::array<char, 96> message{};
     VoiceMailMetadata voice_mail{};
@@ -145,10 +143,8 @@ private:
     std::array<char, 129> idempotency_key{};
     std::array<char, 36> occurred_at{};
     RuntimeConfigPatch config{};
-    uint64_t generation_id{};
     bool applied{};
     bool succeeded{};
-    bool approved{};
   };
   struct AudioFrame {
     std::array<int16_t, kAudioFrameSamples> samples{};
@@ -177,6 +173,7 @@ private:
   std::atomic<bool> socket_connected_{false};
   std::atomic<bool> protocol_connected_{false};
   std::atomic<bool> pairing_protocol_enabled_{false};
+  std::atomic<bool> confirmation_advertised_{false};
   std::atomic<bool> turn_active_{false};
   std::atomic<bool> tts_active_{false};
   std::atomic<uint32_t> playback_sample_rate_hz_{24'000};
@@ -251,6 +248,7 @@ private:
   void writer_loop();
   void media_loop();
   void handle_text(std::string_view json);
+  bool handle_confirmation_text(std::string_view json);
   bool handle_pairing_text(std::string_view json);
   void handle_binary(const esp_websocket_event_data_t& data);
   bool enqueue_command(CommandType type, std::string_view turn = {}, ListenMode mode = ListenMode::manual);
