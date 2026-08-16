@@ -14,7 +14,7 @@ import (
 	"companion-server/internal/pipeline"
 )
 
-const destructiveConfirmationTTL = 15 * time.Second
+const destructiveConfirmationTTL = 5 * time.Second
 
 type Entitlements interface {
 	Allowed(context.Context, string, string) bool
@@ -26,10 +26,11 @@ type FeatureEvaluator interface {
 	Enabled(context.Context, string, controlplane.EvalContext, bool) bool
 }
 type Authorizer struct {
-	Entitlements Entitlements
-	Features     FeatureEvaluator
-	Privacy      UserPrivacy
-	Now          func() time.Time
+	Entitlements  Entitlements
+	Features      FeatureEvaluator
+	Privacy       UserPrivacy
+	Confirmations capability.ConfirmationRequester
+	Now           func() time.Time
 }
 
 func (a Authorizer) Authorize(ctx context.Context, d capability.ToolDefinition, req capability.ToolRequest) error {
@@ -61,9 +62,9 @@ type DestructiveConfirmation struct {
 type destructiveConfirmationKey struct{}
 
 // NewDestructiveConfirmation scopes approval to one owner, one exact tool, and
-// one canonical argument payload. Trusted in-process callers may inject this
-// value after an explicit approval. Product model ingress instead uses the
-// ConfirmationRequester boundary below so the model never receives authority.
+// one canonical argument payload. It remains available to trusted in-process
+// callers/tests; product model ingress obtains approval through the authenticated
+// ConfirmationRequester and never receives this authority object.
 func NewDestructiveConfirmation(userID, toolName, arguments string, expiresAt time.Time) (DestructiveConfirmation, error) {
 	userID = strings.TrimSpace(userID)
 	toolName = strings.TrimSpace(toolName)
@@ -123,21 +124,18 @@ func (a Authorizer) authorizeDestructive(ctx context.Context, turn pipeline.Turn
 	if confirmation, ok := DestructiveConfirmationFromContext(ctx); ok {
 		return validateDestructiveConfirmation(confirmation, userID, d.Name, hash, now)
 	}
-
-	requester, ok := capability.ConfirmationRequesterFromContext(ctx)
-	if !ok {
+	if a.Confirmations == nil || strings.TrimSpace(turn.DeviceID) == "" || strings.TrimSpace(turn.TurnID) == "" {
 		return fmt.Errorf("destructive action requires explicit user confirmation")
 	}
 	prompt := strings.TrimSpace(d.Description)
 	if prompt == "" {
 		prompt = "Confirm " + d.Name
 	}
-	expiresAt := now.Add(destructiveConfirmationTTL)
-	approved, err := requester.RequestConfirmation(ctx, capability.ConfirmationIntent{
-		ToolName:      d.Name,
-		Description:   prompt,
-		ArgumentsHash: hash,
-		ExpiresAt:     expiresAt,
+	approved, err := a.Confirmations.RequestConfirmation(ctx, capability.ConfirmationTarget{
+		UserID: userID, DeviceID: turn.DeviceID, TurnID: turn.TurnID,
+	}, capability.ConfirmationIntent{
+		ToolName: d.Name, Description: prompt, ArgumentsHash: hash,
+		ExpiresAt: now.Add(destructiveConfirmationTTL),
 	})
 	if err != nil {
 		return fmt.Errorf("destructive confirmation failed: %w", err)
