@@ -37,6 +37,12 @@ target_compile_features(pairing_fsm_tests PRIVATE cxx_std_20)
 target_compile_options(pairing_fsm_tests PRIVATE -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
 add_test(NAME pairing_fsm_tests COMMAND pairing_fsm_tests)
 
+add_executable(press_gesture_tests tests/press_gesture.cpp)
+target_include_directories(press_gesture_tests PRIVATE ../components/companion_app/include)
+target_compile_features(press_gesture_tests PRIVATE cxx_std_20)
+target_compile_options(press_gesture_tests PRIVATE -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
+add_test(NAME press_gesture_tests COMMAND press_gesture_tests)
+
 add_executable(transport_policy_tests tests/transport_policy.cpp)
 target_include_directories(transport_policy_tests PRIVATE ../components/esp32_network/include)
 target_compile_features(transport_policy_tests PRIVATE cxx_std_20)
