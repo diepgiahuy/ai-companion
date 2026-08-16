@@ -167,7 +167,7 @@ func main() {
 		logger.Error("register authenticated device capability tools", "error", err)
 		os.Exit(1)
 	}
-	toolRegistry.SetAuthorizer(policy.Authorizer{Features: features, Entitlements: data, Privacy: privacyService})
+	toolRegistry.SetAuthorizer(policy.Authorizer{Features: features, Entitlements: data, Privacy: privacyService, Confirmations: deviceCapabilities})
 	mcpCloser, err := configureMCP(toolRegistry, resourceRegistry, 10*time.Second)
 	if err != nil {
 		logger.Error("initialize external MCP capabilities", "error", err)
