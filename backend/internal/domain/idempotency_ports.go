@@ -14,6 +14,8 @@ type DurableMutationRepository interface {
 	DeleteExpenseMutation(context.Context, idempotency.Request, string, int64) error
 	SetBudgetMutation(context.Context, idempotency.Request, string, string, int64) error
 	DeleteBudgetMutation(context.Context, idempotency.Request, string, string) error
+	SetSavingsGoalMutation(context.Context, idempotency.Request, string, string, int64, string, time.Time) error
+	DeleteSavingsGoalMutation(context.Context, idempotency.Request, string, string) error
 	CreateNoteMutation(context.Context, idempotency.Request, string, string) error
 	UpdateNoteMutation(context.Context, idempotency.Request, string, int64, string) error
 	DeleteNoteMutation(context.Context, idempotency.Request, string, int64) error

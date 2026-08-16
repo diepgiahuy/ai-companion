@@ -15,7 +15,7 @@ func TestRouterSelectsSmallDomainPacks(t *testing.T) {
 func TestRouterFallsBackToAllPacksForGeneralConversation(t *testing.T) {
 	r := New(nil)
 	p := r.Plan(context.Background(), "Hôm nay bạn khỏe không?")
-	if len(p.Packs) != 6 {
+	if len(p.Packs) != 7 {
 		t.Fatalf("packs=%v", p.Packs)
 	}
 }

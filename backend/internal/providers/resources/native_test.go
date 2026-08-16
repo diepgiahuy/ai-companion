@@ -171,6 +171,59 @@ func TestNativeResourcesExtendedCoverage(t *testing.T) {
 	}
 }
 
+func TestNativeSavingsResource(t *testing.T) {
+	data, err := store.Open(filepath.Join(t.TempDir(), "savings_resources.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer data.Close()
+
+	registry := capability.NewResourceRegistry()
+	if err := registry.Register(NewNative(data, nil, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := pipeline.WithTurnContext(context.Background(), pipeline.TurnContext{UserID: "user-saving"})
+
+	// 1. Initial state: No goal, no budget -> no_active_goal, spend_only
+	res, err := registry.Read(ctx, "saving://current")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsJSON(res.Text, `"status":"no_active_goal"`) || !containsJSON(res.Text, `"basis":"spend_only"`) {
+		t.Fatalf("expected no_active_goal spend_only, got: %s", res.Text)
+	}
+
+	// 2. Set savings goal without budget -> insufficient_data, spend_only
+	if err := data.SetSavingsGoal(ctx, "user-saving", "monthly", 5000000, "Buy new camera", time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	res, err = registry.Read(ctx, "saving://current")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsJSON(res.Text, `"status":"insufficient_data"`) || !containsJSON(res.Text, `"target_vnd":5000000`) {
+		t.Fatalf("expected insufficient_data with target_vnd, got: %s", res.Text)
+	}
+
+	// 3. Set monthly budget (15,000,000) and expense (6,000,000) -> remaining 9,000,000 >= 5,000,000 -> budget_headroom_covers_target
+	if err := data.SetBudget(ctx, "user-saving", "monthly", 15000000); err != nil {
+		t.Fatal(err)
+	}
+	if err := data.CreateExpense(ctx, "user-saving", "e1", 6000000, "food", "groceries", time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	res, err = registry.Read(ctx, "saving://current")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsJSON(res.Text, `"status":"budget_headroom_covers_target"`) ||
+		!containsJSON(res.Text, `"budget_remaining_vnd":9000000`) ||
+		!containsJSON(res.Text, `"headroom_vs_target_vnd":4000000`) {
+		t.Fatalf("expected budget_headroom_covers_target with headroom, got: %s", res.Text)
+	}
+}
+
 func containsJSON(text, fragment string) bool {
 	for i := 0; i+len(fragment) <= len(text); i++ {
 		if text[i:i+len(fragment)] == fragment {

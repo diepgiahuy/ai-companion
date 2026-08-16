@@ -149,6 +149,29 @@ func (s *Store) DeleteBudgetMutation(ctx context.Context, request idempotency.Re
 	})
 }
 
+func (s *Store) SetSavingsGoalMutation(ctx context.Context, request idempotency.Request, userID, period string, targetVND int64, description string, effectiveFrom time.Time) error {
+	if err := domain.ValidateSavingsTarget(targetVND); err != nil {
+		return err
+	}
+	period, err := validBudgetPeriod(period)
+	if err != nil {
+		return err
+	}
+	return runMutationMarker(ctx, s, request, "saving.goal_set", func(tx *sql.Tx) error {
+		return s.SetSavingsGoal(ctx, userID, period, targetVND, description, effectiveFrom)
+	})
+}
+
+func (s *Store) DeleteSavingsGoalMutation(ctx context.Context, request idempotency.Request, userID, period string) error {
+	period, err := validBudgetPeriod(period)
+	if err != nil {
+		return err
+	}
+	return runMutationMarker(ctx, s, request, "saving.goal_delete", func(tx *sql.Tx) error {
+		return s.DeleteSavingsGoal(ctx, userID, period)
+	})
+}
+
 func (s *Store) CreateNoteMutation(ctx context.Context, request idempotency.Request, userID, content string) error {
 	content = strings.TrimSpace(content)
 	if content == "" {

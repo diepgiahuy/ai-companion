@@ -477,6 +477,24 @@ async function deleteJournal(id) {
   renderView();
 }
 
+async function submitSavingsGoal() {
+  const target = parseInt(document.getElementById('saving-target').value, 10);
+  const desc = document.getElementById('saving-desc').value.trim();
+  if (!target || target <= 0) return alert('Valid target amount > 0 is required');
+  await fetch('/v1/owner/data/savings-goal', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ period: 'monthly', target_vnd: target, description: desc })
+  });
+  renderView();
+}
+
+async function deleteSavingsGoal() {
+  if (!confirm('Clear monthly savings goal?')) return;
+  await fetch('/v1/owner/data/savings-goal?period=monthly', { method: 'DELETE' });
+  renderView();
+}
+
 async function renderView() {
   const container = document.getElementById('content');
   container.innerHTML = '<div style="color:var(--text-muted)">Loading workspace data...</div>';
@@ -499,9 +517,16 @@ async function renderView() {
           <div style="font-size:0.75rem;color:var(--text-muted);margin-top:0.6rem">Device: ${selectedDeviceID || 'All'}</div>
         </div>
         <div class="block-card">
-          <div class="block-title">📝 Quick Notes</div>
-          <div class="block-metric">${(data.notes || []).length} <span style="font-size:0.9rem;font-weight:400;color:var(--text-muted)">saved</span></div>
-          <div style="font-size:0.75rem;color:var(--text-muted);margin-top:0.6rem">Synchronized across turns</div>
+          <div class="block-title">🎯 Savings Target</div>
+          <div class="block-metric">${data.savings_progress?.goal ? (data.savings_progress.goal.target_vnd).toLocaleString() : 'Not Set'} <span style="font-size:0.9rem;font-weight:400;color:var(--text-muted)">${data.savings_progress?.goal ? 'VND' : ''}</span></div>
+          <div style="font-size:0.75rem;color:var(--text-muted);margin-top:0.4rem">
+            ${data.savings_progress?.status === 'budget_headroom_covers_target' ? '✅ Budget headroom covers target' :
+              data.savings_progress?.status === 'budget_headroom_below_target' ? '⚠️ Budget headroom below target' :
+              data.savings_progress?.status === 'over_budget' ? '🚨 Over budget' :
+              data.savings_progress?.status === 'insufficient_data' ? 'ℹ️ Set budget to compute headroom' :
+              'No active savings goal'}
+          </div>
+          ${data.savings_progress?.budget_remaining_vnd !== null && data.savings_progress?.budget_remaining_vnd !== undefined ? `<div style="font-size:0.75rem;color:var(--accent-blue);margin-top:0.2rem">Spend Headroom: ${data.savings_progress.budget_remaining_vnd.toLocaleString()} VND</div>` : ''}
         </div>
       </div>
       <h2>Recent Activity</h2>
@@ -537,6 +562,19 @@ async function renderView() {
           <input id="exp-category" class="filter-input" placeholder="Category (e.g. food)" style="width:140px">
           <input id="exp-desc" class="filter-input" placeholder="Description (e.g. lunch)" style="flex:1;min-width:180px">
           <button class="filter-btn active" style="background:var(--accent-blue)" onclick="submitExpense()">Add Expense</button>
+        </div>
+      </div>
+
+      <div class="block-card" style="margin-bottom:1.5rem">
+        <div class="block-title">🎯 Savings Target & Headroom (Monthly)</div>
+        <div style="display:flex;gap:0.8rem;flex-wrap:wrap;margin-top:0.6rem;align-items:center">
+          <input id="saving-target" class="filter-input" type="number" placeholder="Target VND (e.g. 5000000)" style="width:180px">
+          <input id="saving-desc" class="filter-input" placeholder="Description (optional)" style="flex:1;min-width:180px">
+          <button class="filter-btn active" style="background:var(--accent-blue)" onclick="submitSavingsGoal()">Set Savings Target</button>
+          <button class="filter-btn" style="color:var(--accent-red)" onclick="deleteSavingsGoal()">Clear Target</button>
+        </div>
+        <div style="font-size:0.75rem;color:var(--text-muted);margin-top:0.6rem">
+          Note: Savings progress measures budget spend headroom against your target without hallucinating unrecorded bank assets.
         </div>
       </div>
 

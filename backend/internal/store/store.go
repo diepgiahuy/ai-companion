@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"companion-server/internal/domain"
@@ -13,7 +14,11 @@ import (
 
 const maxListLimit = 100
 
-type Store struct{ db *sql.DB }
+type Store struct {
+	db           *sql.DB
+	mu           sync.Mutex
+	savingsGoals map[string]domain.SavingsGoal
+}
 type ExpenseInput = domain.ExpenseInput
 type Expense = domain.Expense
 type Note = domain.Note
@@ -497,6 +502,74 @@ func (s *Store) DeleteBudget(ctx context.Context, userID, period string) error {
 		return err
 	}
 	return s.execChanged(ctx, "budget", `DELETE FROM budgets WHERE user_id=? AND period=?`, owner(userID), period)
+}
+
+func (s *Store) SetSavingsGoal(ctx context.Context, userID, period string, targetVND int64, description string, effectiveFrom time.Time) error {
+	if err := domain.ValidateSavingsTarget(targetVND); err != nil {
+		return err
+	}
+	period, err := validBudgetPeriod(period)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.savingsGoals == nil {
+		s.savingsGoals = make(map[string]domain.SavingsGoal)
+	}
+	now := time.Now().UTC()
+	if effectiveFrom.IsZero() {
+		effectiveFrom = now
+	}
+	key := owner(userID) + ":" + period
+	existing, ok := s.savingsGoals[key]
+	createdAt := now
+	if ok {
+		createdAt = existing.CreatedAt
+	}
+	s.savingsGoals[key] = domain.SavingsGoal{
+		UserID:        owner(userID),
+		Period:        period,
+		TargetVND:     targetVND,
+		Description:   strings.TrimSpace(description),
+		EffectiveFrom: effectiveFrom,
+		CreatedAt:     createdAt,
+		UpdatedAt:     now,
+	}
+	return nil
+}
+
+func (s *Store) GetSavingsGoal(ctx context.Context, userID, period string) (domain.SavingsGoal, bool, error) {
+	period, err := validBudgetPeriod(period)
+	if err != nil {
+		return domain.SavingsGoal{}, false, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.savingsGoals == nil {
+		return domain.SavingsGoal{}, false, nil
+	}
+	key := owner(userID) + ":" + period
+	g, ok := s.savingsGoals[key]
+	return g, ok, nil
+}
+
+func (s *Store) DeleteSavingsGoal(ctx context.Context, userID, period string) error {
+	period, err := validBudgetPeriod(period)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.savingsGoals == nil {
+		return fmt.Errorf("savings_goal not found")
+	}
+	key := owner(userID) + ":" + period
+	if _, ok := s.savingsGoals[key]; !ok {
+		return fmt.Errorf("savings_goal not found")
+	}
+	delete(s.savingsGoals, key)
+	return nil
 }
 
 func validBudgetPeriod(period string) (string, error) {

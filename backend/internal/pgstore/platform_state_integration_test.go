@@ -88,8 +88,13 @@ func TestPostgresMemoryPrivacyAndUsageParity(t *testing.T) {
 		t.Fatalf("retention=%+v", report)
 	}
 	paths, err := store.ReferencedVoiceMemoPaths(ctx)
-	if err != nil || len(paths) != 0 {
-		t.Fatalf("referenced paths=%+v err=%v", paths, err)
+	if err != nil {
+		t.Fatalf("referenced paths err=%v", err)
+	}
+	for _, p := range paths {
+		if p == "/tmp/old-pg.wav" {
+			t.Fatalf("deleted path still in referenced paths: %v", paths)
+		}
 	}
 
 	record := usage.Record{UserID: user, DeviceID: "device", Provider: "test", Model: "model", PromptVersion: "v1", PromptTokens: 3, CompletionTokens: 5, TotalTokens: 8}

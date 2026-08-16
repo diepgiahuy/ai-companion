@@ -179,6 +179,51 @@ func (s *Store) DeleteBudget(ctx context.Context, userID, period string) error {
 	return requireRowsChanged(tag.RowsAffected(), "budget")
 }
 
+func (s *Store) SetSavingsGoal(ctx context.Context, userID, period string, targetVND int64, description string, effectiveFrom time.Time) error {
+	if err := domain.ValidateSavingsTarget(targetVND); err != nil {
+		return err
+	}
+	period, err := validBudgetPeriod(period)
+	if err != nil {
+		return err
+	}
+	if effectiveFrom.IsZero() {
+		effectiveFrom = time.Now().UTC()
+	}
+	now := time.Now().UTC()
+	_, err = s.pool.Exec(ctx, `INSERT INTO savings_goals(user_id, period, target_vnd, description, effective_from, created_at, updated_at)
+		VALUES($1, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT(user_id, period) DO UPDATE SET target_vnd=EXCLUDED.target_vnd, description=EXCLUDED.description, effective_from=EXCLUDED.effective_from, updated_at=EXCLUDED.updated_at`,
+		owner(userID), period, targetVND, strings.TrimSpace(description), effectiveFrom, now, now)
+	return err
+}
+
+func (s *Store) GetSavingsGoal(ctx context.Context, userID, period string) (domain.SavingsGoal, bool, error) {
+	period, err := validBudgetPeriod(period)
+	if err != nil {
+		return domain.SavingsGoal{}, false, err
+	}
+	var g domain.SavingsGoal
+	err = s.pool.QueryRow(ctx, `SELECT user_id, period, target_vnd, description, effective_from, created_at, updated_at FROM savings_goals WHERE user_id=$1 AND period=$2`, owner(userID), period).
+		Scan(&g.UserID, &g.Period, &g.TargetVND, &g.Description, &g.EffectiveFrom, &g.CreatedAt, &g.UpdatedAt)
+	if err == pgx.ErrNoRows {
+		return domain.SavingsGoal{}, false, nil
+	}
+	return g, err == nil, err
+}
+
+func (s *Store) DeleteSavingsGoal(ctx context.Context, userID, period string) error {
+	period, err := validBudgetPeriod(period)
+	if err != nil {
+		return err
+	}
+	tag, err := s.pool.Exec(ctx, `DELETE FROM savings_goals WHERE user_id=$1 AND period=$2`, owner(userID), period)
+	if err != nil {
+		return err
+	}
+	return requireRowsChanged(tag.RowsAffected(), "savings_goal")
+}
+
 func (s *Store) CreateJournal(ctx context.Context, userID, key, content string, occurredAt time.Time) error {
 	content = strings.TrimSpace(content)
 	if content == "" { return fmt.Errorf("journal content is required") }
