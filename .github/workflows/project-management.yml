@@ -6,8 +6,10 @@ on:
     - cron: '23 3 * * *'
   pull_request:
     paths:
+      - scripts/github_issue_status.py
       - scripts/bootstrap_github_project.py
       - scripts/reconcile_github_issue_status.py
+      - scripts/test_github_issue_status.py
       - .github/workflows/project-management.yml
   issues:
     types:
@@ -21,6 +23,7 @@ on:
     branches:
       - main
     paths:
+      - scripts/github_issue_status.py
       - scripts/bootstrap_github_project.py
       - scripts/reconcile_github_issue_status.py
       - .github/workflows/project-management.yml
@@ -30,7 +33,10 @@ permissions:
 
 concurrency:
   group: project-management-${{ github.event_name }}-${{ github.event.pull_request.number || github.event.issue.number || github.ref || github.run_id }}
-  cancel-in-progress: true
+  # Status reconciliation can emit labeled/unlabeled events itself. Let the current
+  # run finish its atomic label convergence + Project sync; a later event will refetch
+  # current GitHub state and converge idempotently.
+  cancel-in-progress: false
 
 jobs:
   validate:
@@ -42,7 +48,14 @@ jobs:
         with:
           persist-credentials: false
       - name: Compile Project control-plane scripts
-        run: python3 -m py_compile scripts/bootstrap_github_project.py scripts/reconcile_github_issue_status.py
+        run: >-
+          python3 -m py_compile
+          scripts/github_issue_status.py
+          scripts/bootstrap_github_project.py
+          scripts/reconcile_github_issue_status.py
+          scripts/test_github_issue_status.py
+      - name: Test Project status convergence
+        run: python3 scripts/test_github_issue_status.py
 
   sync:
     if: github.event_name != 'pull_request'
