@@ -20,7 +20,8 @@ proof another person can reproduce. Product test capabilities remain documented 
 | Product introduction / quick start | README |
 
 Do not copy live branch, open-PR, or execution-queue status into README or architecture
-docs. An agent report is never proof.
+docs. An agent report is never proof. Issue prose may age; live blockers and current
+implementation facts must be refreshed before implementation.
 
 ## Core rule
 
@@ -28,47 +29,77 @@ Use the cheapest objective oracle that can catch the failure. Broaden verificati
 when the change crosses a real boundary or reaches final review. More commands, agents,
 artifacts, or narration are not stronger evidence by themselves.
 
+Do not make a material assumption silently. Verify project facts from current repo/GitHub
+state, external/version-sensitive facts from current primary sources, and use common
+practice only as a candidate design when those sources do not decide the question. A
+material unresolved correctness/security/data/migration/concurrency/product uncertainty
+requires a focused spike or decision before implementation continues.
+
 ## Execution flow
 
 ```text
 GitHub Issue
-  -> resolve live dependencies and current main
-  -> load narrow context
-  -> classify actual risk
+  -> refresh exact main + live blockers
+  -> revalidate issue current-state claims and external facts
+  -> classify drift/risk
   -> one accountable lead by default
   -> implement + nearest oracle
-  -> final integrated diff review
+  -> refresh/reconcile main if it moved materially
+  -> fresh final integrated diff review
   -> exact-head hosted CI
   -> merge
   -> human-only / higher-tier evidence separately when required
 ```
 
-### Ready to implement
+### Mandatory preflight / issue revalidation
 
-Before changing code, establish:
+Before changing code:
 
-- intended outcome and explicit non-goals;
-- live blockers/dependencies;
-- current implementation seam and owned files/contracts;
-- acceptance items that are software-testable versus human-only;
-- nearest direct oracle;
-- risk level from the table below.
+1. Fetch exact current `main`, the owning issue, and live blockers/dependencies.
+2. Verify only the relevant current implementation seams, files/contracts, schema,
+   configuration, and tests named or implied by the issue.
+3. Re-check time-sensitive external APIs/frameworks/providers/hardware from current
+   primary sources when the implementation depends on them.
+4. Classify the issue against current truth:
+   - **VALID** — current facts and required output remain aligned;
+   - **NON_MATERIAL_DRIFT** — implementation details changed but output/acceptance are
+     still valid; adapt the implementation approach and continue;
+   - **MATERIAL_DRIFT / ISSUE_STALE** — required output/invariants or architecture
+     assumptions conflict materially; re-plan/update the issue before coding;
+   - **NEEDS_DECISION / UNKNOWN_MATERIAL_FACT** — a material product, security, data,
+     migration, concurrency, provider, or hardware fact remains unresolved; spike or
+     request the decision rather than guessing.
+5. Establish intended Product/System/Failure output, explicit non-goals, acceptance
+   criteria, required scenarios/evidence, nearest oracle, and actual risk level.
 
-Stop discovery when those facts are known. If the work still contains an unresolved
-technology/product choice, create or finish a Spike rather than pretending the
-implementation issue is ready.
+Do not edit acceptance criteria merely to fit the current implementation. `main` answers
+what exists now; the issue answers what outcome is still required. If those truths truly
+conflict, escalate instead of choosing one silently.
+
+Stop discovery when the material facts are known. If the work still contains an
+unresolved technology/product choice, create or finish a Spike rather than pretending
+the implementation issue is Ready.
 
 ### Narrow implementation loop
 
 Repeat only:
 
-1. Add/update one observable oracle.
+1. Add/update one observable oracle tied to an acceptance criterion or required
+   scenario.
 2. Make the smallest coherent code change.
 3. Run touched-file formatting/static checks and the nearest package/host/integration
    test that owns the behavior.
 4. Fix the first useful failure. Do not rerun unrelated green suites.
 
 After the same unexplained failure twice, stop retrying and inspect the root cause.
+Do not expand scope merely because an adjacent cleanup is convenient.
+
+### Reconcile current main before final review
+
+If `main` moved while the issue was being implemented, inspect the intervening changes
+that overlap the owned surfaces or assumptions. Mechanical/unrelated drift does not
+force a re-plan. Semantic drift that changes the required implementation or invalidates
+an oracle returns the issue to revalidation before final review.
 
 ### Final local verification
 
@@ -79,12 +110,42 @@ later edits can affect that oracle.
 Local proof is diagnostic evidence. Required GitHub Checks are the exact-head hosted
 merge oracle.
 
-### Review
+### Fresh final review
 
-Review the complete final diff once, prioritizing correctness, security/privacy,
-concurrency/lifecycle, rollback, dead fallback paths, and missing acceptance tests.
-Fix findings and rerun only affected oracles. A second independent review is required
-only for L3/release-critical changes or when the first review exposes systemic risk.
+Review the complete final integrated diff from a fresh/independent context where
+practical. The reviewer should not rely on the implementer's reasoning as proof; the
+review inputs are the issue contract, relevant current code, exact PR diff/HEAD, and
+actual evidence.
+
+Review in this order:
+
+1. **Output:** does the Product/System/Failure output actually exist?
+2. **Acceptance:** evaluate every non-trivial acceptance criterion; use stable `A*`
+   mappings when the issue defines them.
+3. **Scenarios/evidence:** do the required `S*` scenarios have an oracle that would fail
+   if the behavior regressed, and did the required tier actually run?
+4. **Invariants/scope:** did the change preserve architecture/security/data boundaries
+   and avoid non-goals or parallel fallback paths?
+5. **Adversarial review:** look for correctness, auth/privacy, data-integrity,
+   concurrency/lifecycle, retry/restart/partial-failure, compatibility/rollback, dead
+   fallback, and missing-evidence counterexamples not already covered by the issue.
+
+A review verdict should distinguish:
+
+- **PASS** — no release-blocking finding at this HEAD;
+- **CHANGES_REQUIRED** — implementation or required evidence is wrong/incomplete;
+- **ISSUE_STALE / SPEC_DECISION_REQUIRED** — the issue itself lacks or conflicts on a
+  material requirement;
+- **INSUFFICIENT_EVIDENCE** — required proof did not run or does not prove the claim.
+
+Block only for correctness, stated requirements, security/privacy, data integrity,
+required compatibility/recovery, or missing/invalid required evidence. Optional style
+suggestions should not create endless remediation loops. After a fix, rerun the affected
+oracles and re-review the new relevant diff/HEAD; a previous PASS is not proof for a new
+HEAD.
+
+A second independent review is required for L3/release-critical changes or when the
+first review exposes systemic risk.
 
 ### Hosted proof and merge
 
@@ -162,11 +223,14 @@ workflow frameworks.
 ## PR execution record
 
 The PR description is the canonical execution explanation for the change. It should be
-compact and current, not a raw activity log or a second CI database.
+compact and current, not a raw activity log, a copy of the issue, or a second CI
+database.
 
 Default useful content:
 
-- link the owning issue and state the outcome/why;
+- link the owning issue and state the implemented outcome/why;
+- map non-trivial `A*` acceptance items to implementation/evidence when that helps
+  review;
 - list local verification only when it actually ran; GitHub Checks own exact-head proof;
 - state meaningful risk and a concrete rollback when the change has one;
 - state remaining PR work, issue work, or human/hardware/provider gates;
@@ -181,6 +245,7 @@ mistakes belong in code/test/CI linters instead.
 
 - Prefer deterministic assertions over logs and prose.
 - Test behavior at the lowest layer that owns it, then one boundary test for wiring.
+- A scenario test must prove its acceptance property, not merely execute the code path.
 - Mocks prove orchestration/failure handling, not provider/RF/acoustic/hardware quality.
 - Follow `docs/TEST_EVIDENCE_LADDER.md` for promotion language.
 - `evidence/status.json` changes only when a real evidence claim is promoted or
@@ -206,12 +271,14 @@ safe by broadening verification; normal changes should not repeat release-grade 
 
 A software child issue is done when:
 
-- requested behavior exists;
-- the direct positive and relevant negative oracle pass;
+- the requested Product/System/Failure outputs exist;
+- all required acceptance criteria and relevant positive/negative/recovery scenarios
+  pass at their required evidence level;
 - the final diff has no unresolved release-blocking finding;
 - no unrelated fallback/parallel product path was introduced;
+- current-main drift was reconciled;
 - required exact-head GitHub Checks pass;
-- rollback is understood;
+- rollback/recovery is understood;
 - the PR states any remaining unproven higher-tier claim;
 - code is merged to `main` and the implementation branch is retired.
 
@@ -220,8 +287,8 @@ keeping completed software implementation issues artificially open.
 
 ## After 5-10 PRs
 
-Measure review findings, CI reruns, stale-evidence incidents, merge conflicts, duplicate
-expensive tests, incorrect issue closures, README/status drift, PR lead time, and average
-agents per task. Convert a repeated deterministic failure into a linter. Create a Skill,
-nested `AGENTS.md`, or additional framework only after repeated evidence demonstrates a
-real need.
+Measure review findings, CI reruns, stale-issue incidents, stale-evidence incidents,
+merge conflicts, duplicate expensive tests, incorrect issue closures, README/status
+drift, PR lead time, and average agents per task. Convert a repeated deterministic
+failure into a linter. Create a Skill, nested `AGENTS.md`, or additional framework only
+after repeated evidence demonstrates a real need.
