@@ -382,6 +382,11 @@ extern "C" void app_main() {
   if (!pairing_available) {
     ESP_LOGW(kTag, "pairing runtime unavailable; voice path remains enabled");
   }
+  if (!backend.enable_confirmation_protocol()) {
+    ESP_LOGE(kTag, "destructive confirmation protocol initialization failed");
+    display.show(UiState::error, "CONFIRM INIT ERROR");
+    return;
+  }
 
   AppConfig app_config{};
   app_config.idle_after_ms = CONFIG_COMPANION_IDLE_AFTER_MS;
@@ -404,10 +409,30 @@ extern "C" void app_main() {
   bool readiness_committed = persisted == provisioning::PersistedState::ready;
   pairing::State previous_pairing_state = pairing_controller.state();
   pairing::StopReason previous_pairing_stop = pairing_controller.last_stop_reason();
+  UserConfirmationRequest confirmation{};
+  bool confirmation_pending = false;
+  uint64_t confirmation_deadline_ms = 0;
   while (true) {
     const uint64_t now = now_ms();
 
-    if (pairing_available) {
+    (void)backend.advertise_user_confirmation();
+    if (!confirmation_pending && backend.poll_user_confirmation(confirmation)) {
+      confirmation_pending = true;
+      confirmation_deadline_ms = now + confirmation.deadline_ms;
+    }
+    if (confirmation_pending) {
+      if (!backend.user_confirmation_current(confirmation)) {
+        confirmation_pending = false;
+      } else if (now >= confirmation_deadline_ms) {
+        (void)backend.respond_user_confirmation(confirmation, false);
+        confirmation_pending = false;
+      } else if (button.consume_press(now)) {
+        (void)backend.respond_user_confirmation(confirmation, true);
+        confirmation_pending = false;
+      }
+    }
+
+    if (!confirmation_pending && pairing_available) {
       const bool held = button.consume_pairing_hold(now);
       if (!pairing_controller.active() && held &&
           (app.state() == UiState::ready || app.state() == UiState::idle)) {
@@ -432,7 +457,9 @@ extern "C" void app_main() {
     ota.tick(now);
 
     const pairing::State current_pairing_state = pairing_controller.state();
-    if (pairing_controller.active()) {
+    if (confirmation_pending && backend.user_confirmation_current(confirmation)) {
+      display.show(UiState::ready, confirmation.prompt_view());
+    } else if (pairing_controller.active()) {
       display.show(UiState::ready, pairing_status(current_pairing_state));
     } else if (previous_pairing_state != pairing::State::idle) {
       const pairing::StopReason stopped = pairing_controller.last_stop_reason();
