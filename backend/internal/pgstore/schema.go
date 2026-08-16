@@ -6,11 +6,11 @@ import (
 	"strings"
 )
 
-const RequiredSchemaRevision = "20260815170000"
+const RequiredSchemaRevision = "20260816220000"
 
 var requiredProductTables = []string{
 	"turn_results", "notes", "expenses", "journal_entries", "reminders",
-	"conversation_messages", "budgets", "voice_memos", "idempotency_records",
+	"conversation_messages", "budgets", "savings_goals", "voice_memos", "idempotency_records",
 	"legacy_idempotency_reservations", "memories", "memory_vectors", "device_twins",
 	"config_overrides", "config_generation", "feature_flags", "entitlements",
 	"device_credentials", "device_claim_deliveries", "pairing_sessions", "device_relationships",
@@ -20,8 +20,9 @@ var requiredProductTables = []string{
 
 var requiredProductTriggers = map[string]string{
 	"trg_expenses_ai": "expenses", "trg_expenses_au": "expenses", "trg_expenses_ad": "expenses",
-	"trg_budgets_ai": "budgets", "trg_budgets_au": "budgets", "trg_reminders_ai": "reminders",
-	"trg_memories_ai": "memories", "trg_twins_au": "device_twins",
+	"trg_budgets_ai": "budgets", "trg_budgets_au": "budgets",
+	"trg_savings_goals_ai": "savings_goals", "trg_savings_goals_au": "savings_goals", "trg_savings_goals_ad": "savings_goals",
+	"trg_reminders_ai": "reminders", "trg_memories_ai": "memories", "trg_twins_au": "device_twins",
 }
 
 // VerifySchema fails closed unless Atlas completed the exact schema revision

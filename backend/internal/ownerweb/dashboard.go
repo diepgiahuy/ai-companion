@@ -1,7 +1,10 @@
 package ownerweb
 
 import (
+	"context"
+	"crypto/sha256"
 	_ "embed"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,6 +17,7 @@ import (
 
 	"companion-server/internal/controlplane"
 	"companion-server/internal/domain"
+	"companion-server/internal/idempotency"
 	"companion-server/internal/ownerauth"
 	"companion-server/internal/privacy"
 )
@@ -86,6 +90,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleDeleteExpense(w, r)
 	case path == "data/budget" && r.Method == http.MethodPost:
 		h.handleSetBudget(w, r)
+	case path == "data/savings-goal" && r.Method == http.MethodGet:
+		h.handleGetSavingsGoal(w, r)
+	case path == "data/savings-goal" && r.Method == http.MethodPost:
+		h.handleSetSavingsGoal(w, r)
+	case path == "data/savings-goal" && r.Method == http.MethodDelete:
+		h.handleDeleteSavingsGoal(w, r)
 	case path == "data/notes" && r.Method == http.MethodGet:
 		h.handleNotes(w, r)
 	case path == "data/notes" && r.Method == http.MethodPost:
@@ -155,16 +165,28 @@ func (h *Handler) handleOverview(w http.ResponseWriter, r *http.Request) {
 	recentVoiceMemos, _ := h.deps.Store.ListVoiceMemos(ctx, userID, "", 5)
 	activeReminders, _ := h.deps.Store.ListReminders(ctx, userID, "", "active", 5)
 
+	goal, goalSet, _ := h.deps.Store.GetSavingsGoal(ctx, userID, "monthly")
+	var gPtr *domain.SavingsGoal
+	if goalSet {
+		gPtr = &goal
+	}
+	var bPtr *int64
+	if budgetSet {
+		bPtr = &monthlyBudget
+	}
+	savingsProgress := domain.CalculateSavingsProgress(gPtr, "monthly", startOfMonth, endOfMonth, monthTotal, bPtr)
+
 	resp := map[string]any{
-		"user_id":        userID,
-		"current_time":   now.Format(time.RFC3339),
-		"month_total":    monthTotal,
-		"monthly_budget": monthlyBudget,
-		"budget_set":     budgetSet,
-		"expenses":       recentExpenses,
-		"notes":          recentNotes,
-		"voice_memos":    recentVoiceMemos,
-		"reminders":      activeReminders,
+		"user_id":          userID,
+		"current_time":     now.Format(time.RFC3339),
+		"month_total":      monthTotal,
+		"monthly_budget":   monthlyBudget,
+		"budget_set":       budgetSet,
+		"savings_progress": savingsProgress,
+		"expenses":         recentExpenses,
+		"notes":            recentNotes,
+		"voice_memos":      recentVoiceMemos,
+		"reminders":        activeReminders,
 	}
 	writeJSON(w, resp)
 }
@@ -484,6 +506,142 @@ func (h *Handler) handleDeleteExpense(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"ok": true, "deleted": "expense", "id": id})
+}
+
+func ownerMutationRequest(r *http.Request, userID, operation, clientKey string, payload any) (idempotency.Request, error) {
+	key := strings.TrimSpace(clientKey)
+	if key == "" {
+		key = strings.TrimSpace(r.Header.Get("X-Idempotency-Key"))
+	}
+	if key == "" {
+		key = fmt.Sprintf("ownerweb-%s-%d", operation, time.Now().UnixNano())
+	}
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return idempotency.Request{}, err
+	}
+	hash := sha256.Sum256(append([]byte(operation+":"), b...))
+	return idempotency.Request{
+		Actor:       userID,
+		Operation:   operation,
+		Key:         key,
+		RequestHash: hex.EncodeToString(hash[:]),
+	}, nil
+}
+
+func (h *Handler) handleGetSavingsGoal(w http.ResponseWriter, r *http.Request) {
+	userID, ok := h.userID(r)
+	if !ok || userID == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	ctx := r.Context()
+	period := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("period")))
+	if period == "" {
+		period = "monthly"
+	}
+	now := time.Now().UTC()
+	start, end := domain.CalculatePeriodBounds(period, now, time.UTC)
+	spent, _ := h.deps.Store.ExpenseTotal(ctx, userID, start, end)
+	bLimit, bSet, _ := h.deps.Store.BudgetLimit(ctx, userID, period)
+	var bPtr *int64
+	if bSet {
+		bPtr = &bLimit
+	}
+	goal, gSet, err := h.deps.Store.GetSavingsGoal(ctx, userID, period)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	var gPtr *domain.SavingsGoal
+	if gSet {
+		gPtr = &goal
+	}
+	progress := domain.CalculateSavingsProgress(gPtr, period, start, end, spent, bPtr)
+	writeJSON(w, map[string]any{
+		"period":   period,
+		"set":      gSet,
+		"goal":     gPtr,
+		"progress": progress,
+	})
+}
+
+func (h *Handler) handleSetSavingsGoal(w http.ResponseWriter, r *http.Request) {
+	userID, ok := h.userID(r)
+	if !ok || userID == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	var req struct {
+		Period         string `json:"period"`
+		TargetVND      int64  `json:"target_vnd"`
+		Description    string `json:"description"`
+		IdempotencyKey string `json:"idempotency_key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if err := domain.ValidateSavingsTarget(req.TargetVND); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	period := strings.ToLower(strings.TrimSpace(req.Period))
+	if period == "" {
+		period = "monthly"
+	}
+	mutator, ok := h.deps.Store.(interface {
+		SetSavingsGoalMutation(ctx context.Context, req idempotency.Request, userID, period string, targetVND int64, description string, effectiveFrom time.Time) error
+	})
+	if !ok {
+		http.Error(w, "durable store required", http.StatusInternalServerError)
+		return
+	}
+	mutationReq, err := ownerMutationRequest(r, userID, "saving.goal_set", req.IdempotencyKey, map[string]any{
+		"period":      period,
+		"target_vnd":  req.TargetVND,
+		"description": req.Description,
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	effectiveFrom := time.Now().UTC()
+	if err := mutator.SetSavingsGoalMutation(r.Context(), mutationReq, userID, period, req.TargetVND, strings.TrimSpace(req.Description), effectiveFrom); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "period": period, "target_vnd": req.TargetVND})
+}
+
+func (h *Handler) handleDeleteSavingsGoal(w http.ResponseWriter, r *http.Request) {
+	userID, ok := h.userID(r)
+	if !ok || userID == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	period := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("period")))
+	if period == "" {
+		period = "monthly"
+	}
+	key := strings.TrimSpace(r.URL.Query().Get("idempotency_key"))
+	mutator, ok := h.deps.Store.(interface {
+		DeleteSavingsGoalMutation(ctx context.Context, req idempotency.Request, userID, period string) error
+	})
+	if !ok {
+		http.Error(w, "durable store required", http.StatusInternalServerError)
+		return
+	}
+	mutationReq, err := ownerMutationRequest(r, userID, "saving.goal_delete", key, map[string]any{"period": period})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := mutator.DeleteSavingsGoalMutation(r.Context(), mutationReq, userID, period); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "deleted": "savings_goal", "period": period})
 }
 
 func (h *Handler) handleCreateNote(w http.ResponseWriter, r *http.Request) {

@@ -55,6 +55,11 @@ func (r *Router) Plan(ctx context.Context, query string) Plan {
 			uris = append(uris, "budget://weekly")
 		}
 	}
+	if has("tiết kiệm", "tiet kiem", "saving", "savings", "mục tiêu tiết kiệm", "muc tieu tiet kiem", "mục tiêu để dành", "để dành", "de danh") {
+		packs["saving"] = true
+		packs["budget"] = true
+		uris = append(uris, "saving://current")
+	}
 	if has("timer", "đếm ngược", "hẹn giờ") {
 		packs["schedule"] = true
 		uris = append(uris, "timers://active")
@@ -81,13 +86,13 @@ func (r *Router) Plan(ctx context.Context, query string) Plan {
 	if has("giá vàng", "xau", "gold", "market", "chứng khoán", "stock", "crypto", "bitcoin", "ethereum", "tỷ giá", "exchange rate", "usd/vnd", "eur/vnd", "sjc") {
 		packs["market"] = true
 	}
-	if has("nhớ", "ghi nhớ", "remember", "quên", "forget", "từng nói", "sở thích", "dị ứng", "sinh nhật", "mục tiêu", "personal memory") || ((has("thích ", "ghét ") || strings.HasSuffix(q, "thích")) && !has("giải thích")) {
+	if (has("nhớ", "ghi nhớ", "remember", "quên", "forget", "từng nói", "sở thích", "dị ứng", "sinh nhật", "personal memory") || ((has("thích ", "ghét ") || strings.HasSuffix(q, "thích")) && !has("giải thích"))) && !has("tiết kiệm", "saving") {
 		packs["memory"] = true
 	}
 	// Unknown/general conversation keeps all native packs available for compatibility,
 	// but avoids eagerly loading unrelated resources.
 	if len(packs) == 0 {
-		for _, p := range []string{"expense", "budget", "note", "journal", "schedule", "voice"} {
+		for _, p := range []string{"expense", "budget", "saving", "note", "journal", "schedule", "voice"} {
 			packs[p] = true
 		}
 	}
@@ -108,7 +113,7 @@ func (r *Router) Plan(ctx context.Context, query string) Plan {
 }
 func mapKeys(m map[string]bool) []string {
 	out := make([]string, 0, len(m))
-	for _, k := range []string{"expense", "budget", "note", "journal", "schedule", "voice", "memory", "market", "context"} {
+	for _, k := range []string{"expense", "budget", "saving", "note", "journal", "schedule", "voice", "memory", "market", "context"} {
 		if m[k] {
 			out = append(out, k)
 		}

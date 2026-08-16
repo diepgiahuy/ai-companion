@@ -72,3 +72,8 @@
 {"input":"Giải thích cho tôi định lý Pythagoras","fallback":true}
 {"input":"Bạn có thể giúp tôi những gì trong ngày?","fallback":true}
 {"input":"Chúc ngủ ngon companion","fallback":true}
+{"input":"Đặt mục tiêu tiết kiệm tháng này 5 triệu","must_pack":["saving","budget"]}
+{"input":"Tiến độ tiết kiệm tháng này thế nào","must_pack":["saving","budget"]}
+{"input":"Tháng này tao còn bao xa mục tiêu tiết kiệm","must_pack":["saving","budget"]}
+{"input":"Xóa mục tiêu tiết kiệm","must_pack":["saving","budget"]}
+{"input":"Dat muc tieu tiet kiem 3tr thang nay","must_pack":["saving","budget"]}

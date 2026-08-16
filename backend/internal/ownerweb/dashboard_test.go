@@ -323,3 +323,95 @@ func TestOwnerWebVoiceMemoBlobSafeDeletion(t *testing.T) {
 		t.Fatalf("audio blob file on disk should be removed after memo deletion")
 	}
 }
+
+func TestOwnerWebSavingsGoalEndpoints(t *testing.T) {
+	data, err := store.Open(filepath.Join(t.TempDir(), "ownerweb_savings.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer data.Close()
+
+	authAlice, sessionAlice, csrfAlice, cleanup := newTestAuthService(t, "user-alice")
+	defer cleanup()
+
+	handler := NewHandler(Dependencies{
+		Store: data,
+		Auth:  authAlice,
+	})
+
+	// 1. Initial GET savings goal -> set: false
+	reqGet := httptest.NewRequest(http.MethodGet, "/v1/owner/data/savings-goal?period=monthly", nil)
+	reqGet.AddCookie(&http.Cookie{Name: "__Host-companion_session", Value: sessionAlice})
+	wGet := httptest.NewRecorder()
+	handler.ServeHTTP(wGet, reqGet)
+	if wGet.Code != http.StatusOK || !strings.Contains(wGet.Body.String(), `"set":false`) {
+		t.Fatalf("get savings goal failed: %d %s", wGet.Code, wGet.Body.String())
+	}
+
+	// 2. Target validation: <= 0 should fail
+	reqBad := httptest.NewRequest(http.MethodPost, "/v1/owner/data/savings-goal", strings.NewReader(`{"period":"monthly","target_vnd":0}`))
+	reqBad.AddCookie(&http.Cookie{Name: "__Host-companion_session", Value: sessionAlice})
+	reqBad.Header.Set("X-CSRF-Token", csrfAlice)
+	wBad := httptest.NewRecorder()
+	handler.ServeHTTP(wBad, reqBad)
+	if wBad.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for target 0, got %d", wBad.Code)
+	}
+
+	// 3. Target validation: > 1T should fail
+	reqOverflow := httptest.NewRequest(http.MethodPost, "/v1/owner/data/savings-goal", strings.NewReader(`{"period":"monthly","target_vnd":1000000000001}`))
+	reqOverflow.AddCookie(&http.Cookie{Name: "__Host-companion_session", Value: sessionAlice})
+	reqOverflow.Header.Set("X-CSRF-Token", csrfAlice)
+	wOverflow := httptest.NewRecorder()
+	handler.ServeHTTP(wOverflow, reqOverflow)
+	if wOverflow.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for target > 1T, got %d", wOverflow.Code)
+	}
+
+	// 4. Valid POST savings goal
+	reqSet := httptest.NewRequest(http.MethodPost, "/v1/owner/data/savings-goal", strings.NewReader(`{"period":"monthly","target_vnd":5000000,"description":"New Bike"}`))
+	reqSet.AddCookie(&http.Cookie{Name: "__Host-companion_session", Value: sessionAlice})
+	reqSet.Header.Set("X-CSRF-Token", csrfAlice)
+	wSet := httptest.NewRecorder()
+	handler.ServeHTTP(wSet, reqSet)
+	if wSet.Code != http.StatusOK || !strings.Contains(wSet.Body.String(), `"target_vnd":5000000`) {
+		t.Fatalf("set savings goal failed: %d %s", wSet.Code, wSet.Body.String())
+	}
+
+	// 5. GET savings goal after set
+	reqGet2 := httptest.NewRequest(http.MethodGet, "/v1/owner/data/savings-goal?period=monthly", nil)
+	reqGet2.AddCookie(&http.Cookie{Name: "__Host-companion_session", Value: sessionAlice})
+	wGet2 := httptest.NewRecorder()
+	handler.ServeHTTP(wGet2, reqGet2)
+	if wGet2.Code != http.StatusOK || !strings.Contains(wGet2.Body.String(), `"set":true`) || !strings.Contains(wGet2.Body.String(), `"target_vnd":5000000`) {
+		t.Fatalf("get savings goal after set failed: %s", wGet2.Body.String())
+	}
+
+	// 6. Overview should include savings_progress
+	reqOverview := httptest.NewRequest(http.MethodGet, "/v1/owner/data/overview", nil)
+	reqOverview.AddCookie(&http.Cookie{Name: "__Host-companion_session", Value: sessionAlice})
+	wOverview := httptest.NewRecorder()
+	handler.ServeHTTP(wOverview, reqOverview)
+	if wOverview.Code != http.StatusOK || !strings.Contains(wOverview.Body.String(), `"savings_progress"`) {
+		t.Fatalf("overview missing savings_progress: %s", wOverview.Body.String())
+	}
+
+	// 7. DELETE savings goal
+	reqDel := httptest.NewRequest(http.MethodDelete, "/v1/owner/data/savings-goal?period=monthly", nil)
+	reqDel.AddCookie(&http.Cookie{Name: "__Host-companion_session", Value: sessionAlice})
+	reqDel.Header.Set("X-CSRF-Token", csrfAlice)
+	wDel := httptest.NewRecorder()
+	handler.ServeHTTP(wDel, reqDel)
+	if wDel.Code != http.StatusOK || !strings.Contains(wDel.Body.String(), `"deleted":"savings_goal"`) {
+		t.Fatalf("delete savings goal failed: %s", wDel.Body.String())
+	}
+
+	// 8. GET savings goal after delete -> set: false
+	reqGet3 := httptest.NewRequest(http.MethodGet, "/v1/owner/data/savings-goal?period=monthly", nil)
+	reqGet3.AddCookie(&http.Cookie{Name: "__Host-companion_session", Value: sessionAlice})
+	wGet3 := httptest.NewRecorder()
+	handler.ServeHTTP(wGet3, reqGet3)
+	if wGet3.Code != http.StatusOK || !strings.Contains(wGet3.Body.String(), `"set":false`) {
+		t.Fatalf("get savings goal after delete failed: %s", wGet3.Body.String())
+	}
+}

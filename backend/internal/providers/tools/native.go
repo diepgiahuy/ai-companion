@@ -299,6 +299,153 @@ func nativeTools(d NativeDependencies) []capability.Tool {
 			return capability.Success(map[string]any{"deleted": "budget", "period": a.Period})
 		}),
 
+		define("saving", "saving.goal_get", "Đọc mục tiêu tiết kiệm hiện tại", obj(map[string]any{"period": periodField}, "period"), func(ctx context.Context, r capability.ToolRequest) capability.ToolResult {
+			var a struct {
+				Period string `json:"period"`
+			}
+			if err := json.Unmarshal([]byte(r.Arguments), &a); err != nil {
+				return capability.Failure(err)
+			}
+			period := strings.ToLower(strings.TrimSpace(a.Period))
+			if period == "" {
+				period = "monthly"
+			}
+			goal, ok, err := d.Store.GetSavingsGoal(ctx, currentUser(ctx), period)
+			if err != nil {
+				return capability.Failure(err)
+			}
+			if !ok {
+				return capability.Success(map[string]any{"period": period, "set": false})
+			}
+			return capability.Success(map[string]any{
+				"period":         goal.Period,
+				"set":            true,
+				"target_vnd":     goal.TargetVND,
+				"description":    goal.Description,
+				"effective_from": goal.EffectiveFrom,
+				"updated_at":     goal.UpdatedAt,
+			})
+		}),
+		define("saving", "saving.goal_set", "Đặt hoặc cập nhật mục tiêu tiết kiệm", obj(map[string]any{
+			"period":      periodField,
+			"target_vnd":  map[string]any{"type": "integer", "minimum": 1},
+			"description": str("Mô tả mục tiêu (tùy chọn)"),
+		}, "period", "target_vnd"), func(ctx context.Context, r capability.ToolRequest) capability.ToolResult {
+			var a struct {
+				Period      string `json:"period"`
+				TargetVND   int64  `json:"target_vnd"`
+				Description string `json:"description"`
+			}
+			if err := json.Unmarshal([]byte(r.Arguments), &a); err != nil {
+				return capability.Failure(err)
+			}
+			if err := domain.ValidateSavingsTarget(a.TargetVND); err != nil {
+				return capability.Failure(err)
+			}
+			period := strings.ToLower(strings.TrimSpace(a.Period))
+			if period == "" {
+				period = "monthly"
+			}
+			request, err := durableMutationRequest(ctx, "saving.goal_set", r.Key, map[string]any{
+				"period":      period,
+				"target_vnd":  a.TargetVND,
+				"description": a.Description,
+			})
+			if err != nil {
+				return capability.Failure(err)
+			}
+			effectiveFrom := d.Now().UTC()
+			if err := d.Store.SetSavingsGoalMutation(ctx, request, currentUser(ctx), period, a.TargetVND, a.Description, effectiveFrom); err != nil {
+				return capability.Failure(err)
+			}
+			return capability.Success(map[string]any{
+				"saved":       "savings_goal",
+				"period":      period,
+				"target_vnd":  a.TargetVND,
+				"description": a.Description,
+			})
+		}),
+		define("saving", "saving.goal_delete", "Xóa mục tiêu tiết kiệm", obj(map[string]any{"period": periodField}, "period"), func(ctx context.Context, r capability.ToolRequest) capability.ToolResult {
+			var a struct {
+				Period string `json:"period"`
+			}
+			if err := json.Unmarshal([]byte(r.Arguments), &a); err != nil {
+				return capability.Failure(err)
+			}
+			period := strings.ToLower(strings.TrimSpace(a.Period))
+			if period == "" {
+				period = "monthly"
+			}
+			request, err := durableMutationRequest(ctx, "saving.goal_delete", r.Key, map[string]any{"period": period})
+			if err != nil {
+				return capability.Failure(err)
+			}
+			if err := d.Store.DeleteSavingsGoalMutation(ctx, request, currentUser(ctx), period); err != nil {
+				return capability.Failure(err)
+			}
+			return capability.Success(map[string]any{"deleted": "savings_goal", "period": period})
+		}),
+		define("saving", "saving.progress", "Xem tiến độ mục tiêu tiết kiệm và budget headroom", obj(map[string]any{"period": periodField}, "period"), func(ctx context.Context, r capability.ToolRequest) capability.ToolResult {
+			var a struct {
+				Period string `json:"period"`
+			}
+			if err := json.Unmarshal([]byte(r.Arguments), &a); err != nil {
+				return capability.Failure(err)
+			}
+			period := strings.ToLower(strings.TrimSpace(a.Period))
+			if period == "" {
+				period = "monthly"
+			}
+			userID := currentUser(ctx)
+			now := d.Now().UTC()
+			start, end := domain.CalculatePeriodBounds(period, now, time.UTC)
+
+			spent, err := d.Store.ExpenseTotal(ctx, userID, start, end)
+			if err != nil {
+				return capability.Failure(err)
+			}
+			bLimit, bSet, err := d.Store.BudgetLimit(ctx, userID, period)
+			if err != nil {
+				return capability.Failure(err)
+			}
+			var bPtr *int64
+			if bSet {
+				bPtr = &bLimit
+			}
+			goal, gSet, err := d.Store.GetSavingsGoal(ctx, userID, period)
+			if err != nil {
+				return capability.Failure(err)
+			}
+			var gPtr *domain.SavingsGoal
+			if gSet {
+				gPtr = &goal
+			}
+			progress := domain.CalculateSavingsProgress(gPtr, period, start, end, spent, bPtr)
+			payload := map[string]any{
+				"period":                 progress.Period,
+				"period_start":           progress.PeriodStart,
+				"period_end":             progress.PeriodEnd,
+				"spent_vnd":              progress.SpentVND,
+				"budget_vnd":             progress.BudgetVND,
+				"budget_remaining_vnd":   progress.BudgetRemainingVND,
+				"headroom_vs_target_vnd": progress.HeadroomVsTargetVND,
+				"basis":                  progress.Basis,
+				"status":                 progress.Status,
+			}
+			if progress.Goal != nil {
+				payload["goal"] = map[string]any{
+					"period":         progress.Goal.Period,
+					"target_vnd":     progress.Goal.TargetVND,
+					"description":    progress.Goal.Description,
+					"effective_from": progress.Goal.EffectiveFrom,
+					"updated_at":     progress.Goal.UpdatedAt,
+				}
+			}
+			res := capability.Success(payload)
+			res.Presentation = savingsCard(progress)
+			return res
+		}),
+
 		define("note", "note.create", "Lưu ghi chú", obj(map[string]any{"content": str("Nội dung")}, "content"), func(ctx context.Context, r capability.ToolRequest) capability.ToolResult {
 			var a struct {
 				Content string `json:"content"`
@@ -849,3 +996,37 @@ func expenseCard(total, limit, remaining int64, period string) *capability.Prese
 	}
 	return &capability.Presentation{Kind: "expense_summary", Title: "Chi tiêu " + period, Primary: fmt.Sprintf("%d VND", total), Secondary: fmt.Sprintf("Còn %d / %d VND", remaining, limit), Progress: pct}
 }
+
+func savingsCard(p domain.SavingsProgress) *capability.Presentation {
+	target := int64(0)
+	if p.Goal != nil {
+		target = p.Goal.TargetVND
+	}
+	title := "Mục tiêu tiết kiệm " + p.Period
+	primary := fmt.Sprintf("Mục tiêu: %d VND", target)
+	secondary := "Chưa đặt budget"
+	pct := 0
+	if p.BudgetRemainingVND != nil && target > 0 {
+		rem := *p.BudgetRemainingVND
+		if rem > 0 {
+			pct = int(rem * 100 / target)
+			if pct > 100 {
+				pct = 100
+			}
+		}
+	}
+	switch p.Status {
+	case domain.StatusBudgetHeadroomCoversTarget:
+		secondary = fmt.Sprintf("Dư địa budget (%d đ) đủ đạt mục tiêu", *p.BudgetRemainingVND)
+	case domain.StatusBudgetHeadroomBelowTarget:
+		secondary = fmt.Sprintf("Dư địa budget (%d đ) chưa đủ mục tiêu (%d đ)", *p.BudgetRemainingVND, target)
+	case domain.StatusOverBudget:
+		secondary = fmt.Sprintf("Đã vượt ngân sách (%d đ)", *p.BudgetRemainingVND)
+	case domain.StatusInsufficientData:
+		secondary = "Chưa đặt ngân sách để tính dư địa"
+	case domain.StatusNoActiveGoal:
+		secondary = "Chưa có mục tiêu tiết kiệm"
+	}
+	return &capability.Presentation{Kind: "savings_progress", Title: title, Primary: primary, Secondary: secondary, Progress: pct}
+}
+

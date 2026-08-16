@@ -82,10 +82,17 @@ type PrivacyRepository interface {
 	SetPrivacyPolicy(ctx context.Context, p privacy.Policy) error
 }
 
+type SavingsGoalRepository interface {
+	SetSavingsGoal(ctx context.Context, userID, period string, targetVND int64, description string, effectiveFrom time.Time) error
+	GetSavingsGoal(ctx context.Context, userID, period string) (SavingsGoal, bool, error)
+	DeleteSavingsGoal(ctx context.Context, userID, period string) error
+}
+
 type ReadRepositories interface {
 	NoteRepository
 	ExpenseRepository
 	BudgetRepository
+	SavingsGoalRepository
 	JournalRepository
 	ScheduleRepository
 	VoiceMemoRepository

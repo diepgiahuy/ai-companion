@@ -71,3 +71,26 @@ type DeviceItem struct {
 	CreatedAt time.Time `json:"created_at"`
 	RotatedAt time.Time `json:"rotated_at,omitempty"`
 }
+
+type SavingsGoal struct {
+	UserID        string    `json:"user_id,omitempty"`
+	Period        string    `json:"period"`
+	TargetVND     int64     `json:"target_vnd"`
+	Description   string    `json:"description,omitempty"`
+	EffectiveFrom time.Time `json:"effective_from"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+type SavingsProgress struct {
+	Goal                *SavingsGoal `json:"goal,omitempty"`
+	Period              string       `json:"period"`
+	PeriodStart         time.Time    `json:"period_start"`
+	PeriodEnd           time.Time    `json:"period_end"`
+	SpentVND            int64        `json:"spent_vnd"`
+	BudgetVND           *int64       `json:"budget_vnd,omitempty"`
+	BudgetRemainingVND  *int64       `json:"budget_remaining_vnd,omitempty"`
+	HeadroomVsTargetVND *int64       `json:"headroom_vs_target_vnd,omitempty"`
+	Basis               string       `json:"basis"`
+	Status              string       `json:"status"`
+}

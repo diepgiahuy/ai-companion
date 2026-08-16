@@ -29,7 +29,7 @@ func NewNative(data domain.ReadRepositories, conversation *conversationctx.Servi
 }
 
 func (n *Native) Schemes() []string {
-	return []string{"expenses", "budget", "reminders", "timers", "notes", "journal", "voicememos", "conversation"}
+	return []string{"expenses", "budget", "saving", "reminders", "timers", "notes", "journal", "voicememos", "conversation"}
 }
 
 func (n *Native) List(context.Context) ([]capability.ResourceDescriptor, error) {
@@ -41,6 +41,7 @@ func (n *Native) List(context.Context) ([]capability.ResourceDescriptor, error) 
 		{URI: "budget://daily", Name: "Daily budget", Description: "Current daily spending limit", MIMEType: "application/json"},
 		{URI: "budget://weekly", Name: "Weekly budget", Description: "Current weekly spending limit", MIMEType: "application/json"},
 		{URI: "budget://monthly", Name: "Monthly budget", Description: "Current monthly spending limit", MIMEType: "application/json"},
+		{URI: "saving://current", Name: "Current savings goal and progress", Description: "Current active savings target and derived budget headroom progress", MIMEType: "application/json"},
 		{URI: "reminders://today", Name: "Today's reminders", Description: "Pending reminders due today", MIMEType: "application/json"},
 		{URI: "reminders://upcoming", Name: "Upcoming reminders", Description: "Pending scheduled reminders", MIMEType: "application/json"},
 		{URI: "timers://active", Name: "Active timers", Description: "Pending timers with remaining seconds", MIMEType: "application/json"},
@@ -109,6 +110,35 @@ func (n *Native) Read(ctx context.Context, uri *url.URL) (capability.Resource, e
 			return capability.Resource{}, lookupErr
 		}
 		value = map[string]any{"period": period, "set": found, "limit_vnd": amount}
+
+	case "saving":
+		period := "monthly"
+		if p := resourceKey(uri); p != "" && p != "current" {
+			period = p
+		}
+		loc := resolveLocation(ctx, n.location)
+		start, end := domain.CalculatePeriodBounds(period, now, loc)
+		spent, totalErr := n.store.ExpenseTotal(ctx, userID, start, end)
+		if totalErr != nil {
+			return capability.Resource{}, totalErr
+		}
+		bLimit, bSet, bErr := n.store.BudgetLimit(ctx, userID, period)
+		if bErr != nil {
+			return capability.Resource{}, bErr
+		}
+		var bPtr *int64
+		if bSet {
+			bPtr = &bLimit
+		}
+		goal, gSet, gErr := n.store.GetSavingsGoal(ctx, userID, period)
+		if gErr != nil {
+			return capability.Resource{}, gErr
+		}
+		var gPtr *domain.SavingsGoal
+		if gSet {
+			gPtr = &goal
+		}
+		value = domain.CalculateSavingsProgress(gPtr, period, start, end, spent, bPtr)
 
 	case "reminders":
 		items, listErr := n.store.ListReminders(ctx, userID, deviceID, "active", 100)

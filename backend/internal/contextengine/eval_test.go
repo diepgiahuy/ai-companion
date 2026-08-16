@@ -43,7 +43,7 @@ func TestRoutingEvaluationCorpus(t *testing.T) {
 		if s.Exact && len(got) != len(s.MustPack) {
 			t.Errorf("line %d %q: expected exact %v got %v", line, s.Input, s.MustPack, got)
 		}
-		if s.Fallback && len(got) != 6 {
+		if s.Fallback && len(got) != 7 {
 			t.Errorf("line %d %q: fallback packs=%v", line, s.Input, got)
 		}
 	}
