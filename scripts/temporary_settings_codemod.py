@@ -167,7 +167,7 @@ replace_between(
 replace_between(
     "backend/internal/ownerweb/dashboard.go",
     "func (h *Handler) handleUpdateDeviceConfig(w http.ResponseWriter, r *http.Request) {\n",
-    "\nfunc (h *Handler) handleExpenses",
+    "\nfunc (h *Handler) handleCreateExpense",
     """func (h *Handler) handleUpdateDeviceConfig(w http.ResponseWriter, r *http.Request) {
 \tuserID, ok := h.userID(r)
 \tif !ok || userID == "" {
