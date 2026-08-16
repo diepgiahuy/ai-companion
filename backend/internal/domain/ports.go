@@ -71,6 +71,10 @@ type VoiceMemoRepository interface {
 	DeleteVoiceMemo(ctx context.Context, userID string, id int64) error
 }
 
+type DeviceRepository interface {
+	ListUserDevices(ctx context.Context, userID string) ([]DeviceItem, error)
+}
+
 type ReadRepositories interface {
 	NoteRepository
 	ExpenseRepository
@@ -78,6 +82,7 @@ type ReadRepositories interface {
 	JournalRepository
 	ScheduleRepository
 	VoiceMemoRepository
+	DeviceRepository
 }
 
 type Repositories interface{ ReadRepositories }

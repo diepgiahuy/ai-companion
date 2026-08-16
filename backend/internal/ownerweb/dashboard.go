@@ -234,57 +234,45 @@ func (h *Handler) handleReminders(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleDevices(w http.ResponseWriter, r *http.Request) {
-	devices := []map[string]any{
-		{
-			"device_id":         "companion-s3-01",
-			"name":              "Desk Companion (Living Room)",
-			"online":            true,
+	userID := h.userID(r)
+	ctx := r.Context()
+	items, err := h.deps.Store.ListUserDevices(ctx, userID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	devices := make([]map[string]any, 0, len(items))
+	for _, it := range items {
+		devices = append(devices, map[string]any{
+			"device_id":         it.DeviceID,
+			"name":              it.DeviceID,
+			"online":            it.Status == "active",
 			"hardware":          "ESP32-S3-WROOM-1-N16R8",
 			"firmware_version":  "v2.4.0",
 			"wifi_rssi_dbm":     -58,
 			"ota_poll_interval": "6h",
-			"last_seen_at":      time.Now().UTC().Format(time.RFC3339),
-		},
-		{
-			"device_id":         "companion-s3-02",
-			"name":              "Bedside Companion",
-			"online":            true,
-			"hardware":          "ESP32-S3-WROOM-1-N16R8",
-			"firmware_version":  "v2.4.0",
-			"wifi_rssi_dbm":     -64,
-			"ota_poll_interval": "12h",
-			"last_seen_at":      time.Now().UTC().Add(-2 * time.Minute).Format(time.RFC3339),
-		},
+			"created_at":        it.CreatedAt.Format(time.RFC3339),
+			"last_seen_at":      it.RotatedAt.Format(time.RFC3339),
+		})
 	}
 	writeJSON(w, map[string]any{"devices": devices})
 }
 
 func (h *Handler) handleDevice(w http.ResponseWriter, r *http.Request) {
 	deviceID := strings.TrimSpace(r.URL.Query().Get("device_id"))
-	if deviceID == "" || deviceID == "companion-s3-01" {
-		writeJSON(w, map[string]any{
-			"device_id":         "companion-s3-01",
-			"name":              "Desk Companion (Living Room)",
-			"online":            true,
-			"hardware":          "ESP32-S3-WROOM-1-N16R8",
-			"sram_cap_kb":       160.5,
-			"psram_codec_kb":    128.0,
-			"ota_poll_interval": "6h",
-			"firmware_version":  "v2.4.0",
-			"wifi_rssi_dbm":     -58,
-		})
-		return
+	if deviceID == "" {
+		deviceID = "companion-s3-01"
 	}
 	writeJSON(w, map[string]any{
 		"device_id":         deviceID,
-		"name":              "Bedside Companion (" + deviceID + ")",
+		"name":              deviceID,
 		"online":            true,
 		"hardware":          "ESP32-S3-WROOM-1-N16R8",
 		"sram_cap_kb":       160.5,
 		"psram_codec_kb":    128.0,
-		"ota_poll_interval": "12h",
+		"ota_poll_interval": "6h",
 		"firmware_version":  "v2.4.0",
-		"wifi_rssi_dbm":     -64,
+		"wifi_rssi_dbm":     -58,
 	})
 }
 

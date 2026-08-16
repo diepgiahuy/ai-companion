@@ -432,3 +432,22 @@ func (s *Store) DeleteVoiceMemo(ctx context.Context, userID string, id int64) er
 	if err != nil { return err }
 	return requireRowsChanged(tag.RowsAffected(), "voice memo")
 }
+
+func (s *Store) ListUserDevices(ctx context.Context, userID string) ([]domain.DeviceItem, error) {
+	rows, err := s.pool.Query(ctx, `SELECT device_id, user_id, COALESCE(plan,''), status, created_at, rotated_at FROM device_credentials WHERE user_id=$1 AND status='active' ORDER BY created_at ASC`, owner(userID))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.DeviceItem
+	for rows.Next() {
+		var d domain.DeviceItem
+		if err := rows.Scan(&d.DeviceID, &d.UserID, &d.Plan, &d.Status, &d.CreatedAt, &d.RotatedAt); err != nil {
+			return nil, err
+		}
+		d.CreatedAt = d.CreatedAt.UTC()
+		d.RotatedAt = d.RotatedAt.UTC()
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}

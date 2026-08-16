@@ -58,7 +58,16 @@ type VoiceMemo struct {
 	UserID     string    `json:"user_id,omitempty"`
 	DeviceID   string    `json:"device_id,omitempty"`
 	Path       string    `json:"path"`
-	Transcript string    `json:"transcript,omitempty"`
+	Transcript string    `json:"transcript"`
 	DurationMS int64     `json:"duration_ms"`
 	CreatedAt  time.Time `json:"created_at"`
+}
+
+type DeviceItem struct {
+	DeviceID  string    `json:"device_id"`
+	UserID    string    `json:"user_id,omitempty"`
+	Plan      string    `json:"plan,omitempty"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
+	RotatedAt time.Time `json:"rotated_at,omitempty"`
 }

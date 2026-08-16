@@ -936,3 +936,23 @@ func boundedLimit(n int) int {
 func (s *Store) CreateReminder(ctx context.Context, key, title string, fireAt time.Time) error {
 	return s.CreateReminderForDevice(ctx, "", key, "", title, fireAt)
 }
+
+func (s *Store) ListUserDevices(ctx context.Context, userID string) ([]domain.DeviceItem, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT device_id, user_id, COALESCE(plan,''), status, created_at, rotated_at FROM device_credentials WHERE user_id=? AND status='active' ORDER BY created_at ASC`, owner(userID))
+	if err != nil {
+		return nil, nil
+	}
+	defer rows.Close()
+	var out []domain.DeviceItem
+	for rows.Next() {
+		var d domain.DeviceItem
+		var rawCreated, rawRotated string
+		if err := rows.Scan(&d.DeviceID, &d.UserID, &d.Plan, &d.Status, &rawCreated, &rawRotated); err != nil {
+			return nil, err
+		}
+		d.CreatedAt, _ = parseStoredTime(rawCreated)
+		d.RotatedAt, _ = parseStoredTime(rawRotated)
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
