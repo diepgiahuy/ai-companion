@@ -9,14 +9,16 @@ Status: IN PROGRESS — Phase 1 PRs passing CI; Phase 2 & 3 in execution
 
 | Issue # | Type / Area | Title | Phase | Current State |
 |---|---|---|---|---|
-| **#180** | Backend / Safety | Complete explicit destructive-tool confirmation path | Phase 1 | Handled in **PR #188** (All 8 CI jobs Green) |
-| **#184** | Firmware / Concurrency | Synchronize shared Opus decoder across WebSocket TTS & Voice Mail | Phase 1 | Handled in **PR #189** (All checks Green) |
-| **#185** | Firmware / OTA | Implement periodic background OTA manifest polling during runtime | Phase 1 | Handled in **PR #189** (All checks Green) |
-| **#186** | Firmware / Stability | Implement graceful FreeRTOS task shutdown in backend destructor | Phase 1 | Handled in **PR #189** (All checks Green) |
-| **#187** | Backend / Distributed | Move in-memory claim rate limiter & redemption cache to PostgreSQL | Phase 1 | Handled in **PR #189** (All checks Green) |
-| **#190** | Backend / Context | Dynamic per-turn time and timezone injection in ADK & native resources | Phase 2 | Handled in **PR #193** (Completed) |
-| **#191** | Backend / Query | Add date-range and search filtering for Notes and Voice Memos | Phase 2 | Handled in **PR #193** (Completed) |
-| **#192** | Frontend / UI | Responsive Notion-Style Personal-Data & Device Management Dashboard | Phase 3 | Handled in **PR #193** (Completed) |
+| **#177** | Backend / Auth | Bound public owner auth and claim ingress | Phase 0 | **MERGED** to `main` |
+| **#183** | Backend / Store | Remove dead SQLite conversation adapter | Phase 0 | **MERGED** to `main` |
+| **#180** | Backend / Safety | Complete explicit destructive-tool confirmation path | Phase 0 | Handled in **PR #188** (Auto-merge queued) |
+| **#184** | Firmware / Concurrency | Synchronize shared Opus decoder across WebSocket TTS & Voice Mail | Phase 0 | Handled in **PR #189** (Auto-merge queued) |
+| **#185** | Firmware / OTA | Implement periodic background OTA manifest polling during runtime | Phase 0 | Handled in **PR #189** (Auto-merge queued) |
+| **#186** | Firmware / Stability | Implement graceful FreeRTOS task shutdown in backend destructor | Phase 0 | Handled in **PR #189** (Auto-merge queued) |
+| **#187** | Backend / Distributed | Move in-memory claim rate limiter & redemption cache to PostgreSQL | Phase 0 | Handled in **PR #189** (Auto-merge queued) |
+| **#190** | Backend / Context | Dynamic per-turn time and timezone injection in ADK & native resources | Phase 1 | Handled in **PR #193** (Verified 42/42 tests) |
+| **#191** | Backend / Query | Add date-range and search filtering for Notes and Voice Memos | Phase 1 | Handled in **PR #193** (Verified 42/42 tests) |
+| **#192** | Frontend / UI | Responsive Notion-Style Personal-Data & Device Management Dashboard | Phase 2 | Handled in **PR #193** (Verified 42/42 tests) |
 | **#170** | Firmware / Security | Encrypt persisted Wi-Fi and device credentials in NVS | Phase 4 | Queued for Phase 4 |
 | **#105** | Backend / Voice | Benchmark real VN/EN ASR, TTS and native-realtime reference paths | Phase 5 | Queued for Phase 5 |
 | **#106** | Backend / Voice | Select and hard-cut the Production v1 voice provider path | Phase 5 | Queued for Phase 5 |
