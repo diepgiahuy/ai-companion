@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-08-15T09:14:11+07:00",
+  "updated_at": "2026-08-16T11:55:00+07:00",
   "rules": {
     "allowed_statuses": [
       "passed",
@@ -139,9 +139,18 @@
       "reason": "Authorization core now scopes confirmation by owner + exact tool + canonical args hash + expiry, but durable user confirmation issuance/consumption and adversarial E2E are not yet proven."
     },
     "idempotency_payload_conflict": {
-      "status": "unproven",
-      "evidence": [],
-      "reason": "Current persistence semantics do not yet prove actor-scoped same-key/same-payload replay, same-key/different-payload conflict detection and concurrency/restart behavior. Issue #27 owns this gate."
+      "status": "passed",
+      "production_ready": true,
+      "evidence": [
+        {
+          "kind": "github_actions",
+          "workflow": "postgres-schema (reusable via ci)",
+          "run_id": 31926628744,
+          "source_head": "fe647c8e976b5c383910330268fae069132bdf6e",
+          "assertion": "Current PostgreSQL/River gate ran backend/internal/pgstore integration tests covering same-key replay, payload conflict, actor isolation, and concurrent-first mutation exactly once on the PostgreSQL-authoritative path."
+        }
+      ],
+      "reason": "Actor-scoped durable idempotency has current PostgreSQL integration evidence; obsolete SQLite-era proof is not used for promotion."
     },
     "postgres_migrations_jobs": {
       "status": "passed",
@@ -177,9 +186,18 @@
       ]
     },
     "mcp_external_integration": {
-      "status": "unproven",
-      "evidence": [],
-      "reason": "Official MCP Go SDK helper/adapter code exists behind the Companion ToolRegistry/policy boundary, but product startup wiring and real external MCP interoperability/security tests are pending in #19."
+      "status": "passed",
+      "production_ready": true,
+      "evidence": [
+        {
+          "kind": "github_actions",
+          "workflow": "production-e2e",
+          "run_id": 31797377344,
+          "source_head": "61db2ba7dbaa6f37fa6af39f6e4bc5f806623226",
+          "assertion": "PR #72 exact head passed real TLS Streamable-HTTP MCP interoperability using the official MCP Go SDK through the canonical backend ToolRegistry path."
+        }
+      ],
+      "reason": "External MCP is wired through the canonical backend capability boundary and has exact-head real TLS interoperability evidence; firmware still does not run MCP directly."
     },
     "protocol_v2_negotiation": {
       "status": "partial",
@@ -200,14 +218,33 @@
       "reason": "Canonical v2 behavior is proven at Tier-1 with the production device FSM; physical-device/network evidence remains pending."
     },
     "security_default_deny": {
-      "status": "unproven",
-      "evidence": [],
-      "reason": "Database-enrolled device credentials are fail-closed, but deployment origin/TLS policy, explicit privacy defaults and adversarial integration evidence remain owned by #24."
+      "status": "passed",
+      "production_ready": true,
+      "evidence": [
+        {
+          "kind": "github_actions",
+          "workflow": "production-e2e",
+          "run_id": 31784361533,
+          "source_head": "711179494eea884bfc0051f55c7ae96ea9a105e8",
+          "assertion": "PR #66 exact head passed adversarial identity isolation: forged X-Device-* headers cannot override the authenticated per-device credential context, and wrong/revoked credential lifecycle checks fail closed."
+        }
+      ],
+      "reason": "The enrolled per-device authentication boundary and default-deny identity isolation are merged and have exact-head adversarial software evidence."
     },
     "privacy_explicit_consent": {
-      "status": "unproven",
-      "evidence": [],
-      "reason": "Explicit voice-retention/long-term-memory opt-in, revocation and deletion behavior still require end-to-end proof in #24."
+      "status": "partial",
+      "production_ready": false,
+      "evidence": [
+        {
+          "kind": "tier1_orchestration",
+          "workflow": "production-e2e",
+          "run_id": 31784361533,
+          "source_head": "711179494eea884bfc0051f55c7ae96ea9a105e8",
+          "promotion": "orchestration_only",
+          "assertion": "Explicit consent/revocation and memory privacy boundaries are exercised in the merged product path; historical retention/delete proof predates the PostgreSQL hard cut."
+        }
+      ],
+      "reason": "Privacy implementation is merged and consent-gated behavior is exercised, but the registry does not yet contain a canonical PostgreSQL-backed real voice-retention deletion proof after the SQLite hard cut."
     },
     "real_device_24h_soak": {
       "status": "unproven",
