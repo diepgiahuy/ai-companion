@@ -6,28 +6,53 @@ Welcome to the **AI Companion** platform guide. This document provides step-by-s
 
 ## 1. Quick Start & Running the Application
 
-### Option A: One-Command Start Script (Recommended)
-Run the automated runner script from the repository root:
+### Prerequisites
+- **Docker** (with Docker Compose v2)
+- An **OpenAI-compatible LLM API key** (Gemini, OpenAI, etc.)
+
+### Step 1: Configure Environment Variables
+Copy the template and fill in your API credentials:
 ```bash
+cp .env.example .env
+$EDITOR .env          # fill in ADK_OPENAI_BASE_URL, ADK_MODEL, ADK_OPENAI_API_KEY
+```
+
+**Required variables** (backend will not start without these):
+
+| Variable | Example | Description |
+|---|---|---|
+| `ADK_OPENAI_BASE_URL` | `https://generativelanguage.googleapis.com/v1beta/openai` | OpenAI-compatible endpoint |
+| `ADK_MODEL` | `gemini-2.5-flash` | Model identifier |
+| `ADK_OPENAI_API_KEY` | `AIza...` | API key for the provider |
+
+See [`.env.example`](../.env.example) for the full list of optional variables (market data keys, embedding provider, OTA signing, etc.).
+
+### Step 2: Start the Stack
+```bash
+# One-command launcher (validates .env, then runs docker compose)
 ./scripts/run_app.sh
-```
-This script will:
-1. Spin up PostgreSQL 16 on port `55432` with automated health checks.
-2. Apply Atlas database migrations (`db/postgres/`) and River queue tables.
-3. Configure the least-privilege runtime user (`companion_app:companion_app_dev`).
-4. Boot the Go backend daemon (`companiond`) on port `8000`.
-5. Verify the HTTP health probe.
 
-### Option B: Native Docker Compose
-To run directly with Docker Compose in detached mode:
+# Or directly:
+docker compose up -d --build
+```
+
+Docker Compose will automatically:
+1. Start PostgreSQL 16 with health checks (port `55432`).
+2. Apply Atlas schema migrations and River queue tables.
+3. Create the least-privilege runtime role (`companion_app`).
+4. Boot the Go backend daemon on port `8000`.
+
+### Step 3: Access the Application
+- 🌐 **Owner Web Dashboard**: [http://localhost:8000/v1/owner/dashboard](http://localhost:8000/v1/owner/dashboard)
+- 📡 **Device WebSocket Uplink**: `ws://localhost:8000/v1/ws`
+- 🗄️ **PostgreSQL**: `127.0.0.1:55432` (user: `companion_app`, password: `companion_app_dev`)
+
+### Useful Commands
 ```bash
-docker compose up -d
+docker compose logs -f backend    # watch live backend logs
+docker compose down               # stop the entire stack
+docker compose down -v            # stop and delete all data volumes
 ```
-
-### Accessing Endpoints
-- 🌐 **Owner Web Workspace**: [http://localhost:8000/v1/owner/dashboard](http://localhost:8000/v1/owner/dashboard)
-- 📡 **Companion WebSocket Uplink**: `ws://localhost:8000/v1/ws`
-- 🗄️ **PostgreSQL Database**: `127.0.0.1:55432` (database: `companion`, user: `companion_app`, password: `companion_app_dev`)
 
 ---
 
