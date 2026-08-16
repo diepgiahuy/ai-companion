@@ -236,7 +236,8 @@ bool parse_runtime_config(const cJSON* payload, RuntimeConfigPatch& out) {
   if (!parse_uint64(version, parsed_version) || !cJSON_IsObject(config) ||
       !has_only_fields(config, {"smart_vad_enabled", "vad_threshold",
                                 "vad_silence_ms", "vad_min_speech_ms",
-                                "idle_after_ms", "alarm_visible_ms", "locale",
+                                "idle_after_ms", "alarm_visible_ms",
+                                "ota_poll_interval_s", "locale",
                                 "timezone", "voice_key"}) ||
       !optional_bounded_string(config, "locale", 64) ||
       !optional_bounded_string(config, "timezone", 64) ||
@@ -247,20 +248,24 @@ bool parse_runtime_config(const cJSON* payload, RuntimeConfigPatch& out) {
   const cJSON* min_speech = cJSON_GetObjectItemCaseSensitive(config, "vad_min_speech_ms");
   const cJSON* idle = cJSON_GetObjectItemCaseSensitive(config, "idle_after_ms");
   const cJSON* alarm = cJSON_GetObjectItemCaseSensitive(config, "alarm_visible_ms");
+  const cJSON* ota_poll = cJSON_GetObjectItemCaseSensitive(config, "ota_poll_interval_s");
   uint32_t parsed_threshold = 0;
   uint32_t parsed_silence = 0;
   uint32_t parsed_min_speech = 0;
   uint32_t parsed_idle = 0;
   uint32_t parsed_alarm = 0;
+  uint32_t parsed_ota_poll = 21'600;
   if (!cJSON_IsBool(smart) || !parse_uint32(threshold, parsed_threshold) ||
       !parse_uint32(silence, parsed_silence) ||
       !parse_uint32(min_speech, parsed_min_speech) ||
       !parse_uint32(idle, parsed_idle) || !parse_uint32(alarm, parsed_alarm) ||
+      (ota_poll != nullptr && !parse_uint32(ota_poll, parsed_ota_poll)) ||
       parsed_threshold < 1 || parsed_threshold > 65'535 ||
       parsed_silence < 100 || parsed_silence > 5'000 ||
       parsed_min_speech < 50 || parsed_min_speech > 5'000 ||
       parsed_idle < 1'000 || parsed_idle > 3'600'000 ||
-      parsed_alarm < 1'000 || parsed_alarm > 3'600'000) return false;
+      parsed_alarm < 1'000 || parsed_alarm > 3'600'000 ||
+      parsed_ota_poll < 3'600 || parsed_ota_poll > 604'800) return false;
   out.version = parsed_version;
   out.smart_vad_enabled = cJSON_IsTrue(smart);
   out.vad_threshold = parsed_threshold;
@@ -268,6 +273,7 @@ bool parse_runtime_config(const cJSON* payload, RuntimeConfigPatch& out) {
   out.vad_min_speech_ms = parsed_min_speech;
   out.idle_after_ms = parsed_idle;
   out.alarm_visible_ms = parsed_alarm;
+  out.ota_poll_interval_s = parsed_ota_poll;
   return true;
 }
 
@@ -602,6 +608,7 @@ bool random_opaque_id(std::array<char, N>& output, std::string_view prefix) {
 } // namespace
 
 WebSocketVoiceBackend::WebSocketVoiceBackend() {
+  opus_decoder_mutex_ = xSemaphoreCreateMutexStatic(&opus_decoder_mutex_storage_);
   outbound_queue_ = xQueueCreateStatic(kOutboundQueueCapacity, sizeof(Outbound),
                                        outbound_queue_buffer_.data(),
                                        &outbound_queue_storage_);
@@ -617,7 +624,19 @@ WebSocketVoiceBackend::WebSocketVoiceBackend() {
 }
 
 WebSocketVoiceBackend::~WebSocketVoiceBackend() {
+  stopping_.store(true);
   voice_mail_generation_.fetch_add(1);
+  if (writer_task_ != nullptr && outbound_queue_ != nullptr) {
+    Outbound dummy{};
+    (void)xQueueSend(outbound_queue_, &dummy, 0);
+  }
+  if (media_task_ != nullptr && media_queue_ != nullptr) {
+    MediaJob dummy{};
+    (void)xQueueSend(media_queue_, &dummy, 0);
+  }
+  for (int i = 0; i < 30 && (writer_task_ != nullptr || media_task_ != nullptr); ++i) {
+    vTaskDelay(pdMS_TO_TICKS(10));
+  }
   if (media_task_ != nullptr) {
     vTaskDelete(media_task_);
     media_task_ = nullptr;
@@ -629,9 +648,22 @@ WebSocketVoiceBackend::~WebSocketVoiceBackend() {
   if (client_ != nullptr) {
     esp_websocket_client_stop(client_);
     esp_websocket_client_destroy(client_);
+    client_ = nullptr;
   }
-  if (opus_encoder_ != nullptr) esp_opus_enc_close(opus_encoder_);
-  if (opus_decoder_ != nullptr) esp_opus_dec_close(opus_decoder_);
+  if (opus_encoder_ != nullptr) {
+    esp_opus_enc_close(opus_encoder_);
+    opus_encoder_ = nullptr;
+  }
+  if (opus_decoder_mutex_ != nullptr) {
+    xSemaphoreTake(opus_decoder_mutex_, portMAX_DELAY);
+  }
+  if (opus_decoder_ != nullptr) {
+    esp_opus_dec_close(opus_decoder_);
+    opus_decoder_ = nullptr;
+  }
+  if (opus_decoder_mutex_ != nullptr) {
+    xSemaphoreGive(opus_decoder_mutex_);
+  }
 }
 
 bool WebSocketVoiceBackend::initialize(std::string_view url,
@@ -940,11 +972,19 @@ void WebSocketVoiceBackend::event_handler(void* context, esp_event_base_t,
 }
 
 void WebSocketVoiceBackend::writer_entry(void* context) {
-  static_cast<WebSocketVoiceBackend*>(context)->writer_loop();
+  if (context == nullptr) return;
+  auto* self = static_cast<WebSocketVoiceBackend*>(context);
+  self->writer_loop();
+  self->writer_task_ = nullptr;
+  vTaskDelete(nullptr);
 }
 
 void WebSocketVoiceBackend::media_entry(void* context) {
-  static_cast<WebSocketVoiceBackend*>(context)->media_loop();
+  if (context == nullptr) return;
+  auto* self = static_cast<WebSocketVoiceBackend*>(context);
+  self->media_loop();
+  self->media_task_ = nullptr;
+  vTaskDelete(nullptr);
 }
 
 void WebSocketVoiceBackend::on_event(int32_t event_id,
@@ -1001,9 +1041,10 @@ void WebSocketVoiceBackend::on_event(int32_t event_id,
 }
 
 void WebSocketVoiceBackend::writer_loop() {
-  while (true) {
+  while (!stopping_.load()) {
     Outbound outbound{};
-    if (xQueueReceive(outbound_queue_, &outbound, portMAX_DELAY) != pdPASS) continue;
+    if (xQueueReceive(outbound_queue_, &outbound, pdMS_TO_TICKS(100)) != pdPASS) continue;
+    if (stopping_.load()) break;
     if (outbound.type == OutboundType::control) {
       const Command& command = outbound.command;
       char payload[2'048]{};
@@ -1062,14 +1103,16 @@ void WebSocketVoiceBackend::writer_loop() {
         std::snprintf(payload, sizeof(payload),
           "{\"config_version\":%llu,\"applied\":%s,\"config\":{"
           "\"smart_vad_enabled\":%s,\"vad_threshold\":%lu,\"vad_silence_ms\":%lu,"
-          "\"vad_min_speech_ms\":%lu,\"idle_after_ms\":%lu,\"alarm_visible_ms\":%lu}}",
+          "\"vad_min_speech_ms\":%lu,\"idle_after_ms\":%lu,\"alarm_visible_ms\":%lu,"
+          "\"ota_poll_interval_s\":%lu}}",
           static_cast<unsigned long long>(command.config.version), command.applied ? "true" : "false",
           command.config.smart_vad_enabled ? "true" : "false",
           static_cast<unsigned long>(command.config.vad_threshold),
           static_cast<unsigned long>(command.config.vad_silence_ms),
           static_cast<unsigned long>(command.config.vad_min_speech_ms),
           static_cast<unsigned long>(command.config.idle_after_ms),
-          static_cast<unsigned long>(command.config.alarm_visible_ms));
+          static_cast<unsigned long>(command.config.alarm_visible_ms),
+          static_cast<unsigned long>(command.config.ota_poll_interval_s));
         break;
       case CommandType::protocol_error:
         type = protocol::ControlType::protocol_error;
@@ -1572,6 +1615,9 @@ bool WebSocketVoiceBackend::encode_and_enqueue(
 
 bool WebSocketVoiceBackend::configure_decoder(uint32_t sample_rate_hz) {
   if (sample_rate_hz != 16'000 && sample_rate_hz != 24'000) return false;
+  if (opus_decoder_mutex_ != nullptr) {
+    xSemaphoreTake(opus_decoder_mutex_, portMAX_DELAY);
+  }
   if (opus_decoder_ != nullptr) {
     esp_opus_dec_close(opus_decoder_);
     opus_decoder_ = nullptr;
@@ -1583,14 +1629,18 @@ bool WebSocketVoiceBackend::configure_decoder(uint32_t sample_rate_hz) {
           ESP_OPUS_ENC_FRAME_DURATION_60_MS),
       .self_delimited = false,
   };
-  return esp_opus_dec_open(&config, sizeof(config), &opus_decoder_) ==
-             ESP_AUDIO_ERR_OK &&
-         opus_decoder_ != nullptr;
+  const bool ok = esp_opus_dec_open(&config, sizeof(config), &opus_decoder_) ==
+                     ESP_AUDIO_ERR_OK &&
+                 opus_decoder_ != nullptr;
+  if (opus_decoder_mutex_ != nullptr) {
+    xSemaphoreGive(opus_decoder_mutex_);
+  }
+  return ok;
 }
 
 bool WebSocketVoiceBackend::decode_and_enqueue(const OpusPacket& packet,
                                                uint64_t media_generation) {
-  if (opus_decoder_ == nullptr || packet.count == 0) return false;
+  if (packet.count == 0) return false;
   std::array<int16_t, kMaximumDecodedSamples> decoded{};
   esp_audio_dec_in_raw_t input{
       .buffer = const_cast<uint8_t*>(packet.bytes.data()),
@@ -1602,8 +1652,18 @@ bool WebSocketVoiceBackend::decode_and_enqueue(const OpusPacket& packet,
   output.buffer = reinterpret_cast<uint8_t*>(decoded.data());
   output.len = static_cast<uint32_t>(decoded.size() * sizeof(int16_t));
   esp_audio_dec_info_t info{};
-  if (esp_opus_dec_decode(opus_decoder_, &input, &output, &info) !=
-          ESP_AUDIO_ERR_OK ||
+  if (opus_decoder_mutex_ != nullptr) {
+    xSemaphoreTake(opus_decoder_mutex_, portMAX_DELAY);
+  }
+  if (opus_decoder_ == nullptr) {
+    if (opus_decoder_mutex_ != nullptr) xSemaphoreGive(opus_decoder_mutex_);
+    return false;
+  }
+  const esp_err_t decode_err = esp_opus_dec_decode(opus_decoder_, &input, &output, &info);
+  if (opus_decoder_mutex_ != nullptr) {
+    xSemaphoreGive(opus_decoder_mutex_);
+  }
+  if (decode_err != ESP_AUDIO_ERR_OK ||
       output.decoded_size == 0 || output.decoded_size % sizeof(int16_t) != 0) {
     return false;
   }
@@ -1729,9 +1789,10 @@ bool WebSocketVoiceBackend::voice_mail_job_current(const MediaJob& job) const {
 }
 
 void WebSocketVoiceBackend::media_loop() {
-  while (true) {
+  while (!stopping_.load()) {
     MediaJob job{};
-    if (xQueueReceive(media_queue_, &job, portMAX_DELAY) != pdPASS) continue;
+    if (xQueueReceive(media_queue_, &job, pdMS_TO_TICKS(100)) != pdPASS) continue;
+    if (stopping_.load()) break;
     const bool valid = download_voice_mail(job, false);
     const bool decoded = valid && voice_mail_job_current(job) &&
                          download_voice_mail(job, true);
@@ -1802,7 +1863,7 @@ bool WebSocketVoiceBackend::download_voice_mail(const MediaJob& job, bool decode
   ok = ok && hash_started;
   std::array<uint8_t, 2'048> buffer{};
   size_t total = 0;
-  while (ok && voice_mail_job_current(job)) {
+  while (ok && voice_mail_job_current(job) && !stopping_.load()) {
     const int count = esp_http_client_read(
         client, reinterpret_cast<char*>(buffer.data()), buffer.size());
     if (count < 0) {
@@ -1847,7 +1908,7 @@ bool WebSocketVoiceBackend::download_voice_mail(const MediaJob& job, bool decode
 bool WebSocketVoiceBackend::decode_voice_mail_packet(
     const MediaJob& job, std::span<const uint8_t> packet,
     uint64_t& decoded_samples, bool& ready_sent) {
-  if (!voice_mail_job_current(job) || opus_decoder_ == nullptr || packet.empty() ||
+  if (!voice_mail_job_current(job) || packet.empty() ||
       packet.size() > kMaximumOpusPacketBytes) return false;
   std::array<int16_t, kMaximumDecodedSamples> decoded{};
   esp_audio_dec_in_raw_t input{
@@ -1860,8 +1921,18 @@ bool WebSocketVoiceBackend::decode_voice_mail_packet(
   output.buffer = reinterpret_cast<uint8_t*>(decoded.data());
   output.len = static_cast<uint32_t>(decoded.size() * sizeof(int16_t));
   esp_audio_dec_info_t info{};
-  if (esp_opus_dec_decode(opus_decoder_, &input, &output, &info) !=
-          ESP_AUDIO_ERR_OK || output.decoded_size == 0 ||
+  if (opus_decoder_mutex_ != nullptr) {
+    xSemaphoreTake(opus_decoder_mutex_, portMAX_DELAY);
+  }
+  if (opus_decoder_ == nullptr) {
+    if (opus_decoder_mutex_ != nullptr) xSemaphoreGive(opus_decoder_mutex_);
+    return false;
+  }
+  const esp_err_t decode_err = esp_opus_dec_decode(opus_decoder_, &input, &output, &info);
+  if (opus_decoder_mutex_ != nullptr) {
+    xSemaphoreGive(opus_decoder_mutex_);
+  }
+  if (decode_err != ESP_AUDIO_ERR_OK || output.decoded_size == 0 ||
       output.decoded_size % sizeof(int16_t) != 0) return false;
   const size_t sample_count = output.decoded_size / sizeof(int16_t);
   if (decoded_samples + sample_count >

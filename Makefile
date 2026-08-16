@@ -24,8 +24,8 @@ e2e-container:
 	docker compose -f compose.e2e.yaml run --build --rm e2e
 
 backend-adk-gate:
-	@cd backend && version="$$(go env GOVERSION)"; \
+	@cd backend && version="$$(GOTOOLCHAIN=local go env GOVERSION)"; \
 	if [ "$$version" != "go1.26.6" ]; then \
 		echo "ADK gate requires go1.26.6; got $$version" >&2; exit 1; \
 	fi; \
-	go test -tags "adk,nolibopusfile" -race -count=1 ./...
+	go test -tags "adk,mcp,nolibopusfile" -race -count=1 ./...

@@ -79,6 +79,11 @@ RuntimeConfigPatch parse_config(const json& payload) {
   out.vad_min_speech_ms = config.at("vad_min_speech_ms").get<uint32_t>();
   out.idle_after_ms = config.at("idle_after_ms").get<uint32_t>();
   out.alarm_visible_ms = config.at("alarm_visible_ms").get<uint32_t>();
+  if (config.contains("ota_poll_interval_s") && config.at("ota_poll_interval_s").is_number_integer()) {
+    out.ota_poll_interval_s = config.at("ota_poll_interval_s").get<uint32_t>();
+  } else {
+    out.ota_poll_interval_s = 21'600;
+  }
   return out;
 }
 
@@ -491,7 +496,8 @@ bool WebSocketVoiceBackend::report_config(const RuntimeConfigPatch& config, bool
                            {"vad_silence_ms", config.vad_silence_ms},
                            {"vad_min_speech_ms", config.vad_min_speech_ms},
                            {"idle_after_ms", config.idle_after_ms},
-                           {"alarm_visible_ms", config.alarm_visible_ms}}}};
+                           {"alarm_visible_ms", config.alarm_visible_ms},
+                           {"ota_poll_interval_s", config.ota_poll_interval_s}}}};
   const bool sent = send_text(encode_control(
       static_cast<int>(protocol::ControlType::config_report), payload.dump()));
   if (sent) {

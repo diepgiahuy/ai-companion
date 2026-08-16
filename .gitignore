@@ -7,3 +7,9 @@
 
 /backend/data/
 /backend/*.db
+.aider*
+.env
+run_aider.sh
+.idea/
+__pycache__/
+*.pyc

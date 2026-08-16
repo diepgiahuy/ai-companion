@@ -51,6 +51,10 @@ func run(args []string) error {
 	if dsn == "" {
 		return errors.New("--database-url or COMPANION_RIVER_MIGRATION_DATABASE_URL is required")
 	}
+	schema := strings.TrimSpace(jobs.Schema)
+	if schema == "" {
+		return errors.New("River schema name is empty")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	pool, err := pgxpool.New(ctx, dsn)
@@ -58,15 +62,15 @@ func run(args []string) error {
 		return err
 	}
 	defer pool.Close()
-	migrator, err := rivermigrate.New(riverpgxv5.New(pool), &rivermigrate.Config{Schema: jobs.Schema})
+	migrator, err := rivermigrate.New(riverpgxv5.New(pool), &rivermigrate.Config{Schema: schema})
 	if err != nil {
 		return err
 	}
 	started := time.Now()
-	result := report{Action: action, Schema: jobs.Schema}
+	result := report{Action: action, Schema: schema}
 	switch action {
 	case "up":
-		if err := ensureMigrationSchema(ctx, pool); err != nil {
+		if err := ensureMigrationSchema(ctx, pool, schema); err != nil {
 			return err
 		}
 		migrated, err := migrator.Migrate(ctx, rivermigrate.DirectionUp, nil)
@@ -95,20 +99,20 @@ func run(args []string) error {
 	return encoder.Encode(result)
 }
 
-func ensureMigrationSchema(ctx context.Context, pool *pgxpool.Pool) error {
+func ensureMigrationSchema(ctx context.Context, pool *pgxpool.Pool, schema string) error {
 	tx, err := pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin River schema bootstrap: %w", err)
 	}
 	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `CREATE SCHEMA IF NOT EXISTS river`); err != nil {
+	if _, err := tx.Exec(ctx, fmt.Sprintf(`CREATE SCHEMA IF NOT EXISTS %s`, quoteIdentifier(schema))); err != nil {
 		return fmt.Errorf("create River schema: %w", err)
 	}
 	var currentUser, owner string
 	if err := tx.QueryRow(ctx, `
 		SELECT current_user, pg_get_userbyid(nspowner)
 		FROM pg_namespace
-		WHERE nspname = $1`, jobs.Schema).Scan(&currentUser, &owner); err != nil {
+		WHERE nspname = $1`, schema).Scan(&currentUser, &owner); err != nil {
 		return fmt.Errorf("inspect River schema owner: %w", err)
 	}
 	if owner != currentUser {
@@ -118,4 +122,8 @@ func ensureMigrationSchema(ctx context.Context, pool *pgxpool.Pool) error {
 		return fmt.Errorf("commit River schema bootstrap: %w", err)
 	}
 	return nil
+}
+
+func quoteIdentifier(identifier string) string {
+	return `"` + strings.ReplaceAll(identifier, `"`, `""`) + `"`
 }

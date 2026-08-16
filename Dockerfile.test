@@ -1,5 +1,7 @@
 FROM golang:1.26.6-bookworm AS base
 
+ENV GOTOOLCHAIN=local
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential cmake ninja-build pkg-config libopus-dev libopusfile-dev python3 \
  && rm -rf /var/lib/apt/lists/*

@@ -288,6 +288,7 @@ bool OtaManager::initialize(std::string_view server_url, std::string_view token,
   const uint64_t now_ms = static_cast<uint64_t>(esp_timer_get_time() / 1000);
   health_deadline_ms_ = now_ms + health_timeout_ms;
   next_health_probe_ms_ = now_ms;
+  next_poll_ms_ = now_ms + poll_interval_ms_;
   if (!enabled_) {
     ESP_LOGW(kTag, "OTA disabled: configure secure WSS, device credential, board and channel");
   }
@@ -312,19 +313,28 @@ bool OtaManager::backend_auth_reachable() {
 }
 
 void OtaManager::tick(uint64_t now_ms) {
-  if (!pending_verify_) return;
-  if (now_ms >= health_deadline_ms_) {
-    ESP_LOGE(kTag, "pending OTA image did not reach network/auth health; rolling back");
-    if (esp_ota_mark_app_invalid_rollback_and_reboot() != ESP_OK) {
-      ESP_LOGE(kTag, "OTA rollback request failed");
+  if (pending_verify_) {
+    if (now_ms >= health_deadline_ms_) {
+      ESP_LOGE(kTag, "pending OTA image did not reach network/auth health; rolling back");
+      if (esp_ota_mark_app_invalid_rollback_and_reboot() != ESP_OK) {
+        ESP_LOGE(kTag, "OTA rollback request failed");
+      }
+      return;
+    }
+    if (now_ms < next_health_probe_ms_ || !wifi_.connected() || !wifi_.time_valid()) return;
+    next_health_probe_ms_ = now_ms + kHealthProbeIntervalMs;
+    if (backend_auth_reachable() && esp_ota_mark_app_valid_cancel_rollback() == ESP_OK) {
+      pending_verify_ = false;
+      ESP_LOGI(kTag, "pending OTA image marked valid after authenticated backend health");
     }
     return;
   }
-  if (now_ms < next_health_probe_ms_ || !wifi_.connected() || !wifi_.time_valid()) return;
-  next_health_probe_ms_ = now_ms + kHealthProbeIntervalMs;
-  if (backend_auth_reachable() && esp_ota_mark_app_valid_cancel_rollback() == ESP_OK) {
-    pending_verify_ = false;
-    ESP_LOGI(kTag, "pending OTA image marked valid after authenticated backend health");
+
+  if (enabled_ && wifi_.connected() && wifi_.time_valid()) {
+    if (now_ms >= next_poll_ms_) {
+      next_poll_ms_ = now_ms + poll_interval_ms_;
+      (void)check_and_apply();
+    }
   }
 }
 

@@ -1,6 +1,7 @@
 package ownerauth
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/json"
 	"io"
@@ -123,7 +124,13 @@ func (s *Service) MintBoundHumanClaimCode(rawSession, csrf, bootstrapID, deviceI
 	return "", ClaimAuthorization{}, ErrInvalidClaim
 }
 
-func redemptionReplay(s *Service, codeKey, binding, redemptionID string, now time.Time) (string, ClaimAuthorization, bool) {
+func (s *Service) redemptionReplay(codeKey, binding, redemptionID string, now time.Time) (string, ClaimAuthorization, bool) {
+	if s != nil && s.cfg.ClaimCodeStore != nil {
+		raw, claim, found, err := s.cfg.ClaimCodeStore.GetRedemption(context.Background(), codeKey, binding, tokenKey(redemptionID))
+		if err == nil && found {
+			return raw, claim, true
+		}
+	}
 	claimCodeRedemptions.Lock()
 	defer claimCodeRedemptions.Unlock()
 	serviceEntries := claimCodeRedemptions.entries[s]
@@ -146,7 +153,10 @@ func redemptionReplay(s *Service, codeKey, binding, redemptionID string, now tim
 	return entry.rawAuthorization, entry.claim, true
 }
 
-func rememberRedemption(s *Service, codeKey, redemptionID, rawAuthorization string, claim ClaimAuthorization) {
+func (s *Service) rememberRedemption(codeKey, redemptionID, rawAuthorization string, claim ClaimAuthorization) {
+	if s != nil && s.cfg.ClaimCodeStore != nil {
+		_ = s.cfg.ClaimCodeStore.PutRedemption(context.Background(), codeKey, tokenKey(redemptionID), rawAuthorization, claim)
+	}
 	claimCodeRedemptions.Lock()
 	defer claimCodeRedemptions.Unlock()
 	serviceEntries := claimCodeRedemptions.entries[s]
@@ -172,7 +182,7 @@ func (s *Service) RedeemBoundHumanClaimCode(rawCode, bootstrapID, deviceID, rede
 	binding := claimBinding(bootstrapID, deviceID)
 	now := s.now()
 
-	if raw, claim, ok := redemptionReplay(s, key, binding, redemptionID, now); ok {
+	if raw, claim, ok := s.redemptionReplay(key, binding, redemptionID, now); ok {
 		return raw, claim, nil
 	}
 
@@ -186,7 +196,7 @@ func (s *Service) RedeemBoundHumanClaimCode(rawCode, bootstrapID, deviceID, rede
 		s.mu.Unlock()
 		// A concurrent first redemption may have consumed the code after our
 		// initial cache read. Recheck after the claim lock is released.
-		if raw, replayed, found := redemptionReplay(s, key, binding, redemptionID, now); found {
+		if raw, replayed, found := s.redemptionReplay(key, binding, redemptionID, now); found {
 			return raw, replayed, nil
 		}
 		return "", ClaimAuthorization{}, ErrInvalidClaim
@@ -201,9 +211,26 @@ func (s *Service) RedeemBoundHumanClaimCode(rawCode, bootstrapID, deviceID, rede
 	s.claims[tokenKey(rawAuthorization)] = claim
 	// Publish retry state before releasing the claim lock. A concurrent caller
 	// that waited on s.mu can then find the same redemption on its second lookup.
-	rememberRedemption(s, key, redemptionID, rawAuthorization, claim)
+	s.rememberRedemption(key, redemptionID, rawAuthorization, claim)
 	s.mu.Unlock()
 	return rawAuthorization, claim, nil
+}
+
+func (s *Service) allowClaimCodeAttempt(remote string, now time.Time) bool {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(remote))
+	if err != nil || host == "" {
+		host = strings.TrimSpace(remote)
+	}
+	if host == "" {
+		host = "unknown"
+	}
+	if s != nil && s.cfg.ClaimCodeStore != nil {
+		allowed, err := s.cfg.ClaimCodeStore.AllowAttempt(context.Background(), host, claimCodeAttemptsPerMinute, time.Minute)
+		if err == nil {
+			return allowed
+		}
+	}
+	return allowClaimCodeAttemptMemory(host, now)
 }
 
 func allowClaimCodeAttempt(remote string, now time.Time) bool {
@@ -214,6 +241,10 @@ func allowClaimCodeAttempt(remote string, now time.Time) bool {
 	if host == "" {
 		host = "unknown"
 	}
+	return allowClaimCodeAttemptMemory(host, now)
+}
+
+func allowClaimCodeAttemptMemory(host string, now time.Time) bool {
 	claimCodeLimiter.Lock()
 	defer claimCodeLimiter.Unlock()
 	for key, window := range claimCodeLimiter.entries {
@@ -280,7 +311,7 @@ func (s *Service) HandleHumanClaimCodeRedeem(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if !allowClaimCodeAttempt(r.RemoteAddr, s.now()) {
+	if !s.allowClaimCodeAttempt(r.RemoteAddr, s.now()) {
 		http.Error(w, "too many attempts", http.StatusTooManyRequests)
 		return
 	}

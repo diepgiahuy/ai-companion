@@ -166,3 +166,57 @@ func TestHumanClaimCodeHTTPRequiresOwnerCSRFAndNeverReturnsCredential(t *testing
 		t.Fatalf("different redemption replay status=%d body=%q", attackerRecorder.Code, attackerRecorder.Body.String())
 	}
 }
+
+func TestClaimCodeStoreIntegration(t *testing.T) {
+	now := time.Date(2026, 8, 16, 1, 0, 0, 0, time.UTC)
+	store := NewMemoryClaimCodeStore()
+	rawSession := "owner-session"
+	csrf := "owner-csrf"
+	service := &Service{
+		cfg: Config{
+			ClaimTTL:       5 * time.Minute,
+			ClaimCodeStore: store,
+		},
+		now:      func() time.Time { return now },
+		logins:   make(map[string]loginTransaction),
+		sessions: map[string]sessionRecord{tokenKey(rawSession): {
+			Session:  Session{UserID: "owner-store", ExpiresAt: now.Add(time.Hour)},
+			CSRFHash: sha256.Sum256([]byte(csrf)),
+		}},
+		claims: make(map[string]ClaimAuthorization),
+	}
+
+	code, claim, err := service.MintBoundHumanClaimCode(rawSession, csrf, "bootstrap-store", "device-store")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !claim.ExpiresAt.After(now) {
+		t.Fatal("invalid claim expiration")
+	}
+
+	auth, redeemed, err := service.RedeemBoundHumanClaimCode(code, "bootstrap-store", "device-store", "retry-store-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if auth == "" || redeemed.UserID != "owner-store" {
+		t.Fatalf("auth=%q redeemed=%+v", auth, redeemed)
+	}
+
+	// Replay through store
+	replayedAuth, replayedClaim, err := service.RedeemBoundHumanClaimCode(code, "bootstrap-store", "device-store", "retry-store-1")
+	if err != nil || replayedAuth != auth || replayedClaim != redeemed {
+		t.Fatalf("replay via store failed: auth=%q err=%v", replayedAuth, err)
+	}
+
+	// Rate limiter through store
+	remote := "192.0.2.1:1234"
+	for i := 0; i < claimCodeAttemptsPerMinute; i++ {
+		if !service.allowClaimCodeAttempt(remote, now) {
+			t.Fatalf("store rate limiter failed at attempt %d", i+1)
+		}
+	}
+	if service.allowClaimCodeAttempt(remote, now) {
+		t.Fatal("store rate limiter failed to block excess attempt")
+	}
+}
+
