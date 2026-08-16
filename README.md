@@ -130,6 +130,21 @@ Production v1 focuses on:
 
 Non-goals include premature Kubernetes/microservices, direct unrestricted Internet/tool access from the LLM, MCP on firmware, arbitrary executable remote UI, and permanent duplicate product runtimes kept only as fallback.
 
+## Quick start
+
+Run the entire application stack (PostgreSQL 16, Migrations, Background Queues, Backend Daemon, Owner Web Workspace) with one command:
+
+```bash
+# Automated launch script with healthcheck
+./scripts/run_app.sh
+
+# Or directly with Docker Compose
+docker compose up -d
+```
+
+- 🌐 **Owner Web Dashboard:** [http://localhost:8000/v1/owner/dashboard](http://localhost:8000/v1/owner/dashboard)
+- 📖 **User Guide & Feature Manual:** [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md)
+
 ## Development and verification
 
 Backend production toolchain: **Go 1.26.6**.
