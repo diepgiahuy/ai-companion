@@ -83,12 +83,24 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleDeleteNote(w, r)
 	case path == "data/voice-memos" && r.Method == http.MethodGet:
 		h.handleVoiceMemos(w, r)
+	case path == "data/voice-memos" && r.Method == http.MethodDelete:
+		h.handleDeleteVoiceMemo(w, r)
 	case path == "data/journal" && r.Method == http.MethodGet:
 		h.handleJournal(w, r)
+	case path == "data/journal" && r.Method == http.MethodPost:
+		h.handleCreateJournal(w, r)
+	case path == "data/journal" && r.Method == http.MethodDelete:
+		h.handleDeleteJournal(w, r)
 	case path == "data/reminders" && r.Method == http.MethodGet:
 		h.handleReminders(w, r)
 	case path == "data/reminders" && r.Method == http.MethodPost:
 		h.handleCreateReminder(w, r)
+	case path == "data/reminders" && r.Method == http.MethodDelete:
+		h.handleDeleteReminder(w, r)
+	case path == "data/timers/pause" && r.Method == http.MethodPost:
+		h.handlePauseTimer(w, r)
+	case path == "data/timers/resume" && r.Method == http.MethodPost:
+		h.handleResumeTimer(w, r)
 	case path == "data/devices" && r.Method == http.MethodGet:
 		h.handleDevices(w, r)
 	case path == "data/device" && r.Method == http.MethodGet:
@@ -452,6 +464,100 @@ func (h *Handler) handleDeleteExpense(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"ok": true, "deleted": "expense", "id": id})
+}
+
+func (h *Handler) handleDeleteVoiceMemo(w http.ResponseWriter, r *http.Request) {
+	userID := h.userID(r)
+	idStr := r.URL.Query().Get("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil || id <= 0 {
+		http.Error(w, "valid id is required", http.StatusBadRequest)
+		return
+	}
+	if err := h.deps.Store.DeleteVoiceMemo(r.Context(), userID, id); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "deleted": "voice_memo", "id": id})
+}
+
+func (h *Handler) handleCreateJournal(w http.ResponseWriter, r *http.Request) {
+	userID := h.userID(r)
+	var req struct {
+		Content string `json:"content"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Content) == "" {
+		http.Error(w, "content is required", http.StatusBadRequest)
+		return
+	}
+	key := fmt.Sprintf("web-journal-%d", time.Now().UnixNano())
+	if err := h.deps.Store.CreateJournal(r.Context(), userID, key, strings.TrimSpace(req.Content), time.Now().UTC()); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "saved": "journal"})
+}
+
+func (h *Handler) handleDeleteJournal(w http.ResponseWriter, r *http.Request) {
+	userID := h.userID(r)
+	idStr := r.URL.Query().Get("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil || id <= 0 {
+		http.Error(w, "valid id is required", http.StatusBadRequest)
+		return
+	}
+	if err := h.deps.Store.DeleteJournal(r.Context(), userID, id); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "deleted": "journal", "id": id})
+}
+
+func (h *Handler) handleDeleteReminder(w http.ResponseWriter, r *http.Request) {
+	userID := h.userID(r)
+	idStr := r.URL.Query().Get("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil || id <= 0 {
+		http.Error(w, "valid id is required", http.StatusBadRequest)
+		return
+	}
+	if err := h.deps.Store.DeleteScheduledItem(r.Context(), userID, id); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "deleted": "reminder", "id": id})
+}
+
+func (h *Handler) handlePauseTimer(w http.ResponseWriter, r *http.Request) {
+	userID := h.userID(r)
+	var req struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ID <= 0 {
+		http.Error(w, "valid id is required", http.StatusBadRequest)
+		return
+	}
+	if err := h.deps.Store.PauseTimer(r.Context(), userID, req.ID, time.Now().UTC()); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "paused": true, "id": req.ID})
+}
+
+func (h *Handler) handleResumeTimer(w http.ResponseWriter, r *http.Request) {
+	userID := h.userID(r)
+	var req struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ID <= 0 {
+		http.Error(w, "valid id is required", http.StatusBadRequest)
+		return
+	}
+	if err := h.deps.Store.ResumeTimer(r.Context(), userID, req.ID, time.Now().UTC()); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "resumed": true, "id": req.ID})
 }
 
 func (h *Handler) userID(r *http.Request) string {

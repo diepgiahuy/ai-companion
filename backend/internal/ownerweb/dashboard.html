@@ -211,6 +211,11 @@ h1 { font-size: 1.8rem; font-weight: 700; margin-bottom: 1.5rem; letter-spacing:
 <script>
 let currentView = 'overview';
 let selectedDeviceID = 'companion-s3-01';
+let expensePeriod = 'today';
+let expenseCategory = '';
+let noteSearchQuery = '';
+let voiceSearchQuery = '';
+let playingAudioID = null;
 
 function updateClock() {
   const d = new Date();
@@ -315,6 +320,183 @@ async function fetchJSON(url) {
   }
 }
 
+function getPeriodRange(period) {
+  const now = new Date();
+  let from = '';
+  let to = '';
+  if (period === 'today') {
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+    from = start.toISOString();
+    to = end.toISOString();
+  } else if (period === 'week') {
+    const day = now.getDay() || 7;
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - day + 1);
+    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + (8 - day));
+    from = start.toISOString();
+    to = end.toISOString();
+  } else if (period === 'month') {
+    const start = new Date(now.getFullYear(), now.getMonth(), 1);
+    const end = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    from = start.toISOString();
+    to = end.toISOString();
+  }
+  return { from, to };
+}
+
+async function filterExpenses(period) {
+  expensePeriod = period;
+  renderView();
+}
+
+function filterExpenseCategory(cat) {
+  expenseCategory = cat.trim();
+  renderView();
+}
+
+async function submitExpense() {
+  const amount = parseInt(document.getElementById('exp-amount').value, 10);
+  const category = document.getElementById('exp-category').value.trim() || 'general';
+  const description = document.getElementById('exp-desc').value.trim();
+  if (!amount || amount <= 0) return alert('Please enter a valid amount in VND');
+  await fetch('/v1/owner/data/expenses', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ amount_vnd: amount, category, description })
+  });
+  renderView();
+}
+
+async function deleteExpense(id) {
+  if (!confirm('Delete this expense?')) return;
+  await fetch(`/v1/owner/data/expenses?id=${id}`, { method: 'DELETE' });
+  renderView();
+}
+
+async function searchNotes(q) {
+  noteSearchQuery = q;
+  const data = await fetchJSON(`/v1/owner/data/notes?search=${encodeURIComponent(q)}`);
+  const grid = document.getElementById('notes-grid');
+  if (grid && data) {
+    grid.innerHTML = (data.notes || []).length === 0 ? '<div style="color:var(--text-muted)">No matching notes found.</div>' :
+      (data.notes || []).map(n => `
+        <div class="block-card">
+          <div style="font-size:0.95rem;margin-bottom:0.8rem;white-space:pre-wrap">${n.content}</div>
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div class="time-badge">${new Date(n.created_at).toLocaleString()}</div>
+            <button class="filter-btn" style="color:var(--accent-red);padding:0.2rem 0.5rem" onclick="deleteNote(${n.id})">🗑️</button>
+          </div>
+        </div>
+      `).join('');
+  }
+}
+
+async function submitNote() {
+  const text = document.getElementById('new-note-text').value.trim();
+  if (!text) return;
+  await fetch('/v1/owner/data/notes', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content: text })
+  });
+  renderView();
+}
+
+async function deleteNote(id) {
+  if (!confirm('Delete note?')) return;
+  await fetch(`/v1/owner/data/notes?id=${id}`, { method: 'DELETE' });
+  renderView();
+}
+
+async function searchVoiceMemos(q) {
+  voiceSearchQuery = q;
+  const data = await fetchJSON(`/v1/owner/data/voice-memos?search=${encodeURIComponent(q)}${selectedDeviceID ? '&device_id=' + selectedDeviceID : ''}`);
+  const list = document.getElementById('voice-list');
+  if (list && data) {
+    list.innerHTML = (data.voice_memos || []).length === 0 ? '<div style="color:var(--text-muted);margin-top:1rem">No matching voice memos found.</div>' :
+      (data.voice_memos || []).map(vm => `
+        <div class="audio-card">
+          <div class="audio-row">
+            <button class="play-btn" onclick="toggleAudio(${vm.id})">${playingAudioID === vm.id ? '⏸' : '▶'}</button>
+            <div style="flex:1">
+              <div class="transcript">"${vm.transcript || '(Audio recorded without transcript)'}"</div>
+              <div class="time-badge">${new Date(vm.created_at).toLocaleString()} • ${(vm.duration_ms / 1000).toFixed(1)}s • Device: ${vm.device_id || 'companion-s3'}</div>
+            </div>
+            <button class="filter-btn" style="color:var(--accent-red);padding:0.3rem 0.6rem" onclick="deleteVoiceMemo(${vm.id})">🗑️</button>
+          </div>
+        </div>
+      `).join('');
+  }
+}
+
+function toggleAudio(id) {
+  playingAudioID = (playingAudioID === id ? null : id);
+  searchVoiceMemos(voiceSearchQuery);
+}
+
+async function deleteVoiceMemo(id) {
+  if (!confirm('Delete voice memo?')) return;
+  await fetch(`/v1/owner/data/voice-memos?id=${id}`, { method: 'DELETE' });
+  renderView();
+}
+
+async function submitReminder() {
+  const title = document.getElementById('rem-title').value.trim();
+  const delayMinutes = parseInt(document.getElementById('rem-delay').value, 10);
+  if (!title) return alert('Title is required');
+  const payload = { title };
+  if (delayMinutes && delayMinutes > 0) {
+    payload.delay_seconds = delayMinutes * 60;
+  }
+  await fetch('/v1/owner/data/reminders', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  renderView();
+}
+
+async function deleteReminder(id) {
+  if (!confirm('Delete reminder?')) return;
+  await fetch(`/v1/owner/data/reminders?id=${id}`, { method: 'DELETE' });
+  renderView();
+}
+
+async function pauseTimer(id) {
+  await fetch('/v1/owner/data/timers/pause', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id })
+  });
+  renderView();
+}
+
+async function resumeTimer(id) {
+  await fetch('/v1/owner/data/timers/resume', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id })
+  });
+  renderView();
+}
+
+async function submitJournal() {
+  const text = document.getElementById('journal-text').value.trim();
+  if (!text) return;
+  await fetch('/v1/owner/data/journal', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content: text })
+  });
+  renderView();
+}
+
+async function deleteJournal(id) {
+  if (!confirm('Delete journal entry?')) return;
+  await fetch(`/v1/owner/data/journal?id=${id}`, { method: 'DELETE' });
+  renderView();
+}
+
 async function renderView() {
   const container = document.getElementById('content');
   container.innerHTML = '<div style="color:var(--text-muted)">Loading workspace data...</div>';
@@ -352,60 +534,161 @@ async function renderView() {
       </table>
     `;
   } else if (currentView === 'expenses') {
-    const data = await fetchJSON('/v1/owner/data/expenses');
+    const { from, to } = getPeriodRange(expensePeriod);
+    const query = `?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}${expenseCategory ? '&category=' + encodeURIComponent(expenseCategory) : ''}`;
+    const data = await fetchJSON('/v1/owner/data/expenses' + query);
     container.innerHTML = `
-      <h1>Expenses & Budget</h1>
-      <div class="filter-bar">
-        <button class="filter-btn active">This Month</button>
-        <button class="filter-btn">This Week</button>
-        <button class="filter-btn">Today</button>
-        <input class="filter-input" placeholder="Filter category...">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.2rem">
+        <h1 style="margin-bottom:0">Expenses & Budget</h1>
+        <div style="font-family:var(--font-mono);font-size:1.1rem;font-weight:600">Total: <span style="color:var(--accent-green)">${(data?.total_vnd || 0).toLocaleString()} VND</span></div>
       </div>
+      <div class="filter-bar">
+        <button class="filter-btn ${expensePeriod === 'today' ? 'active' : ''}" onclick="filterExpenses('today')">Today</button>
+        <button class="filter-btn ${expensePeriod === 'week' ? 'active' : ''}" onclick="filterExpenses('week')">This Week</button>
+        <button class="filter-btn ${expensePeriod === 'month' ? 'active' : ''}" onclick="filterExpenses('month')">This Month</button>
+        <button class="filter-btn ${expensePeriod === 'all' ? 'active' : ''}" onclick="filterExpenses('all')">All Time</button>
+        <input class="filter-input" placeholder="Filter category..." value="${expenseCategory}" oninput="filterExpenseCategory(this.value)">
+      </div>
+
+      <div class="block-card" style="margin-bottom:1.5rem">
+        <div class="block-title">➕ Quick Record Expense</div>
+        <div style="display:flex;gap:0.8rem;flex-wrap:wrap;margin-top:0.6rem">
+          <input id="exp-amount" class="filter-input" type="number" placeholder="Amount (VND)" style="width:140px">
+          <input id="exp-category" class="filter-input" placeholder="Category (e.g. food)" style="width:140px">
+          <input id="exp-desc" class="filter-input" placeholder="Description (e.g. lunch)" style="flex:1;min-width:180px">
+          <button class="filter-btn active" style="background:var(--accent-blue)" onclick="submitExpense()">Add Expense</button>
+        </div>
+      </div>
+
       <table class="data-table">
-        <thead><tr><th>Occurred At</th><th>Category</th><th>Description</th><th style="text-align:right">Amount (VND)</th></tr></thead>
+        <thead><tr><th>Occurred At</th><th>Category</th><th>Description</th><th style="text-align:right">Amount (VND)</th><th style="width:40px"></th></tr></thead>
         <tbody>
-          ${(data?.expenses || []).map(e => `
+          ${(data?.expenses || []).length === 0 ? '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:1.5rem">No expenses recorded for this period.</td></tr>' : (data?.expenses || []).map(e => `
             <tr>
               <td class="time-badge">${new Date(e.occurred_at).toLocaleString()}</td>
               <td><span class="tag">${e.category}</span></td>
               <td>${e.description}</td>
               <td class="amount">${(e.amount_vnd).toLocaleString()}</td>
+              <td><button class="filter-btn" style="color:var(--accent-red);padding:0.2rem 0.4rem;font-size:0.75rem" onclick="deleteExpense(${e.id})">🗑️</button></td>
             </tr>
           `).join('')}
         </tbody>
       </table>
     `;
   } else if (currentView === 'voice') {
-    const data = await fetchJSON('/v1/owner/data/voice-memos' + (selectedDeviceID ? `?device_id=${selectedDeviceID}` : ''));
+    const data = await fetchJSON(`/v1/owner/data/voice-memos?search=${encodeURIComponent(voiceSearchQuery)}${selectedDeviceID ? '&device_id=' + selectedDeviceID : ''}`);
     container.innerHTML = `
       <h1>Voice Memos & Transcripts</h1>
       <div class="filter-bar">
-        <input class="filter-input" placeholder="Search transcripts..." style="width:280px">
+        <input class="filter-input" placeholder="Search transcripts..." value="${voiceSearchQuery}" oninput="searchVoiceMemos(this.value)" style="width:280px">
       </div>
-      ${(data?.voice_memos || []).length === 0 ? '<div style="color:var(--text-muted);margin-top:1rem">No voice memos recorded on this companion yet.</div>' : (data?.voice_memos || []).map(vm => `
-        <div class="audio-card">
-          <div class="audio-row">
-            <button class="play-btn">▶</button>
-            <div style="flex:1">
-              <div class="transcript">"${vm.transcript || '(Audio recorded without transcript)'}"</div>
-              <div class="time-badge">${new Date(vm.created_at).toLocaleString()} • ${(vm.duration_ms / 1000).toFixed(1)}s • Device: ${vm.device_id || 'companion-s3'}</div>
+      <div id="voice-list">
+        ${(data?.voice_memos || []).length === 0 ? '<div style="color:var(--text-muted);margin-top:1rem">No voice memos recorded on this companion yet.</div>' : (data?.voice_memos || []).map(vm => `
+          <div class="audio-card">
+            <div class="audio-row">
+              <button class="play-btn" onclick="toggleAudio(${vm.id})">${playingAudioID === vm.id ? '⏸' : '▶'}</button>
+              <div style="flex:1">
+                <div class="transcript">"${vm.transcript || '(Audio recorded without transcript)'}"</div>
+                <div class="time-badge">${new Date(vm.created_at).toLocaleString()} • ${(vm.duration_ms / 1000).toFixed(1)}s • Device: ${vm.device_id || 'companion-s3'}</div>
+              </div>
+              <button class="filter-btn" style="color:var(--accent-red);padding:0.3rem 0.6rem" onclick="deleteVoiceMemo(${vm.id})">🗑️</button>
             </div>
           </div>
-        </div>
-      `).join('')}
+        `).join('')}
+      </div>
     `;
   } else if (currentView === 'notes') {
-    const data = await fetchJSON('/v1/owner/data/notes');
+    const data = await fetchJSON(`/v1/owner/data/notes?search=${encodeURIComponent(noteSearchQuery)}`);
     container.innerHTML = `
       <h1>Personal Notes</h1>
       <div class="filter-bar">
-        <input class="filter-input" placeholder="Search notes..." style="width:280px">
+        <input class="filter-input" placeholder="Search notes..." value="${noteSearchQuery}" oninput="searchNotes(this.value)" style="width:280px">
+      </div>
+
+      <div class="block-card" style="margin-bottom:1.5rem">
+        <div class="block-title">📝 New Note</div>
+        <textarea id="new-note-text" class="filter-input" placeholder="Capture a note, idea, or reminder..." style="width:100%;height:70px;margin-top:0.5rem;resize:vertical"></textarea>
+        <div style="display:flex;justify-content:flex-end;margin-top:0.6rem">
+          <button class="filter-btn active" style="background:var(--accent-blue)" onclick="submitNote()">Save Note</button>
+        </div>
+      </div>
+
+      <div class="card-grid" id="notes-grid">
+        ${(data?.notes || []).length === 0 ? '<div style="color:var(--text-muted)">No notes found.</div>' : (data?.notes || []).map(n => `
+          <div class="block-card">
+            <div style="font-size:0.95rem;margin-bottom:0.8rem;white-space:pre-wrap">${n.content}</div>
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div class="time-badge">${new Date(n.created_at).toLocaleString()}</div>
+              <button class="filter-btn" style="color:var(--accent-red);padding:0.2rem 0.5rem" onclick="deleteNote(${n.id})">🗑️</button>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+  } else if (currentView === 'reminders') {
+    const data = await fetchJSON('/v1/owner/data/reminders' + (selectedDeviceID ? `?device_id=${selectedDeviceID}` : ''));
+    container.innerHTML = `
+      <h1>Reminders & Timers</h1>
+      <div class="block-card" style="margin-bottom:1.5rem">
+        <div class="block-title">⏰ Set New Reminder or Timer</div>
+        <div style="display:flex;gap:0.8rem;flex-wrap:wrap;margin-top:0.6rem">
+          <input id="rem-title" class="filter-input" placeholder="Title (e.g. boil water)" style="flex:1;min-width:180px">
+          <input id="rem-delay" class="filter-input" type="number" placeholder="Timer (Minutes)" style="width:140px">
+          <button class="filter-btn active" style="background:var(--accent-blue)" onclick="submitReminder()">Schedule</button>
+        </div>
+      </div>
+
+      <h2>Active Timers</h2>
+      <div class="card-grid">
+        ${(data?.timers || []).length === 0 ? '<div style="color:var(--text-muted)">No active timers.</div>' : (data?.timers || []).map(t => `
+          <div class="block-card">
+            <div class="block-title">⏳ ${t.title}</div>
+            <div class="block-metric" style="font-size:1.3rem;color:var(--accent-blue)">Fires At ${new Date(t.fire_at).toLocaleTimeString()}</div>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:0.8rem">
+              <div class="time-badge">${t.status}</div>
+              <div style="display:flex;gap:0.4rem">
+                <button class="filter-btn" onclick="${t.status === 'paused' ? `resumeTimer(${t.id})` : `pauseTimer(${t.id})`}">${t.status === 'paused' ? '▶ Resume' : '⏸ Pause'}</button>
+                <button class="filter-btn" style="color:var(--accent-red)" onclick="deleteReminder(${t.id})">🗑️</button>
+              </div>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+
+      <h2 style="margin-top:2rem">Scheduled Reminders</h2>
+      <table class="data-table">
+        <thead><tr><th>Title</th><th>Fire Timestamp</th><th>Status</th><th style="width:40px"></th></tr></thead>
+        <tbody>
+          ${(data?.reminders || []).length === 0 ? '<tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:1.5rem">No pending reminders.</td></tr>' : (data?.reminders || []).map(r => `
+            <tr>
+              <td><b>${r.title}</b></td>
+              <td class="time-badge">${new Date(r.fire_at).toLocaleString()}</td>
+              <td><span class="tag">${r.status}</span></td>
+              <td><button class="filter-btn" style="color:var(--accent-red);padding:0.2rem 0.4rem;font-size:0.75rem" onclick="deleteReminder(${r.id})">🗑️</button></td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+  } else if (currentView === 'journal') {
+    const data = await fetchJSON('/v1/owner/data/journal');
+    container.innerHTML = `
+      <h1>Personal Journal</h1>
+      <div class="block-card" style="margin-bottom:1.5rem">
+        <div class="block-title">📖 New Journal Entry</div>
+        <textarea id="journal-text" class="filter-input" placeholder="Reflect on your day, achievements, thoughts..." style="width:100%;height:80px;margin-top:0.5rem;resize:vertical"></textarea>
+        <div style="display:flex;justify-content:flex-end;margin-top:0.6rem">
+          <button class="filter-btn active" style="background:var(--accent-blue)" onclick="submitJournal()">Save Entry</button>
+        </div>
       </div>
       <div class="card-grid">
-        ${(data?.notes || []).map(n => `
+        ${(data?.journal || []).length === 0 ? '<div style="color:var(--text-muted)">No journal entries recorded.</div>' : (data?.journal || []).map(j => `
           <div class="block-card">
-            <div style="font-size:0.95rem;margin-bottom:0.8rem">${n.content}</div>
-            <div class="time-badge">${new Date(n.created_at).toLocaleString()}</div>
+            <div style="font-size:0.95rem;margin-bottom:0.8rem;white-space:pre-wrap">${j.content}</div>
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div class="time-badge">${new Date(j.occurred_at).toLocaleString()}</div>
+              <button class="filter-btn" style="color:var(--accent-red);padding:0.2rem 0.5rem" onclick="deleteJournal(${j.id})">🗑️</button>
+            </div>
           </div>
         `).join('')}
       </div>

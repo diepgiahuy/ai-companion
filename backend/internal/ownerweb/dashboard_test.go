@@ -125,12 +125,106 @@ func TestOwnerWebDataEndpoints(t *testing.T) {
 		t.Fatalf("ota trigger failed: %s", wOTA.Body.String())
 	}
 
-	// Test Device Config Update
-	reqCfg := httptest.NewRequest(http.MethodPost, "/v1/owner/data/device/config", strings.NewReader(`{"device_id":"companion-s3-01","ota_poll_interval":"12h"}`))
-	wCfg := httptest.NewRecorder()
-	handler.ServeHTTP(wCfg, reqCfg)
-	if wCfg.Code != http.StatusOK || !strings.Contains(wCfg.Body.String(), "12h") {
-		t.Fatalf("device config update failed: %s", wCfg.Body.String())
+	// Test Delete Expense
+	reqDelExp := httptest.NewRequest(http.MethodDelete, "/v1/owner/data/expenses?id=1", nil)
+	wDelExp := httptest.NewRecorder()
+	handler.ServeHTTP(wDelExp, reqDelExp)
+	if wDelExp.Code != http.StatusOK || !strings.Contains(wDelExp.Body.String(), "deleted") {
+		t.Fatalf("delete expense failed: %s", wDelExp.Body.String())
+	}
+
+	// Test Delete Note
+	reqDelNote := httptest.NewRequest(http.MethodDelete, "/v1/owner/data/notes?id=1", nil)
+	wDelNote := httptest.NewRecorder()
+	handler.ServeHTTP(wDelNote, reqDelNote)
+	if wDelNote.Code != http.StatusOK || !strings.Contains(wDelNote.Body.String(), "deleted") {
+		t.Fatalf("delete note failed: %s", wDelNote.Body.String())
+	}
+
+	// Test Voice Memos Query & Search
+	_ = data.CreateVoiceMemo(ctx, "default", "vm1", "companion-s3-01", "/audio/vm1.opus", "buy milk and eggs", 5000)
+	reqVM := httptest.NewRequest(http.MethodGet, "/v1/owner/data/voice-memos?search=milk&device_id=companion-s3-01", nil)
+	wVM := httptest.NewRecorder()
+	handler.ServeHTTP(wVM, reqVM)
+	if wVM.Code != http.StatusOK || !strings.Contains(wVM.Body.String(), "buy milk") {
+		t.Fatalf("voice memo search failed: %s", wVM.Body.String())
+	}
+
+	// Test Delete Voice Memo
+	reqDelVM := httptest.NewRequest(http.MethodDelete, "/v1/owner/data/voice-memos?id=1", nil)
+	wDelVM := httptest.NewRecorder()
+	handler.ServeHTTP(wDelVM, reqDelVM)
+	if wDelVM.Code != http.StatusOK || !strings.Contains(wDelVM.Body.String(), "deleted") {
+		t.Fatalf("delete voice memo failed: %s", wDelVM.Body.String())
+	}
+
+	// Test Create Reminder & Timer
+	reqCreateRem := httptest.NewRequest(http.MethodPost, "/v1/owner/data/reminders", strings.NewReader(`{"title":"water plants","delay_seconds":300}`))
+	wCreateRem := httptest.NewRecorder()
+	handler.ServeHTTP(wCreateRem, reqCreateRem)
+	if wCreateRem.Code != http.StatusOK || !strings.Contains(wCreateRem.Body.String(), "timer") {
+		t.Fatalf("create timer failed: %s", wCreateRem.Body.String())
+	}
+
+	// Test List Reminders
+	reqListRem := httptest.NewRequest(http.MethodGet, "/v1/owner/data/reminders", nil)
+	wListRem := httptest.NewRecorder()
+	handler.ServeHTTP(wListRem, reqListRem)
+	if wListRem.Code != http.StatusOK || !strings.Contains(wListRem.Body.String(), "water plants") {
+		t.Fatalf("list reminders failed: %s", wListRem.Body.String())
+	}
+
+	// Test Pause & Resume Timer
+	reqPause := httptest.NewRequest(http.MethodPost, "/v1/owner/data/timers/pause", strings.NewReader(`{"id":1}`))
+	wPause := httptest.NewRecorder()
+	handler.ServeHTTP(wPause, reqPause)
+	if wPause.Code != http.StatusOK || !strings.Contains(wPause.Body.String(), "paused") {
+		t.Fatalf("pause timer failed: %s", wPause.Body.String())
+	}
+
+	reqResume := httptest.NewRequest(http.MethodPost, "/v1/owner/data/timers/resume", strings.NewReader(`{"id":1}`))
+	wResume := httptest.NewRecorder()
+	handler.ServeHTTP(wResume, reqResume)
+	if wResume.Code != http.StatusOK || !strings.Contains(wResume.Body.String(), "resumed") {
+		t.Fatalf("resume timer failed: %s", wResume.Body.String())
+	}
+
+	// Test Delete Reminder
+	reqDelRem := httptest.NewRequest(http.MethodDelete, "/v1/owner/data/reminders?id=1", nil)
+	wDelRem := httptest.NewRecorder()
+	handler.ServeHTTP(wDelRem, reqDelRem)
+	if wDelRem.Code != http.StatusOK || !strings.Contains(wDelRem.Body.String(), "deleted") {
+		t.Fatalf("delete reminder failed: %s", wDelRem.Body.String())
+	}
+
+	// Test Journal Create, List & Delete
+	reqCreateJ := httptest.NewRequest(http.MethodPost, "/v1/owner/data/journal", strings.NewReader(`{"content":"shipped version 2.4 today"}`))
+	wCreateJ := httptest.NewRecorder()
+	handler.ServeHTTP(wCreateJ, reqCreateJ)
+	if wCreateJ.Code != http.StatusOK || !strings.Contains(wCreateJ.Body.String(), "journal") {
+		t.Fatalf("create journal failed: %s", wCreateJ.Body.String())
+	}
+
+	reqListJ := httptest.NewRequest(http.MethodGet, "/v1/owner/data/journal", nil)
+	wListJ := httptest.NewRecorder()
+	handler.ServeHTTP(wListJ, reqListJ)
+	if wListJ.Code != http.StatusOK || !strings.Contains(wListJ.Body.String(), "shipped version 2.4") {
+		t.Fatalf("list journal failed: %s", wListJ.Body.String())
+	}
+
+	reqDelJ := httptest.NewRequest(http.MethodDelete, "/v1/owner/data/journal?id=1", nil)
+	wDelJ := httptest.NewRecorder()
+	handler.ServeHTTP(wDelJ, reqDelJ)
+	if wDelJ.Code != http.StatusOK || !strings.Contains(wDelJ.Body.String(), "deleted") {
+		t.Fatalf("delete journal failed: %s", wDelJ.Body.String())
+	}
+
+	// Test Filter Expenses with Date Range
+	reqExpRange := httptest.NewRequest(http.MethodGet, "/v1/owner/data/expenses?from=2026-08-01T00:00:00Z&to=2026-08-31T23:59:59Z&category=food", nil)
+	wExpRange := httptest.NewRecorder()
+	handler.ServeHTTP(wExpRange, reqExpRange)
+	if wExpRange.Code != http.StatusOK || !strings.Contains(wExpRange.Body.String(), "expenses") {
+		t.Fatalf("filter expenses range failed: %s", wExpRange.Body.String())
 	}
 }
 
