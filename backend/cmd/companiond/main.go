@@ -174,8 +174,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	monthlyLLMLimit, _ := strconv.ParseInt(value("COMPANION_MONTHLY_LLM_TOKEN_LIMIT", "0"), 10, 64)
-	usageGuard := usage.Guard{Reader: data, MonthlyLimit: monthlyLLMLimit}
+	usageGuard := usage.Guard{Reader: data, MonthlyLimit: runtimeCfg.LLM.MonthlyTokenLimit}
 	adkBaseURL := strings.TrimSpace(os.Getenv("ADK_OPENAI_BASE_URL"))
 	adkModel := strings.TrimSpace(os.Getenv("ADK_MODEL"))
 	if adkBaseURL == "" || adkModel == "" {
