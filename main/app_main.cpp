@@ -458,6 +458,7 @@ extern "C" void app_main() {
     }
 
     app.tick(now);
+    ota.set_poll_interval_ms(static_cast<uint64_t>(app.config().ota_poll_interval_s) * 1000);
     ota.tick(now);
 
     const pairing::State current_pairing_state = pairing_controller.state();

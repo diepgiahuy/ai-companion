@@ -303,15 +303,16 @@ func DownlinkAudioParams() AudioParams {
 }
 
 type RuntimeConfig struct {
-	SmartVADEnabled *bool  `json:"smart_vad_enabled,omitempty"`
-	VADThreshold    *int   `json:"vad_threshold,omitempty"`
-	VADSilenceMS    *int   `json:"vad_silence_ms,omitempty"`
-	VADMinSpeechMS  *int   `json:"vad_min_speech_ms,omitempty"`
-	IdleAfterMS     *int   `json:"idle_after_ms,omitempty"`
-	AlarmVisibleMS  *int   `json:"alarm_visible_ms,omitempty"`
-	Locale          string `json:"locale,omitempty"`
-	Timezone        string `json:"timezone,omitempty"`
-	VoiceKey        string `json:"voice_key,omitempty"`
+	SmartVADEnabled       *bool  `json:"smart_vad_enabled,omitempty"`
+	VADThreshold          *int   `json:"vad_threshold,omitempty"`
+	VADSilenceMS          *int   `json:"vad_silence_ms,omitempty"`
+	VADMinSpeechMS        *int   `json:"vad_min_speech_ms,omitempty"`
+	IdleAfterMS           *int   `json:"idle_after_ms,omitempty"`
+	AlarmVisibleMS        *int   `json:"alarm_visible_ms,omitempty"`
+	OTAPollIntervalSeconds *int  `json:"ota_poll_interval_s,omitempty"`
+	Locale                string `json:"locale,omitempty"`
+	Timezone              string `json:"timezone,omitempty"`
+	VoiceKey              string `json:"voice_key,omitempty"`
 }
 
 func (c RuntimeConfig) ValidateDeviceSnapshot() error {
@@ -325,6 +326,9 @@ func (c RuntimeConfig) ValidateDeviceSnapshot() error {
 		*c.IdleAfterMS < 1000 || *c.IdleAfterMS > 3600000 ||
 		*c.AlarmVisibleMS < 1000 || *c.AlarmVisibleMS > 3600000 {
 		return fmt.Errorf("device config snapshot contains an out-of-range value")
+	}
+	if c.OTAPollIntervalSeconds != nil && (*c.OTAPollIntervalSeconds < 3600 || *c.OTAPollIntervalSeconds > 604800) {
+		return fmt.Errorf("ota_poll_interval_s contains an out-of-range value")
 	}
 	if len(c.Locale) > 64 || len(c.Timezone) > 64 || len(c.VoiceKey) > 128 {
 		return fmt.Errorf("locale, timezone, or voice_key exceeds its size limit")

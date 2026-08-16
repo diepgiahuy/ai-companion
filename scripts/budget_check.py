@@ -24,8 +24,10 @@ for name, _, _, offset, size, *_ in rows:
     if name.startswith("ota_"):
         ota_slots.append((name, length))
 
-assert end <= FLASH, f"partition table exceeds 16 MiB: 0x{end:X}"
-assert len(ota_slots) == 2 and all(size >= 0x400000 for _, size in ota_slots)
+if end > FLASH:
+    raise SystemExit(f"partition table exceeds 16 MiB: 0x{end:X}")
+if len(ota_slots) != 2 or any(size < 0x400000 for _, size in ota_slots):
+    raise SystemExit("expected two OTA app partitions of at least 4 MiB each")
 
 # Conservative static design budget for this POC. Target measurements from
 # idf.py size remain the final authority once ESP-IDF is installed.

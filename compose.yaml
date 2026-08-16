@@ -11,7 +11,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.test
-    command: ["sh", "-c", "cd backend && go run -tags nolibopusfile ./cmd/companiond"]
+    command: ["sh", "-c", "cd backend && go run -tags adk,mcp,nolibopusfile ./cmd/companiond"]
     working_dir: /src
     environment:
       COMPANION_ADDRESS: ":8000"
@@ -20,6 +20,21 @@ services:
       COMPANION_RECORDINGS_DIR: "/data/recordings"
       COMPANION_VOICE_MAIL_DIR: "/data/voice-mail"
       MOCK_TRANSCRIPT: "hôm nay đi chợ 50k"
+      COMPANION_TIMEZONE: "${COMPANION_TIMEZONE:-Asia/Ho_Chi_Minh}"
+      ADK_OPENAI_BASE_URL: "${ADK_OPENAI_BASE_URL:-}"
+      ADK_MODEL: "${ADK_MODEL:-}"
+      ADK_MODEL_PROTOCOL: "${ADK_MODEL_PROTOCOL:-}"
+      ADK_OPENAI_API_KEY: "${ADK_OPENAI_API_KEY:-}"
+      OTA_PUBLIC_KEY: "${OTA_PUBLIC_KEY:-}"
+      OTA_REQUIRE_SIGNATURE: "${OTA_REQUIRE_SIGNATURE:-false}"
+      COMPANION_ADMIN_TOKEN: "${COMPANION_ADMIN_TOKEN:-}"
+      EMBEDDING_BASE_URL: "${EMBEDDING_BASE_URL:-}"
+      EMBEDDING_API_KEY: "${EMBEDDING_API_KEY:-}"
+      EMBEDDING_MODEL: "${EMBEDDING_MODEL:-}"
+      COINGECKO_API_KEY: "${COINGECKO_API_KEY:-}"
+      TWELVEDATA_API_KEY: "${TWELVEDATA_API_KEY:-}"
+      ALPHAVANTAGE_API_KEY: "${ALPHAVANTAGE_API_KEY:-}"
+      PNJ_GOLD_ENABLED: "${PNJ_GOLD_ENABLED:-false}"
     ports: ["8000:8000"]
     volumes: ["companion-data:/data"]
     depends_on:

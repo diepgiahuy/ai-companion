@@ -42,6 +42,7 @@ struct RuntimeConfigPatch {
   uint32_t vad_min_speech_ms{250};
   uint32_t idle_after_ms{5'000};
   uint32_t alarm_visible_ms{10'000};
+  uint32_t ota_poll_interval_s{21'600};
 };
 
 enum class BackendEventType : uint8_t {
@@ -166,6 +167,7 @@ struct AppConfig {
   uint32_t vad_silence_ms{800};
   uint32_t vad_min_speech_ms{250};
   uint32_t voice_mail_operation_timeout_ms{15'000};
+  uint32_t ota_poll_interval_s{21'600};
 };
 
 class CompanionApp final {
@@ -179,6 +181,7 @@ public:
   bool start(uint64_t now_ms);
   void tick(uint64_t now_ms);
   UiState state() const { return state_; }
+  const AppConfig& config() const { return config_; }
   uint64_t streamed_samples() const { return streamed_samples_; }
   uint64_t runtime_config_version() const { return runtime_config_version_; }
 

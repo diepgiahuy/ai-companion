@@ -51,7 +51,9 @@ func main() {
 		os.Exit(1)
 	}
 	address := value("COMPANION_ADDRESS", ":8000")
-	databaseCtx, cancelDatabase := context.WithTimeout(context.Background(), 15*time.Second)
+	rootCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	databaseCtx, cancelDatabase := context.WithTimeout(rootCtx, 15*time.Second)
 	data, err := openProductDatabase(databaseCtx, runtimeCfg.Profile)
 	cancelDatabase()
 	if err != nil {
@@ -87,9 +89,13 @@ func main() {
 	idle := 5000
 	alarm := 10000
 	control := controlplane.New(data, controlplane.RuntimeConfig{SmartVADEnabled: &b, VADThreshold: &vad, VADSilenceMS: &silence, VADMinSpeechMS: &minSpeech, IdleAfterMS: &idle, AlarmVisibleMS: &alarm, Locale: "vi-VN", Timezone: timezone, VoiceKey: "default"})
+	flagSeedCtx, cancelFlagSeed := context.WithTimeout(rootCtx, 15*time.Second)
 	for _, f := range []controlplane.Flag{{Key: "memory.long_term", Enabled: true, Rollout: 100}, {Key: "market.live", Enabled: true, Rollout: 100}} {
-		_ = data.EnsureFlag(context.Background(), f)
+		if err := data.EnsureFlag(flagSeedCtx, f); err != nil {
+			logger.Warn("seed feature flag failed", "flag", f.Key, "error", err)
+		}
 	}
+	cancelFlagSeed()
 	features := controlplane.NewFeatures(data)
 	otaPublicKey, err := controlplane.DecodeEd25519PublicKey(os.Getenv("OTA_PUBLIC_KEY"))
 	if err != nil {
@@ -118,7 +124,7 @@ func main() {
 		logger.Error("load River job configuration", "error", err)
 		os.Exit(1)
 	}
-	jobCtx, cancelJobs := context.WithTimeout(context.Background(), 15*time.Second)
+	jobCtx, cancelJobs := context.WithTimeout(rootCtx, 15*time.Second)
 	jobRuntime, err := jobs.New(jobCtx, data.Pool(), maintenanceService{privacy: privacyService, voiceMail: voiceMailService}, logger, jobConfig)
 	cancelJobs()
 	if err != nil {
@@ -126,7 +132,9 @@ func main() {
 		os.Exit(1)
 	}
 	featureCatalog := controlplane.NewFeatureCatalog(data)
-	seedFeatureCatalog(context.Background(), featureCatalog, logger)
+	catalogSeedCtx, cancelCatalogSeed := context.WithTimeout(rootCtx, 15*time.Second)
+	seedFeatureCatalog(catalogSeedCtx, featureCatalog, logger)
+	cancelCatalogSeed()
 	var embedding memory.EmbeddingProvider = memory.HashEmbedding{Dimensions: 96}
 	if base := os.Getenv("EMBEDDING_BASE_URL"); base != "" {
 		embedding = memory.OpenAIEmbedding{BaseURL: base, APIKey: os.Getenv("EMBEDDING_API_KEY"), Model: value("EMBEDDING_MODEL", "text-embedding"), Client: &http.Client{Timeout: 20 * time.Second}}
@@ -217,8 +225,6 @@ func main() {
 		server.WithVoiceMail(voiceMailService),
 	}
 	service := server.New(components, logger, serverOptions...)
-	rootCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 	supervisor := supervision.New(rootCtx, logger)
 
 	supervisor.Go("server-background", false, func(ctx context.Context) error { service.RunBackground(ctx); return nil })
@@ -261,7 +267,9 @@ func main() {
 		logger.Error("graceful runtime shutdown failed", "error", err)
 	}
 	resources := append([]namedCloser{}, providerClosers...)
-	resources = append(resources, namedCloser{name: "mcp", closer: mcpCloser})
+	if mcpCloser != nil {
+		resources = append(resources, namedCloser{name: "mcp", closer: mcpCloser})
+	}
 	if err := closeRuntimeResourcesBounded(logger, 2*time.Second, resources...); err != nil {
 		logger.Error("bounded runtime resource shutdown failed", "error", err)
 	}
