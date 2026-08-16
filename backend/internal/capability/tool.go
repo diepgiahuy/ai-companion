@@ -155,11 +155,18 @@ func (r *ToolRegistry) Execute(ctx context.Context, name string, req ToolRequest
 	return t.Execute(ctx, req)
 }
 func Success(v map[string]any) ToolResult {
-	v["ok"] = true
-	b, _ := json.Marshal(v)
+	out := make(map[string]any, len(v)+1)
+	for key, value := range v {
+		out[key] = value
+	}
+	out["ok"] = true
+	b, _ := json.Marshal(out)
 	return ToolResult{Content: string(b)}
 }
 func Failure(err error) ToolResult {
+	if err == nil {
+		err = fmt.Errorf("unknown tool failure")
+	}
 	b, _ := json.Marshal(map[string]any{"ok": false, "error": err.Error()})
 	return ToolResult{Content: string(b)}
 }
