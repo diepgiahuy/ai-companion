@@ -237,7 +237,8 @@ void CompanionApp::process_backend_event(const BackendEvent& event,
                        c.vad_silence_ms >= 100 && c.vad_silence_ms <= 5'000 &&
                        c.vad_min_speech_ms >= 50 && c.vad_min_speech_ms <= 5'000 &&
                        c.idle_after_ms >= 1'000 && c.idle_after_ms <= 3'600'000 &&
-                       c.alarm_visible_ms >= 1'000 && c.alarm_visible_ms <= 3'600'000;
+                       c.alarm_visible_ms >= 1'000 && c.alarm_visible_ms <= 3'600'000 &&
+                       c.ota_poll_interval_s >= 3'600 && c.ota_poll_interval_s <= 604'800;
     if (!valid) { backend_.report_config(c, false); break; }
     config_.smart_vad_enabled = c.smart_vad_enabled;
     config_.vad_mean_abs_threshold = static_cast<uint16_t>(c.vad_threshold);
@@ -245,6 +246,7 @@ void CompanionApp::process_backend_event(const BackendEvent& event,
     config_.vad_min_speech_ms = c.vad_min_speech_ms;
     config_.idle_after_ms = c.idle_after_ms;
     config_.alarm_visible_ms = c.alarm_visible_ms;
+    config_.ota_poll_interval_s = c.ota_poll_interval_s;
     runtime_config_version_ = c.version;
     backend_.report_config(c, true);
     break;

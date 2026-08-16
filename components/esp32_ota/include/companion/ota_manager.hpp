@@ -23,6 +23,12 @@ public:
   // authenticated backend request all succeed. Otherwise the image rolls back.
   void tick(uint64_t now_ms);
 
+  void set_poll_interval_ms(uint64_t interval_ms) {
+    if (interval_ms >= 3'600'000 && interval_ms <= 604'800'000) {
+      poll_interval_ms_ = interval_ms;
+    }
+  }
+
 private:
   bool backend_auth_reachable();
   std::string target_url() const;
@@ -35,6 +41,8 @@ private:
   std::string_view channel_{};
   uint64_t health_deadline_ms_{};
   uint64_t next_health_probe_ms_{};
+  uint64_t poll_interval_ms_{21'600'000};
+  uint64_t next_poll_ms_{};
   bool pending_verify_{};
   bool enabled_{};
 };
