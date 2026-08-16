@@ -39,7 +39,10 @@ func (e HostToolExecutor) Execute(ctx context.Context, toolName, functionCallID 
 		return nil, fmt.Errorf("marshal %s args: %w", toolName, err)
 	}
 	turn, _ := pipeline.CurrentTurn(ctx)
-	definition, _ := e.Registry.Definition(toolName)
+	definition, exposed := e.Registry.Definition(toolName)
+	if !exposed {
+		return unexposedToolResult(ctx, functionCallID, toolName), nil
+	}
 	result := e.Registry.Execute(ctx, toolName, capability.ToolRequest{
 		Key:       ToolExecutionKey(turn, functionCallID, toolName),
 		Arguments: string(payload),
@@ -57,6 +60,20 @@ func (e HostToolExecutor) Execute(ctx context.Context, toolName, functionCallID 
 		capability.EmitPresentation(ctx, *result.Presentation)
 	}
 	return out, nil
+}
+
+func unexposedToolResult(ctx context.Context, functionCallID, toolName string) map[string]any {
+	// A provider response may only invoke the definitions explicitly advertised
+	// through the capability registry. Internal/legacy tools without a Definition
+	// can still be called by trusted in-process code, but never by model output.
+	emitToolOutcome(ctx, ToolOutcome{FunctionCallID: functionCallID, Name: toolName, Valid: false})
+	return map[string]any{
+		"ok":               false,
+		"error":            "tool is not exposed to the model",
+		"error_code":       "tool_not_exposed",
+		"execution_status": "not_started",
+		"retryable":        false,
+	}
 }
 
 func invalidToolResult(ctx context.Context, functionCallID, toolName, risk string) map[string]any {

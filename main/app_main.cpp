@@ -3,7 +3,10 @@
 #include "companion/esp32_audio.hpp"
 #include "companion/esp_sr_audio_frontend.hpp"
 #include "companion/gpio_button.hpp"
+#include "companion/nimble_pairing_discovery.hpp"
 #include "companion/ota_manager.hpp"
+#include "companion/pairing_controller.hpp"
+#include "companion/press_gesture.hpp"
 #include "companion/provisioning_store.hpp"
 #include "companion/setup_portal.hpp"
 #include "companion/ssd1306_display.hpp"
@@ -27,12 +30,39 @@ namespace {
 constexpr char kTag[] = "companion";
 constexpr uint64_t kWifiReprovisionHoldMs = 3'000;
 constexpr uint64_t kFactoryResetHoldMs = 8'000;
+constexpr uint32_t kRuntimePairingHoldMs = 2'000;
 uint64_t now_ms() { return static_cast<uint64_t>(esp_timer_get_time() / 1000); }
 
 enum class BootGesture {
   none,
   wifi_reprovision,
   factory_reset,
+};
+
+// CompanionApp owns normal short-press behavior. This adapter delays that short
+// action until release so the same physical press can be claimed as a runtime
+// hold without first leaking a PTT action into the app state machine.
+class RuntimeButton final : public companion::Button {
+public:
+  explicit RuntimeButton(companion::GpioButton& physical)
+      : physical_(physical), gesture_({.debounce_ms = 30,
+                                      .hold_ms = kRuntimePairingHoldMs}) {}
+
+  void reset(uint64_t now) { gesture_.reset(physical_.is_pressed(), now); }
+
+  bool consume_press(uint64_t now) override {
+    gesture_.sample(physical_.is_pressed(), now);
+    return gesture_.consume_short();
+  }
+
+  bool consume_pairing_hold(uint64_t now) {
+    gesture_.sample(physical_.is_pressed(), now);
+    return gesture_.consume_hold();
+  }
+
+private:
+  companion::GpioButton& physical_;
+  companion::PressGesture gesture_;
 };
 
 BootGesture boot_gesture(companion::GpioButton& button,
@@ -179,8 +209,6 @@ void show_portal_access(companion::Ssd1306Display& display,
       restart_after_message(display, "CLAIMED");
     }
     if (status == companion::provisioning::ClaimStatus::setup_required) {
-      // Expired/invalid claim authorization means the pending setup must be
-      // re-entered. No long-lived credential has been accepted locally yet.
       if (!store.clear()) {
         display.show(companion::UiState::error, "SETUP RESET ERROR");
         while (true) vTaskDelay(portMAX_DELAY);
@@ -188,8 +216,6 @@ void show_portal_access(companion::Ssd1306Display& display,
       restart_after_message(display, "SETUP REQUIRED");
     }
     if (status == companion::provisioning::ClaimStatus::owner_recovery_required) {
-      // 409/410 can mean backend ownership or a committed delivery already
-      // exists. Never loop a fresh claim or silently transfer ownership.
       ESP_LOGW(kTag, "owner recovery required before device claim can continue");
       display.show(companion::UiState::error, "OWNER RECOVERY");
       while (true) vTaskDelay(portMAX_DELAY);
@@ -197,6 +223,22 @@ void show_portal_access(companion::Ssd1306Display& display,
     display.show(companion::UiState::connecting, "CLAIM RETRY");
     next_claim = now + 10'000;
   }
+}
+
+std::string_view pairing_status(companion::pairing::State state) {
+  switch (state) {
+  case companion::pairing::State::discovering:
+    return "PAIR SEARCH";
+  case companion::pairing::State::session_pending:
+    return "PAIR WAIT";
+  case companion::pairing::State::awaiting_confirmation:
+    return "TAP TO PAIR";
+  case companion::pairing::State::confirming:
+    return "PAIR CONFIRM";
+  case companion::pairing::State::idle:
+    break;
+  }
+  return "PAIRING";
 }
 } // namespace
 
@@ -207,9 +249,12 @@ extern "C" void app_main() {
   static Esp32Audio audio;
   static EspSrAudioFrontend audio_frontend;
   static Ssd1306Display display;
-  static GpioButton button;
+  static GpioButton physical_button;
+  static RuntimeButton button(physical_button);
   static WifiStation wifi;
   static WebSocketVoiceBackend backend;
+  static pairing::NimblePairingDiscovery pairing_radio;
+  static pairing::PairingController pairing_controller(pairing_radio, backend);
   static OtaManager ota(wifi);
   static provisioning::ProvisioningStore provisioning_store;
 
@@ -217,27 +262,21 @@ extern "C" void app_main() {
     ESP_LOGE(kTag, "SSD1306 initialization failed");
     return;
   }
-  if (!button.initialize()) {
+  if (!physical_button.initialize()) {
     ESP_LOGE(kTag, "button initialization failed");
     display.show(UiState::error, "BUTTON ERROR");
     return;
   }
 
-  const BootGesture gesture = boot_gesture(button, display);
+  const BootGesture gesture = boot_gesture(physical_button, display);
+  button.reset(now_ms());
 
-  // A secure-storage build must never let nvs_flash_init() implicitly create
-  // an irreversible HMAC eFuse key. Manufacturing provisions the key first;
-  // this preflight verifies its purpose before NVS code can run.
   if (!provisioning::secure_storage_preflight()) {
     ESP_LOGE(kTag, "secure storage preflight failed before NVS initialization");
     display.show(UiState::error, "SECURE STORAGE");
     return;
   }
 
-  // Product identity now lives in NVS. Never auto-erase an initialized product
-  // identity merely because NVS reports a version/space problem. If NVS cannot
-  // mount, only the explicit long factory-reset gesture may erase the full
-  // partition; the shorter Wi-Fi gesture cannot destroy identity.
   const esp_err_t nvs_result = nvs_flash_init();
   if (nvs_result != ESP_OK) {
     ESP_LOGE(kTag, "NVS initialization failed: %s", esp_err_to_name(nvs_result));
@@ -275,8 +314,6 @@ extern "C" void app_main() {
     return;
   }
 
-  // A short boot gesture changes only Wi-Fi for an already-enrolled device.
-  // Backend origin, device ID and long-lived device credential remain intact.
   if (gesture == BootGesture::wifi_reprovision &&
       (persisted == provisioning::PersistedState::ready ||
        persisted == provisioning::PersistedState::validating)) {
@@ -308,8 +345,6 @@ extern "C" void app_main() {
     return;
   }
 
-  // Interactive/audio resources are intentionally initialized only after the
-  // local setup/claim phases are complete.
   if (!audio.initialize()) {
     ESP_LOGE(kTag, "I2S audio initialization failed");
     display.show(UiState::error, "AUDIO ERROR");
@@ -342,6 +377,12 @@ extern "C" void app_main() {
     return;
   }
 
+  bool pairing_available = pairing_radio.init();
+  if (pairing_available) pairing_available = backend.enable_pairing_protocol();
+  if (!pairing_available) {
+    ESP_LOGW(kTag, "pairing runtime unavailable; voice path remains enabled");
+  }
+
   AppConfig app_config{};
   app_config.idle_after_ms = CONFIG_COMPANION_IDLE_AFTER_MS;
   app_config.alarm_visible_ms = CONFIG_COMPANION_ALARM_VISIBLE_MS;
@@ -361,10 +402,47 @@ extern "C" void app_main() {
   ESP_LOGI(kTag, "hardware product path using stored provisioning + ESP-SR + secure WebSocket protocol v2");
 
   bool readiness_committed = persisted == provisioning::PersistedState::ready;
+  pairing::State previous_pairing_state = pairing_controller.state();
+  pairing::StopReason previous_pairing_stop = pairing_controller.last_stop_reason();
   while (true) {
     const uint64_t now = now_ms();
+
+    if (pairing_available) {
+      const bool held = button.consume_pairing_hold(now);
+      if (!pairing_controller.active() && held &&
+          (app.state() == UiState::ready || app.state() == UiState::idle)) {
+        if (!pairing_controller.start(now)) {
+          display.show(UiState::error, "PAIR START FAIL");
+        }
+      } else if (pairing_controller.active()) {
+        if (held) {
+          pairing_controller.cancel();
+        } else if (button.consume_press(now)) {
+          if (pairing_controller.state() == pairing::State::awaiting_confirmation) {
+            (void)pairing_controller.confirm(now);
+          } else {
+            pairing_controller.cancel();
+          }
+        }
+      }
+      pairing_controller.tick(now);
+    }
+
     app.tick(now);
     ota.tick(now);
+
+    const pairing::State current_pairing_state = pairing_controller.state();
+    if (pairing_controller.active()) {
+      display.show(UiState::ready, pairing_status(current_pairing_state));
+    } else if (previous_pairing_state != pairing::State::idle) {
+      const pairing::StopReason stopped = pairing_controller.last_stop_reason();
+      display.show(stopped == pairing::StopReason::success ? UiState::ready : UiState::error,
+                   stopped == pairing::StopReason::success ? "PAIRED" : "PAIR ENDED");
+      previous_pairing_stop = stopped;
+    }
+    previous_pairing_state = current_pairing_state;
+    (void)previous_pairing_stop;
+
     if (!readiness_committed && app.state() == UiState::ready) {
       if (provisioning_store.mark_ready()) {
         readiness_committed = true;

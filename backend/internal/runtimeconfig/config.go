@@ -57,6 +57,14 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("production profile cannot enable mock providers")
 	}
 
+	otaRequireSignature, err := strconv.ParseBool(env("OTA_REQUIRE_SIGNATURE", "false"))
+	if err != nil {
+		return Config{}, fmt.Errorf("OTA_REQUIRE_SIGNATURE must be boolean")
+	}
+	if profile == ProfileProduction && !otaRequireSignature {
+		return Config{}, fmt.Errorf("production profile requires OTA_REQUIRE_SIGNATURE=true")
+	}
+
 	return Config{
 		Profile:   profile,
 		AllowMock: allowMock,
