@@ -13,6 +13,7 @@ import (
 	"companion-server/internal/controlplane"
 	"companion-server/internal/domain"
 	"companion-server/internal/ownerauth"
+	"companion-server/internal/privacy"
 )
 
 //go:embed dashboard.html
@@ -111,6 +112,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleTriggerOTA(w, r)
 	case path == "data/device/config" && r.Method == http.MethodPost:
 		h.handleUpdateDeviceConfig(w, r)
+	case path == "data/privacy" && r.Method == http.MethodGet:
+		h.handleGetPrivacy(w, r)
+	case path == "data/privacy" && r.Method == http.MethodPost:
+		h.handleSetPrivacy(w, r)
 	default:
 		http.NotFound(w, r)
 	}
@@ -546,6 +551,45 @@ func (h *Handler) handleResumeTimer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"ok": true, "resumed": true, "id": req.ID})
+}
+
+func (h *Handler) handleGetPrivacy(w http.ResponseWriter, r *http.Request) {
+	userID := h.userID(r)
+	ctx := r.Context()
+	pol, ok, err := h.deps.Store.GetPrivacyPolicy(ctx, userID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !ok {
+		pol = privacy.Policy{
+			UserID:                    userID,
+			SaveVoiceAudio:            false,
+			VoiceMailPolicy:           "disabled",
+			LongTermMemoryEnabled:     false,
+			ConversationRetentionDays: 30,
+			VoiceMemoRetentionDays:    30,
+			MemoryRetentionDays:       90,
+		}
+	}
+	writeJSON(w, pol)
+}
+
+func (h *Handler) handleSetPrivacy(w http.ResponseWriter, r *http.Request) {
+	userID := h.userID(r)
+	ctx := r.Context()
+	var req privacy.Policy
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid privacy payload", http.StatusBadRequest)
+		return
+	}
+	req.UserID = userID
+	req.UpdatedAt = time.Now().UTC()
+	if err := h.deps.Store.SetPrivacyPolicy(ctx, req); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "privacy": req})
 }
 
 func (h *Handler) userID(r *http.Request) string {

@@ -234,6 +234,21 @@ func TestOwnerWebDataEndpoints(t *testing.T) {
 	if wExpRange.Code != http.StatusOK || !strings.Contains(wExpRange.Body.String(), "expenses") {
 		t.Fatalf("filter expenses range failed: %s", wExpRange.Body.String())
 	}
+
+	// Test Privacy Get & Set
+	reqGetPriv := httptest.NewRequest(http.MethodGet, "/v1/owner/data/privacy", nil)
+	wGetPriv := httptest.NewRecorder()
+	handler.ServeHTTP(wGetPriv, reqGetPriv)
+	if wGetPriv.Code != http.StatusOK || !strings.Contains(wGetPriv.Body.String(), "voice_mail_policy") {
+		t.Fatalf("get privacy failed: %s", wGetPriv.Body.String())
+	}
+
+	reqSetPriv := httptest.NewRequest(http.MethodPost, "/v1/owner/data/privacy", strings.NewReader(`{"save_voice_audio":true,"voice_mail_policy":"ephemeral","long_term_memory_enabled":true,"conversation_retention_days":14}`))
+	wSetPriv := httptest.NewRecorder()
+	handler.ServeHTTP(wSetPriv, reqSetPriv)
+	if wSetPriv.Code != http.StatusOK || !strings.Contains(wSetPriv.Body.String(), "ok") {
+		t.Fatalf("set privacy failed: %s", wSetPriv.Body.String())
+	}
 }
 
 

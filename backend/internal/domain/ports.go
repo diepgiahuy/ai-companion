@@ -3,6 +3,8 @@ package domain
 import (
 	"context"
 	"time"
+
+	"companion-server/internal/privacy"
 )
 
 type NoteQuery struct {
@@ -75,6 +77,11 @@ type DeviceRepository interface {
 	ListUserDevices(ctx context.Context, userID string) ([]DeviceItem, error)
 }
 
+type PrivacyRepository interface {
+	GetPrivacyPolicy(ctx context.Context, userID string) (privacy.Policy, bool, error)
+	SetPrivacyPolicy(ctx context.Context, p privacy.Policy) error
+}
+
 type ReadRepositories interface {
 	NoteRepository
 	ExpenseRepository
@@ -83,6 +90,7 @@ type ReadRepositories interface {
 	ScheduleRepository
 	VoiceMemoRepository
 	DeviceRepository
+	PrivacyRepository
 }
 
 type Repositories interface{ ReadRepositories }
