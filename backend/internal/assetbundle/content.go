@@ -79,6 +79,12 @@ func validateAssetContent(a Asset, data []byte, limits Limits) error {
 		if cfg.Width != a.Width || cfg.Height != a.Height || cfg.Width <= 0 || cfg.Height <= 0 || cfg.Width > limits.MaxImageWidth || cfg.Height > limits.MaxImageHeight {
 			return fmt.Errorf("%w: image dimensions invalid for %q", ErrInvalidBundle, a.Path)
 		}
+		// DecodeConfig only validates enough bytes to read image metadata. Decode the
+		// complete bounded image after checking dimensions so a signed/trusted manifest
+		// cannot smuggle a truncated or corrupt pixel stream to the later renderer.
+		if _, err := png.Decode(bytes.NewReader(data)); err != nil {
+			return fmt.Errorf("%w: corrupt PNG payload %q: %v", ErrInvalidBundle, a.Path, err)
+		}
 		if len(a.GlyphProfiles) > 0 {
 			return fmt.Errorf("%w: image cannot declare glyph profiles", ErrInvalidBundle)
 		}
