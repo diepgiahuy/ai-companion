@@ -14,6 +14,8 @@ import subprocess
 import sys
 from typing import Any
 
+from github_issue_status import derive_project_status
+
 OWNER = os.getenv("PROJECT_OWNER", "diepgiahuy")
 REPO = os.getenv("PROJECT_REPOSITORY", "diepgiahuy/ai-companion")
 TITLE = os.getenv("PROJECT_TITLE", "AI Companion — Production v1")
@@ -134,17 +136,8 @@ def open_blockers(number: int) -> list[int]:
     return [int(item["number"]) for item in items if item.get("state") != "closed"]
 
 
-def derive_status(issue: dict[str, Any]) -> str:
-    if issue.get("state") == "closed":
-        return "Done"
-    if open_blockers(int(issue["number"])):
-        return "Blocked"
-    labels = {label["name"] for label in issue.get("labels", [])}
-    if "status:in-progress" in labels:
-        return "In Progress"
-    if "status:ready" in labels:
-        return "Ready"
-    return "Backlog"
+def derive_status(issue: dict[str, Any]) -> tuple[str, str]:
+    return derive_project_status(issue, open_blockers(int(issue["number"])))
 
 
 def ensure_item(project_data: dict[str, Any], project_snapshot: dict[str, Any], issue: dict[str, Any]) -> str:
@@ -204,9 +197,9 @@ def sync_numbers(project_data: dict[str, Any], numbers: set[int], project_snapsh
         if "pull_request" in issue:
             continue
         item_id = ensure_item(project_data, snap, issue)
-        desired = derive_status(issue)
+        desired, reason = derive_status(issue)
         set_status(project_data["id"], item_id, field["id"], options[desired])
-        print(f"Synced issue #{number}: Status={desired}")
+        print(f"Synced issue #{number}: Status={desired} ({reason})")
 
 
 def list_issue_numbers(state: str) -> set[int]:
