@@ -27,11 +27,11 @@ public:
     uint64_t cancels{};
     uint64_t stale_controls{};
     uint64_t discarded_binary_packets{};
-    uint64_t config_reports{};
     uint64_t capability_advertisements{};
     uint64_t capability_calls{};
     uint64_t capability_results{};
     uint64_t capability_cancels{};
+    uint64_t settings_applies{};
     int capability_volume{-1};
   };
 
@@ -89,6 +89,8 @@ private:
   bool turn_active_{};
   bool tts_active_{};
   uint32_t playback_sample_rate_{24'000};
+  uint64_t settings_version_{};
+  DeviceSettings current_settings_{};
   std::vector<int16_t> upload_samples_;
   std::deque<int16_t> playback_samples_;
   std::vector<int16_t> voice_mail_samples_;
