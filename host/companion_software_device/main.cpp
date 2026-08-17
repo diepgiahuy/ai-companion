@@ -103,6 +103,8 @@ struct RecordingDisplay final : Display {
       return record.text.find(text) != std::string::npos;
     });
   }
+};
+
 struct DeviceFixture {
   FixtureMicrophone microphone;
   RecordingSpeaker speaker;
