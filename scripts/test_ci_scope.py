@@ -15,6 +15,7 @@ class CIScopeTests(unittest.TestCase):
         scope = ci_scope.classify("pull_request", ["backend/internal/domain/note.go"])
         self.assertTrue(scope.backend)
         self.assertFalse(scope.backend_full)
+        self.assertFalse(scope.software_device_compile)
         self.assertFalse(scope.codeql)
         self.assertFalse(scope.postgres)
         self.assertFalse(scope.protocol)
@@ -24,14 +25,24 @@ class CIScopeTests(unittest.TestCase):
         scope = ci_scope.classify("pull_request", ["backend/internal/pgstore/settings.go"])
         self.assertTrue(scope.backend)
         self.assertTrue(scope.postgres)
+        self.assertFalse(scope.software_device_compile)
         self.assertFalse(scope.tier1)
 
-    def test_firmware_protocol_change_compiles_without_tier1_by_default(self) -> None:
+    def test_firmware_protocol_change_compiles_software_device_without_full_tier1(self) -> None:
         scope = ci_scope.classify("pull_request", ["components/companion_app/src/app.cpp"])
         self.assertTrue(scope.host)
+        self.assertTrue(scope.software_device_compile)
         self.assertTrue(scope.protocol)
         self.assertFalse(scope.backend)
         self.assertFalse(scope.tier1)
+
+    def test_software_device_change_keeps_full_tier1_and_nearest_compile(self) -> None:
+        scope = ci_scope.classify(
+            "pull_request", ["host/companion_software_device/main.cpp"]
+        )
+        self.assertTrue(scope.host)
+        self.assertTrue(scope.software_device_compile)
+        self.assertTrue(scope.tier1)
 
     def test_backend_device_cross_boundary_selects_tier1(self) -> None:
         scope = ci_scope.classify(
@@ -43,6 +54,7 @@ class CIScopeTests(unittest.TestCase):
         )
         self.assertTrue(scope.backend)
         self.assertTrue(scope.host)
+        self.assertTrue(scope.software_device_compile)
         self.assertTrue(scope.protocol)
         self.assertTrue(scope.tier1)
         self.assertFalse(scope.backend_full)
@@ -51,11 +63,13 @@ class CIScopeTests(unittest.TestCase):
     def test_explicit_tier1_scenario_selects_tier1(self) -> None:
         scope = ci_scope.classify("pull_request", ["testdata/scenarios/config_reconnect.json"])
         self.assertTrue(scope.tier1)
+        self.assertFalse(scope.software_device_compile)
 
     def test_ci_control_pr_self_validates_broad_gate(self) -> None:
         scope = ci_scope.classify("pull_request", [".github/workflows/ci.yml"])
         self.assertEqual(scope.mode, "pr-ci-control")
         self.assertTrue(scope.host)
+        self.assertTrue(scope.software_device_compile)
         self.assertTrue(scope.backend)
         self.assertTrue(scope.backend_full)
         self.assertTrue(scope.codeql)
@@ -67,6 +81,7 @@ class CIScopeTests(unittest.TestCase):
     def test_unknown_pr_change_set_fails_safe_broad(self) -> None:
         scope = ci_scope.classify("pull_request", unknown_changes=True)
         self.assertEqual(scope.mode, "pr-fail-safe")
+        self.assertTrue(scope.software_device_compile)
         self.assertTrue(scope.backend_full)
         self.assertTrue(scope.codeql)
         self.assertTrue(scope.tier1)
@@ -76,6 +91,7 @@ class CIScopeTests(unittest.TestCase):
         scope = ci_scope.classify("push")
         self.assertEqual(scope.mode, "promotion")
         self.assertTrue(scope.promotion)
+        self.assertTrue(scope.software_device_compile)
         self.assertTrue(scope.backend_full)
         self.assertTrue(scope.codeql)
         self.assertTrue(scope.postgres)
@@ -89,6 +105,7 @@ class CIScopeTests(unittest.TestCase):
         scope = ci_scope.classify("schedule")
         self.assertEqual(scope.mode, "scheduled-security")
         self.assertTrue(scope.codeql)
+        self.assertFalse(scope.software_device_compile)
         self.assertFalse(scope.backend)
         self.assertFalse(scope.promotion)
 
