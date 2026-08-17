@@ -28,10 +28,14 @@ func TestCardV1RejectsUnboundedOrInvalidData(t *testing.T) {
 	}{
 		{name: "wrong version", card: CardV1{Version: 2, Kind: "text"}},
 		{name: "blank kind", card: CardV1{Version: 1, Kind: "   "}},
+		{name: "kind punctuation", card: CardV1{Version: 1, Kind: "text/card"}},
 		{name: "kind too long", card: CardV1{Version: 1, Kind: strings.Repeat("k", 33)}},
 		{name: "title too long", card: CardV1{Version: 1, Kind: "text", Title: strings.Repeat("t", 97)}},
 		{name: "primary too long", card: CardV1{Version: 1, Kind: "text", Primary: strings.Repeat("p", 193)}},
 		{name: "secondary too long", card: CardV1{Version: 1, Kind: "text", Secondary: strings.Repeat("s", 193)}},
+		{name: "invalid utf8", card: CardV1{Version: 1, Kind: "text", Primary: string([]byte{0xff})}},
+		{name: "control character", card: CardV1{Version: 1, Kind: "text", Primary: "line one\nline two"}},
+		{name: "nul character", card: CardV1{Version: 1, Kind: "text", Primary: "safe\x00truncated"}},
 		{name: "progress negative", card: CardV1{Version: 1, Kind: "progress", Progress: -1}},
 		{name: "progress over 100", card: CardV1{Version: 1, Kind: "progress", Progress: 101}},
 	}
