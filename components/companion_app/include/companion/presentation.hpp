@@ -163,7 +163,9 @@ public:
     out.surface = winner_is_attention ? PresentationModel::Surface::attention
                                       : PresentationModel::Surface::base;
     out.base_activity = base_.activity;
-    out.activity = winner->activity;
+    // Attention is an overlay over live runtime activity, not a snapshot of
+    // the activity that happened to be current when the overlay was created.
+    out.activity = base_.activity;
     out.domain = winner_domain;
     out.priority = winner->priority;
     out.scope = winner->scope;
