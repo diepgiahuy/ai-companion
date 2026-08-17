@@ -78,12 +78,19 @@ int main() {
     assert(reducer.apply(attention(PresentationDomain::confirmation, 1, "CONFIRM")));
     assert(reducer.model().domain == PresentationDomain::confirmation);
 
+    // Overlay ownership does not freeze the runtime activity underneath it.
+    assert(reducer.apply(base(PresentationActivity::error, 2, "ERROR")));
+    assert(reducer.model().domain == PresentationDomain::confirmation);
+    assert(reducer.model().base_activity == PresentationActivity::error);
+    assert(reducer.model().activity == PresentationActivity::error);
+
     assert(reducer.apply(clear(PresentationDomain::confirmation, 1)));
     assert(reducer.model().domain == PresentationDomain::pairing);
     assert(reducer.apply(clear(PresentationDomain::pairing, 1)));
     assert(reducer.model().domain == PresentationDomain::alarm);
     assert(reducer.apply(clear(PresentationDomain::alarm, 1)));
     assert(reducer.model().surface == PresentationModel::Surface::base);
+    assert(reducer.model().activity == PresentationActivity::error);
   }
 
   {
