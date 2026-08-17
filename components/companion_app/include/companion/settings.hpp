@@ -58,7 +58,9 @@ struct DeviceSettings {
     if (alarm_tone_ms > 0 && (alarm_tone_hz < 50 || alarm_tone_hz > 5000)) {
       return false;
     }
-    if (alarm_tone_amplitude < 0 || alarm_tone_amplitude > 32767) {
+    // alarm_tone_amplitude is int16_t, so INT16_MAX is guaranteed by the type.
+    // Reject the only invalid range that can still be represented.
+    if (alarm_tone_amplitude < 0) {
       return false;
     }
     if (wake_model[0] == '\0') {
