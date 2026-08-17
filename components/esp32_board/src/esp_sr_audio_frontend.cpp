@@ -67,6 +67,16 @@ struct EspSrAudioFrontend::Impl {
   SampleRing references{reference_storage.data(), reference_storage.size()};
   SampleRing output{output_storage.data(), output_storage.size()};
 
+  void clear_pipeline_state() {
+    microphone_count = 0;
+    references.clear();
+    output.clear();
+    last_vad_speech = false;
+    if (handle != nullptr && data != nullptr && handle->reset_buffer != nullptr) {
+      (void)handle->reset_buffer(data);
+    }
+  }
+
   void destroy() {
     if (handle != nullptr && data != nullptr) {
       handle->destroy(data);
@@ -182,20 +192,17 @@ bool EspSrAudioFrontend::start() {
 
 void EspSrAudioFrontend::reset() {
   if (impl_ == nullptr) return;
-  impl_->microphone_count = 0;
-  impl_->references.clear();
-  impl_->output.clear();
-  impl_->last_vad_speech = false;
+  impl_->clear_pipeline_state();
   impl_->reference_active = false;
   impl_->reference_epoch = 0;
-  if (impl_->handle != nullptr && impl_->data != nullptr && impl_->handle->reset_buffer != nullptr) {
-    (void)impl_->handle->reset_buffer(impl_->data);
-  }
 }
 
 bool EspSrAudioFrontend::begin_playback_reference(uint64_t epoch) {
   if (impl_ == nullptr || impl_->data == nullptr || epoch == 0) return false;
-  impl_->references.clear();
+  // A playback reference epoch is also an AFE buffering epoch. Clear local
+  // staging and ESP-SR's internal feed/fetch buffers so pre-TTS audio/output
+  // cannot leak into the first monitored full-duplex chunk.
+  impl_->clear_pipeline_state();
   impl_->reference_epoch = epoch;
   impl_->reference_active = true;
   return true;
@@ -203,7 +210,10 @@ bool EspSrAudioFrontend::begin_playback_reference(uint64_t epoch) {
 
 void EspSrAudioFrontend::end_playback_reference(uint64_t epoch) {
   if (impl_ == nullptr || !impl_->reference_active || epoch != impl_->reference_epoch) return;
-  impl_->references.clear();
+  // Cancel/drain is a hard epoch boundary too: drop queued reference, staged
+  // microphone/output and vendor internal AFE buffers before later capture can
+  // be interpreted as a new turn.
+  impl_->clear_pipeline_state();
   impl_->reference_active = false;
   impl_->reference_epoch = 0;
 }
