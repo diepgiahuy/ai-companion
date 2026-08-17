@@ -1,5 +1,5 @@
 {"version":2,"type":"session.hello","message_id":"golden","payload":{"transport":"websocket","audio_params":{"format":"opus","sample_rate":16000,"channels":1,"frame_duration":60}}}
-{"version":2,"type":"session.ready","message_id":"golden","payload":{"transport":"websocket","audio_params":{"format":"opus","sample_rate":24000,"channels":1,"frame_duration":60},"config_version":0}}
+{"version":2,"type":"session.ready","message_id":"golden","payload":{"transport":"websocket","audio_params":{"format":"opus","sample_rate":24000,"channels":1,"frame_duration":60}}}
 {"version":2,"type":"session.ping","message_id":"golden","payload":{}}
 {"version":2,"type":"session.pong","message_id":"golden","payload":{}}
 {"version":2,"type":"turn.listen","message_id":"golden","payload":{"state":"start","mode":"manual"}}
