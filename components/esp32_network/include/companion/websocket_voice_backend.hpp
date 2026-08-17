@@ -1,6 +1,7 @@
 #pragma once
 
 #include "companion/app.hpp"
+#include "companion/capability_dispatch.hpp"
 #include "companion/wire_protocol.hpp"
 
 #include <array>
