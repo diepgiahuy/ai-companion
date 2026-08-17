@@ -62,11 +62,7 @@ struct PresentationCounters {
 };
 
 struct PresentationEvent {
-  enum class Kind : uint8_t {
-    base,
-    attention,
-    clear_attention,
-  };
+  enum class Kind : uint8_t { base, attention, clear_attention };
 
   Kind kind{Kind::base};
   PresentationActivity activity{PresentationActivity::booting};
@@ -79,10 +75,7 @@ struct PresentationEvent {
 };
 
 struct PresentationModel {
-  enum class Surface : uint8_t {
-    base,
-    attention,
-  };
+  enum class Surface : uint8_t { base, attention };
 
   Surface surface{Surface::base};
   PresentationActivity base_activity{PresentationActivity::booting};
@@ -135,7 +128,6 @@ public:
       ++counters_.stale_drops;
       return false;
     }
-
     switch (event.kind) {
     case PresentationEvent::Kind::base:
       return apply_base(event);
@@ -152,18 +144,17 @@ public:
     PresentationDomain winner_domain = PresentationDomain::card;
     bool winner_is_attention = false;
 
-    for (size_t i = 0; i < attention_.size(); ++i) {
-      const Candidate& candidate = attention_[i];
+    for (size_t index = 0; index < attention_.size(); ++index) {
+      const Candidate& candidate = attention_[index];
       if (!candidate.active) continue;
-      if (static_cast<uint8_t>(candidate.priority) <
-          static_cast<uint8_t>(winner->priority)) {
+      const auto domain = static_cast<PresentationDomain>(index);
+      const auto candidate_priority = static_cast<uint8_t>(candidate.priority);
+      const auto winner_priority = static_cast<uint8_t>(winner->priority);
+      if (candidate_priority < winner_priority ||
+          (candidate_priority == winner_priority &&
+           (!winner_is_attention || domain_order(domain) < domain_order(winner_domain)))) {
         winner = &candidate;
-        winner_domain = static_cast<PresentationDomain>(i);
-        winner_is_attention = true;
-      } else if (candidate.priority == winner->priority &&
-                 (!winner_is_attention || candidate.revision > winner->revision)) {
-        winner = &candidate;
-        winner_domain = static_cast<PresentationDomain>(i);
+        winner_domain = domain;
         winner_is_attention = true;
       }
     }
@@ -233,6 +224,7 @@ public:
 private:
   struct Candidate {
     bool active{};
+    bool revision_seen{};
     PresentationActivity activity{PresentationActivity::booting};
     PresentationPriority priority{PresentationPriority::p7_idle};
     PresentationScope scope{PresentationScope::global};
@@ -244,6 +236,32 @@ private:
 
   static constexpr size_t domain_index(PresentationDomain domain) {
     return static_cast<size_t>(domain);
+  }
+
+  static constexpr uint8_t domain_order(PresentationDomain domain) {
+    switch (domain) {
+    case PresentationDomain::privacy:
+      return 0;
+    case PresentationDomain::confirmation:
+      return 1;
+    case PresentationDomain::ota:
+      return 2;
+    case PresentationDomain::pairing:
+      return 3;
+    case PresentationDomain::alarm:
+      return 4;
+    case PresentationDomain::reminder:
+      return 5;
+    case PresentationDomain::voice_mail:
+      return 6;
+    case PresentationDomain::degraded:
+      return 7;
+    case PresentationDomain::card:
+      return 8;
+    case PresentationDomain::count:
+      return 9;
+    }
+    return 9;
   }
 
   bool scope_current(PresentationScope scope, uint64_t session_epoch,
@@ -262,6 +280,7 @@ private:
   bool apply_base(const PresentationEvent& event) {
     if (!accept_revision(base_, event.revision, event.text)) return false;
     base_.active = true;
+    base_.revision_seen = true;
     base_.activity = event.activity;
     base_.priority = priority_for(event.activity);
     base_.scope = event.scope;
@@ -278,6 +297,7 @@ private:
     if (!accept_revision(slot, event.revision, event.text)) return false;
     if (slot.active) ++counters_.coalesced_updates;
     slot.active = true;
+    slot.revision_seen = true;
     slot.activity = base_.activity;
     slot.priority = priority_for(event.domain);
     slot.scope = event.scope;
@@ -295,7 +315,7 @@ private:
       ++counters_.duplicate_drops;
       return false;
     }
-    if (event.revision < slot.revision) {
+    if (slot.revision_seen && event.revision < slot.revision) {
       ++counters_.stale_drops;
       return false;
     }
@@ -305,7 +325,7 @@ private:
 
   bool accept_revision(const Candidate& current, uint64_t revision,
                        std::string_view text) {
-    if (!current.active) return true;
+    if (!current.revision_seen) return true;
     if (revision < current.revision) {
       ++counters_.stale_drops;
       return false;
