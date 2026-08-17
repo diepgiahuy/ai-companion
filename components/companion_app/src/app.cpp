@@ -230,7 +230,8 @@ void CompanionApp::process_backend_event(const BackendEvent& event,
     (void)display_.show_agent_status(state_, event.payload.agent_status);
     break;
   case BackendEventType::settings: {
-    (void)apply_settings(event.payload.settings);
+    const bool applied = apply_settings(event.payload.settings);
+    (void)backend_.report_settings_apply(event.payload.settings, applied);
     break;
   }
   case BackendEventType::voice_mail_available:
