@@ -311,6 +311,60 @@ bool json_integer_equals(const cJSON* value, int expected) {
          value->valueint == expected;
 }
 
+bool optional_json_string(const cJSON* object, const char* key,
+                          std::string_view& output) {
+  const cJSON* value = cJSON_GetObjectItemCaseSensitive(object, key);
+  if (value == nullptr) {
+    output = {};
+    return true;
+  }
+  if (!cJSON_IsString(value) || value->valuestring == nullptr) return false;
+  output = value->valuestring;
+  return true;
+}
+
+bool parse_presentation_card(const cJSON* payload, PresentationCardV1& output) {
+  const cJSON* ui = json_object(payload, "ui");
+  if (ui == nullptr ||
+      !has_only_fields(ui, {"version", "kind", "title", "primary",
+                            "secondary", "progress"}) ||
+      !json_integer_equals(cJSON_GetObjectItemCaseSensitive(ui, "version"),
+                           kPresentationCardVersion)) {
+    return false;
+  }
+  const cJSON* kind = cJSON_GetObjectItemCaseSensitive(ui, "kind");
+  if (!cJSON_IsString(kind) || kind->valuestring == nullptr) return false;
+  std::string_view title;
+  std::string_view primary;
+  std::string_view secondary;
+  if (!optional_json_string(ui, "title", title) ||
+      !optional_json_string(ui, "primary", primary) ||
+      !optional_json_string(ui, "secondary", secondary)) {
+    return false;
+  }
+  uint32_t progress = 0;
+  const cJSON* progress_item = cJSON_GetObjectItemCaseSensitive(ui, "progress");
+  if (progress_item != nullptr && !parse_uint32(progress_item, progress)) return false;
+  return progress <= 100 &&
+         output.assign(kPresentationCardVersion, kind->valuestring, title, primary,
+                       secondary, static_cast<int>(progress));
+}
+
+bool parse_presentation_hint(const cJSON* payload, PresentationHint& output) {
+  const cJSON* emotion = cJSON_GetObjectItemCaseSensitive(payload, "emotion");
+  if (!cJSON_IsString(emotion) || emotion->valuestring == nullptr) return false;
+  std::string_view tool_name;
+  if (!optional_json_string(payload, "tool_name", tool_name)) return false;
+  return output.assign(emotion->valuestring, tool_name);
+}
+
+bool parse_agent_presentation_status(const cJSON* payload,
+                                     AgentPresentationStatus& output) {
+  const cJSON* state = cJSON_GetObjectItemCaseSensitive(payload, "state");
+  return cJSON_IsString(state) && state->valuestring != nullptr &&
+         output.assign(state->valuestring);
+}
+
 bool payload_fields_valid(protocol::ControlType type, const cJSON* payload) {
   using protocol::ControlType;
   switch (type) {
@@ -396,18 +450,17 @@ bool payload_semantics_valid(protocol::ControlType type, const cJSON* payload) {
     if (state == "start" || state == "stop") return text.empty();
     return (state == "sentence_start" || state == "sentence_end") && !text.empty();
   }
-  case ControlType::agent_status:
-    return bounded_nonempty_string(payload, "state", 64);
-  case ControlType::ui_card:
-    return json_object(payload, "ui") != nullptr;
+  case ControlType::agent_status: {
+    AgentPresentationStatus ignored{};
+    return parse_agent_presentation_status(payload, ignored);
+  }
+  case ControlType::ui_card: {
+    PresentationCardV1 ignored{};
+    return parse_presentation_card(payload, ignored);
+  }
   case ControlType::ui_state: {
-    const std::string_view emotion = json_string(payload, "emotion");
-    if (!string_in(emotion, {"idle", "listening", "thinking", "speaking", "tool_executing", "interrupted", "error"})) return false;
-    const cJSON* tool_item = cJSON_GetObjectItemCaseSensitive(payload, "tool_name");
-    const std::string_view tool_name = json_string(payload, "tool_name");
-    if (emotion == "tool_executing") return !tool_name.empty();
-    return tool_item == nullptr ||
-           (cJSON_IsString(tool_item) && tool_item->valuestring != nullptr && tool_name.empty());
+    PresentationHint ignored{};
+    return parse_presentation_hint(payload, ignored);
   }
   case ControlType::alarm_fired:
     return bounded_nonempty_string(payload, "alarm_id", 128) &&
@@ -1287,6 +1340,19 @@ void WebSocketVoiceBackend::handle_text(std::string_view json) {
     cJSON_Delete(root);
     return;
   }
+  const bool presentation_control =
+      type == protocol::ControlType::ui_card ||
+      type == protocol::ControlType::ui_state ||
+      type == protocol::ControlType::agent_status;
+  if (presentation_control &&
+      presentation_ingress::contains_unsupported_json_nul(json)) {
+    enqueue_protocol_error(
+        "invalid_envelope",
+        "presentation control contains an unsupported zero character");
+    enqueue_event(BackendEventType::error, "INVALID PRESENTATION CONTROL");
+    cJSON_Delete(root);
+    return;
+  }
   if (!payload_fields_valid(type, payload)) {
     enqueue_protocol_error("invalid_envelope", "control payload has unknown fields");
     enqueue_event(BackendEventType::error, "UNKNOWN CONTROL PAYLOAD FIELD");
@@ -1355,7 +1421,7 @@ void WebSocketVoiceBackend::handle_text(std::string_view json) {
       (type == protocol::ControlType::protocol_error && !incoming_turn_id.empty())) {
     if (!active_turn_matches(incoming_turn_id)) {
       cJSON_Delete(root);
-      return; // A delayed terminal/control from an older turn is harmless.
+      return;
     }
   }
 
@@ -1513,14 +1579,15 @@ void WebSocketVoiceBackend::handle_text(std::string_view json) {
   } else if (type == protocol::ControlType::schedule_updated) {
     enqueue_event(BackendEventType::schedule, json_string(payload, "message"));
   } else if (type == protocol::ControlType::ui_card) {
-    const cJSON* ui = cJSON_GetObjectItemCaseSensitive(payload, "ui");
-    if (cJSON_IsObject(ui)) {
-      enqueue_event(BackendEventType::ui_card, json_string(ui, "primary"));
-    }
+    PresentationCardV1 card{};
+    if (parse_presentation_card(payload, card)) enqueue_card_event(card);
   } else if (type == protocol::ControlType::ui_state) {
-    enqueue_event(BackendEventType::ui_card, json_string(payload, "emotion"));
+    PresentationHint hint{};
+    if (parse_presentation_hint(payload, hint)) enqueue_hint_event(hint);
   } else if (type == protocol::ControlType::agent_status) {
-    enqueue_event(BackendEventType::ui_card, json_string(payload, "state"));
+    AgentPresentationStatus status{};
+    if (parse_agent_presentation_status(payload, status))
+      enqueue_agent_status_event(status);
   } else if (type == protocol::ControlType::turn_state) {
     if (json_string(payload, "state") == "interrupted" &&
         deactivate_matching_turn(incoming_turn_id)) {
@@ -1529,7 +1596,6 @@ void WebSocketVoiceBackend::handle_text(std::string_view json) {
   } else if (type == protocol::ControlType::session_ping) {
     enqueue_pong(message_id);
   } else if (type == protocol::ControlType::session_pong) {
-    // No state transition is associated with a pong.
   } else if (type == protocol::ControlType::turn_abort) {
     if (deactivate_matching_turn(incoming_turn_id)) reset_turn_queues();
   } else if (type == protocol::ControlType::protocol_error) {
@@ -1733,10 +1799,32 @@ bool WebSocketVoiceBackend::enqueue_event(BackendEventType type,
   return xQueueSend(event_queue_, &event, 0) == pdPASS;
 }
 
+bool WebSocketVoiceBackend::enqueue_card_event(const PresentationCardV1& card) {
+  BackendEvent event{};
+  event.type = BackendEventType::presentation_card;
+  event.set_card(card);
+  return xQueueSend(event_queue_, &event, 0) == pdPASS;
+}
+
+bool WebSocketVoiceBackend::enqueue_hint_event(const PresentationHint& hint) {
+  BackendEvent event{};
+  event.type = BackendEventType::presentation_hint;
+  event.set_hint(hint);
+  return xQueueSend(event_queue_, &event, 0) == pdPASS;
+}
+
+bool WebSocketVoiceBackend::enqueue_agent_status_event(
+    const AgentPresentationStatus& status) {
+  BackendEvent event{};
+  event.type = BackendEventType::agent_status;
+  event.set_agent_status(status);
+  return xQueueSend(event_queue_, &event, 0) == pdPASS;
+}
+
 bool WebSocketVoiceBackend::enqueue_config_event(const RuntimeConfigPatch& config) {
   BackendEvent event{};
   event.type = BackendEventType::config;
-  event.config = config;
+  event.set_config(config);
   return xQueueSend(event_queue_, &event, 0) == pdPASS;
 }
 
@@ -1744,7 +1832,7 @@ bool WebSocketVoiceBackend::enqueue_voice_mail_event(
     BackendEventType type, const VoiceMailMetadata& item, std::string_view text) {
   BackendEvent event{};
   event.type = type;
-  event.voice_mail = item;
+  event.set_voice_mail(item);
   event.set_text(text);
   return xQueueSend(event_queue_, &event, 0) == pdPASS;
 }

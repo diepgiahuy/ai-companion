@@ -217,11 +217,17 @@ void CompanionApp::process_backend_event(const BackendEvent& event,
     set_upcoming(event.text_view());
     if (state_ == UiState::idle) render_idle(now_ms);
     break;
-  case BackendEventType::ui_card:
-    display_.show(state_, event.text_view());
+  case BackendEventType::presentation_card:
+    (void)display_.show_card(state_, event.payload.card);
+    break;
+  case BackendEventType::presentation_hint:
+    (void)display_.show_hint(state_, event.payload.hint);
+    break;
+  case BackendEventType::agent_status:
+    (void)display_.show_agent_status(state_, event.payload.agent_status);
     break;
   case BackendEventType::config: {
-    const auto& c = event.config;
+    const auto& c = event.payload.config;
     if (c.version <= runtime_config_version_) break;
     const bool valid = c.vad_threshold >= 1 && c.vad_threshold <= 65'535 &&
                        c.vad_silence_ms >= 100 && c.vad_silence_ms <= 5'000 &&
@@ -242,19 +248,19 @@ void CompanionApp::process_backend_event(const BackendEvent& event,
     break;
   }
   case BackendEventType::voice_mail_available:
-    if (!event.voice_mail.valid()) break;
-    if (voice_mail_result_pending_ && current_voice_mail_matches(event.voice_mail)) {
+    if (!event.payload.voice_mail.valid()) break;
+    if (voice_mail_result_pending_ && current_voice_mail_matches(event.payload.voice_mail)) {
       voice_mail_result_pending_ = false;
       voice_mail_stream_finished_ = false;
       enter_voice_mail_waiting();
-    } else if (enqueue_voice_mail(event.voice_mail) &&
+    } else if (enqueue_voice_mail(event.payload.voice_mail) &&
                (state_ == UiState::ready || state_ == UiState::idle)) {
       enter_voice_mail_waiting();
     }
     break;
   case BackendEventType::voice_mail_playback_ready:
     if (state_ != UiState::voice_mail_claiming || voice_mail_result_pending_ ||
-        !current_voice_mail_matches(event.voice_mail)) {
+        !current_voice_mail_matches(event.payload.voice_mail)) {
       break;
     }
     playback_count_ = playback_offset_ = 0;
@@ -268,20 +274,20 @@ void CompanionApp::process_backend_event(const BackendEvent& event,
     display_.show(state_, "PLAYING VOICE MAIL");
     break;
   case BackendEventType::voice_mail_playback_finished:
-    if (current_voice_mail_matches(event.voice_mail)) {
+    if (current_voice_mail_matches(event.payload.voice_mail)) {
       voice_mail_stream_finished_ = true;
     }
     break;
   case BackendEventType::voice_mail_consumed:
-    if (!current_voice_mail_matches(event.voice_mail)) break;
-    remove_voice_mail(event.voice_mail.voice_mail_id_view());
+    if (!current_voice_mail_matches(event.payload.voice_mail)) break;
+    remove_voice_mail(event.payload.voice_mail.voice_mail_id_view());
     voice_mail_result_pending_ = false;
     voice_mail_stream_finished_ = false;
     enter_ready(now_ms);
     break;
   case BackendEventType::voice_mail_expired: {
-    const bool current = current_voice_mail_matches(event.voice_mail);
-    if (!remove_voice_mail(event.voice_mail.voice_mail_id_view())) break;
+    const bool current = current_voice_mail_matches(event.payload.voice_mail);
+    if (!remove_voice_mail(event.payload.voice_mail.voice_mail_id_view())) break;
     if (current) {
       audio_.stop_playback();
       playback_count_ = playback_offset_ = 0;
@@ -296,7 +302,7 @@ void CompanionApp::process_backend_event(const BackendEvent& event,
     break;
   }
   case BackendEventType::voice_mail_failed:
-    if (current_voice_mail_matches(event.voice_mail)) {
+    if (current_voice_mail_matches(event.payload.voice_mail)) {
       fail_voice_mail(now_ms, "backend_failure",
                       event.text_view().empty() ? "VOICE MAIL RETRY" : event.text_view());
     }

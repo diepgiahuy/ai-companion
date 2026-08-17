@@ -182,5 +182,69 @@ int main() {
     assert(sink.text() == "PAIR CURRENT");
   }
 
+  {
+    RecordingDisplay sink;
+    PresentationDisplay display(sink);
+    display.show(UiState::idle, "IDLE");
+    PresentationCardV1 card{};
+    assert(card.assign(1, "expense_summary", "THIS WEEK", "1,250,000 VND",
+                       "UNDER BUDGET", 42));
+    assert(display.show_card(UiState::idle, card));
+    assert(display.model().domain == PresentationDomain::card);
+    assert(sink.state() == UiState::idle);
+    assert(sink.text() == "1,250,000 VND");
+
+    // The local runtime remains authoritative; its next base render retires the
+    // informational card rather than creating a permanent second UI path.
+    display.show(UiState::ready, "PRESS TO TALK");
+    assert(display.model().surface == PresentationModel::Surface::base);
+    assert(sink.state() == UiState::ready);
+    assert(sink.text() == "PRESS TO TALK");
+  }
+
+  {
+    RecordingDisplay sink;
+    PresentationDisplay display(sink);
+    display.show(UiState::processing, "PROCESSING");
+
+    PresentationHint hint{};
+    assert(hint.assign("thinking", {}));
+    assert(display.show_hint(UiState::processing, hint));
+    assert(sink.state() == UiState::processing);
+    assert(sink.text() == "THINKING");
+    assert(display.model().activity == PresentationActivity::thinking);
+
+    assert(hint.assign("speaking", {}));
+    assert(!display.show_hint(UiState::processing, hint));
+    assert(sink.state() == UiState::processing);
+    assert(sink.text() == "THINKING");
+
+    assert(hint.assign("tool_executing", "query_expenses"));
+    assert(display.show_hint(UiState::processing, hint));
+    assert(sink.state() == UiState::processing);
+    assert(sink.text() == "query_expenses");
+
+    // Backend error/interrupted hints never replace local failure/lifecycle truth.
+    assert(hint.assign("error", {}));
+    assert(!display.show_hint(UiState::processing, hint));
+    assert(sink.state() == UiState::processing);
+  }
+
+  {
+    RecordingDisplay sink;
+    PresentationDisplay display(sink);
+    display.show(UiState::processing, "PROCESSING");
+    AgentPresentationStatus status{};
+    assert(status.assign("retrieving memory"));
+    assert(display.show_agent_status(UiState::processing, status));
+    assert(sink.state() == UiState::processing);
+    assert(sink.text() == "retrieving memory");
+
+    display.show(UiState::ready, "READY");
+    assert(!display.show_agent_status(UiState::ready, status));
+    assert(sink.state() == UiState::ready);
+    assert(sink.text() == "READY");
+  }
+
   return 0;
 }

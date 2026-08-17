@@ -108,7 +108,7 @@ bool MockVoiceBackend::inject_config(const RuntimeConfigPatch& config) {
   if (event_count_ == event_capacity_) return false;
   BackendEvent event{};
   event.type = BackendEventType::config;
-  event.config = config;
+  event.set_config(config);
   events_[event_tail_] = event;
   event_tail_ = (event_tail_ + 1) % event_capacity_;
   ++event_count_;
@@ -120,7 +120,7 @@ bool MockVoiceBackend::inject_voice_mail(const VoiceMailMetadata& item,
   if (event_count_ == event_capacity_) return false;
   BackendEvent event{};
   event.type = type;
-  event.voice_mail = item;
+  event.set_voice_mail(item);
   events_[event_tail_] = event;
   event_tail_ = (event_tail_ + 1) % event_capacity_;
   ++event_count_;

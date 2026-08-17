@@ -1,13 +1,16 @@
 #pragma once
 
 #include "companion/audio_frontend.hpp"
+#include "companion/presentation_ingress.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <new>
 #include <span>
 #include <string_view>
+#include <type_traits>
 
 namespace companion {
 
@@ -54,7 +57,9 @@ enum class BackendEventType : uint8_t {
   tts_finished,
   alarm,
   schedule,
-  ui_card,
+  presentation_card,
+  presentation_hint,
+  agent_status,
   config,
   voice_mail_available,
   voice_mail_playback_ready,
@@ -84,11 +89,23 @@ struct VoiceMailMetadata {
   bool valid() const;
 };
 
+// FreeRTOS queues byte-copy BackendEvent values. Keep the payload tagged by
+// BackendEventType and union-backed so typed presentation data does not multiply
+// the queue's static DRAM footprint. Every member is trivially copyable.
+union BackendEventPayload {
+  RuntimeConfigPatch config;
+  VoiceMailMetadata voice_mail;
+  PresentationCardV1 card;
+  PresentationHint hint;
+  AgentPresentationStatus agent_status;
+
+  constexpr BackendEventPayload() : config{} {}
+};
+
 struct BackendEvent {
   BackendEventType type{BackendEventType::error};
   std::array<char, 96> text{};
-  RuntimeConfigPatch config{};
-  VoiceMailMetadata voice_mail{};
+  BackendEventPayload payload{};
 
   void set_text(std::string_view value) {
     text.fill('\0');
@@ -100,7 +117,30 @@ struct BackendEvent {
     const auto end = std::find(text.begin(), text.end(), '\0');
     return {text.data(), static_cast<size_t>(end - text.begin())};
   }
+
+  void set_config(const RuntimeConfigPatch& value) {
+    new (&payload.config) RuntimeConfigPatch(value);
+  }
+  void set_voice_mail(const VoiceMailMetadata& value) {
+    new (&payload.voice_mail) VoiceMailMetadata(value);
+  }
+  void set_card(const PresentationCardV1& value) {
+    new (&payload.card) PresentationCardV1(value);
+  }
+  void set_hint(const PresentationHint& value) {
+    new (&payload.hint) PresentationHint(value);
+  }
+  void set_agent_status(const AgentPresentationStatus& value) {
+    new (&payload.agent_status) AgentPresentationStatus(value);
+  }
 };
+
+static_assert(std::is_trivially_copyable_v<RuntimeConfigPatch>);
+static_assert(std::is_trivially_copyable_v<VoiceMailMetadata>);
+static_assert(std::is_trivially_copyable_v<PresentationCardV1>);
+static_assert(std::is_trivially_copyable_v<PresentationHint>);
+static_assert(std::is_trivially_copyable_v<AgentPresentationStatus>);
+static_assert(std::is_trivially_copyable_v<BackendEvent>);
 
 // Board-facing capture port. Only AudioRuntime should compose this into the
 // product runtime; CompanionApp must not own physical audio adapters directly.
@@ -149,6 +189,11 @@ class Display {
 public:
   virtual ~Display() = default;
   virtual void show(UiState state, std::string_view text) = 0;
+  virtual bool show_card(UiState, const PresentationCardV1&) { return false; }
+  virtual bool show_hint(UiState, const PresentationHint&) { return false; }
+  virtual bool show_agent_status(UiState, const AgentPresentationStatus&) {
+    return false;
+  }
 };
 
 class Button {

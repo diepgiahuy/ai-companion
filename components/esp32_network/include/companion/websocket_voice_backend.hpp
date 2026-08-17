@@ -272,6 +272,9 @@ private:
   bool decode_and_enqueue(const OpusPacket& packet, uint64_t media_generation);
   bool enqueue_audio(const OpusPacket& frame, uint64_t media_generation);
   bool enqueue_event(BackendEventType type, std::string_view text = {});
+  bool enqueue_card_event(const PresentationCardV1& card);
+  bool enqueue_hint_event(const PresentationHint& hint);
+  bool enqueue_agent_status_event(const AgentPresentationStatus& status);
   bool enqueue_config_event(const RuntimeConfigPatch& config);
   bool enqueue_voice_mail_event(BackendEventType type,
                                 const VoiceMailMetadata& item,

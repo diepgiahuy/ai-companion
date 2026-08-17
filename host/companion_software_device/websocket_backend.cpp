@@ -21,6 +21,7 @@
 #include <cstring>
 #include <ctime>
 #include <iomanip>
+#include <initializer_list>
 #include <iostream>
 #include <limits>
 #include <sstream>
@@ -90,6 +91,80 @@ RuntimeConfigPatch parse_config(const json& payload) {
 std::string json_string(const json& object, const char* key) {
   const auto it = object.find(key);
   return it != object.end() && it->is_string() ? it->get<std::string>() : std::string{};
+}
+
+bool has_only_fields(const json& object,
+                     std::initializer_list<std::string_view> allowed) {
+  if (!object.is_object()) return false;
+  for (const auto& [key, value] : object.items()) {
+    (void)value;
+    if (std::find(allowed.begin(), allowed.end(), std::string_view(key)) ==
+        allowed.end()) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool optional_json_string(const json& object, const char* key, std::string& output) {
+  const auto it = object.find(key);
+  if (it == object.end()) {
+    output.clear();
+    return true;
+  }
+  if (!it->is_string()) return false;
+  output = it->get<std::string>();
+  return true;
+}
+
+bool parse_presentation_card(const json& payload, PresentationCardV1& output) {
+  const auto ui_it = payload.find("ui");
+  if (ui_it == payload.end() || !ui_it->is_object()) return false;
+  const json& ui = *ui_it;
+  if (!has_only_fields(ui, {"version", "kind", "title", "primary", "secondary",
+                            "progress"})) {
+    return false;
+  }
+  const auto version = ui.find("version");
+  const auto kind = ui.find("kind");
+  if (version == ui.end() || !version->is_number_integer() || version->get<int64_t>() != 1 ||
+      kind == ui.end() || !kind->is_string()) {
+    return false;
+  }
+  std::string title;
+  std::string primary;
+  std::string secondary;
+  if (!optional_json_string(ui, "title", title) ||
+      !optional_json_string(ui, "primary", primary) ||
+      !optional_json_string(ui, "secondary", secondary)) {
+    return false;
+  }
+  int64_t progress = 0;
+  const auto progress_it = ui.find("progress");
+  if (progress_it != ui.end()) {
+    if (!progress_it->is_number_integer()) return false;
+    progress = progress_it->get<int64_t>();
+  }
+  if (progress < 0 || progress > 100) return false;
+  return output.assign(1, kind->get<std::string>(), title, primary, secondary,
+                       static_cast<int>(progress));
+}
+
+bool parse_presentation_hint(const json& payload, PresentationHint& output) {
+  if (!has_only_fields(payload, {"emotion", "tool_name"})) return false;
+  const auto emotion = payload.find("emotion");
+  if (emotion == payload.end() || !emotion->is_string()) return false;
+  std::string tool_name;
+  if (!optional_json_string(payload, "tool_name", tool_name)) return false;
+  return output.assign(emotion->get<std::string>(), tool_name);
+}
+
+bool parse_agent_presentation_status(const json& payload,
+                                     AgentPresentationStatus& output) {
+  if (!has_only_fields(payload, {"state"})) return false;
+  const auto state = payload.find("state");
+  return state != payload.end() && state->is_string() &&
+         output.assign(state->get<std::string>());
 }
 
 std::string rfc3339_now() {
@@ -725,6 +800,34 @@ void WebSocketVoiceBackend::enqueue_event(BackendEventType type, std::string_vie
   events_.push_back(event);
 }
 
+void WebSocketVoiceBackend::enqueue_card_event(const PresentationCardV1& card) {
+  std::lock_guard lock(state_mutex_);
+  if (events_.size() == kMaximumEvents) events_.pop_front();
+  BackendEvent event{};
+  event.type = BackendEventType::presentation_card;
+  event.set_card(card);
+  events_.push_back(event);
+}
+
+void WebSocketVoiceBackend::enqueue_hint_event(const PresentationHint& hint) {
+  std::lock_guard lock(state_mutex_);
+  if (events_.size() == kMaximumEvents) events_.pop_front();
+  BackendEvent event{};
+  event.type = BackendEventType::presentation_hint;
+  event.set_hint(hint);
+  events_.push_back(event);
+}
+
+void WebSocketVoiceBackend::enqueue_agent_status_event(
+    const AgentPresentationStatus& status) {
+  std::lock_guard lock(state_mutex_);
+  if (events_.size() == kMaximumEvents) events_.pop_front();
+  BackendEvent event{};
+  event.type = BackendEventType::agent_status;
+  event.set_agent_status(status);
+  events_.push_back(event);
+}
+
 void WebSocketVoiceBackend::enqueue_voice_mail_event(BackendEventType type,
                                                      const VoiceMailMetadata& item,
                                                      std::string_view text) {
@@ -732,7 +835,7 @@ void WebSocketVoiceBackend::enqueue_voice_mail_event(BackendEventType type,
   if (events_.size() == kMaximumEvents) events_.pop_front();
   BackendEvent event{};
   event.type = type;
-  event.voice_mail = item;
+  event.set_voice_mail(item);
   event.set_text(text);
   events_.push_back(event);
 }
@@ -785,6 +888,14 @@ void WebSocketVoiceBackend::handle_text(uint64_t generation, const std::string& 
       enqueue_event(BackendEventType::error, "UNKNOWN TYPE");
       return;
     }
+    const bool presentation_control = type == protocol::ControlType::ui_card ||
+                                      type == protocol::ControlType::ui_state ||
+                                      type == protocol::ControlType::agent_status;
+    if (presentation_control &&
+        presentation_ingress::contains_unsupported_json_nul(text)) {
+      enqueue_event(BackendEventType::error, "INVALID PRESENTATION CONTROL");
+      return;
+    }
     const bool voice_mail_message = type == protocol::ControlType::voice_mail_available ||
                                     type == protocol::ControlType::voice_mail_claimed ||
                                     type == protocol::ControlType::voice_mail_consumed ||
@@ -812,7 +923,7 @@ void WebSocketVoiceBackend::handle_text(uint64_t generation, const std::string& 
         if (payload.contains("config") && !payload.at("config").is_null()) {
           BackendEvent config{};
           config.type = BackendEventType::config;
-          config.config = parse_config(payload);
+          config.set_config(parse_config(payload));
           if (events_.size() == kMaximumEvents) events_.pop_front();
           events_.push_back(config);
         }
@@ -898,23 +1009,36 @@ void WebSocketVoiceBackend::handle_text(uint64_t generation, const std::string& 
       enqueue_event(BackendEventType::schedule, json_string(payload, "message"));
       break;
     case protocol::ControlType::ui_card: {
-      const auto it = payload.find("ui");
-      const std::string primary = it != payload.end() && it->is_object()
-                                      ? json_string(*it, "primary")
-                                      : std::string{};
-      enqueue_event(BackendEventType::ui_card, primary.empty() ? "ui.card" : primary);
+      PresentationCardV1 card{};
+      if (!parse_presentation_card(payload, card)) {
+        enqueue_event(BackendEventType::error, "INVALID UI CARD");
+        break;
+      }
+      enqueue_card_event(card);
       break;
     }
-    case protocol::ControlType::ui_state:
-      enqueue_event(BackendEventType::ui_card, json_string(payload, "emotion"));
+    case protocol::ControlType::ui_state: {
+      PresentationHint hint{};
+      if (!parse_presentation_hint(payload, hint)) {
+        enqueue_event(BackendEventType::error, "INVALID UI STATE");
+        break;
+      }
+      enqueue_hint_event(hint);
       break;
-    case protocol::ControlType::agent_status:
-      enqueue_event(BackendEventType::ui_card, json_string(payload, "state"));
+    }
+    case protocol::ControlType::agent_status: {
+      AgentPresentationStatus status{};
+      if (!parse_agent_presentation_status(payload, status)) {
+        enqueue_event(BackendEventType::error, "INVALID AGENT STATUS");
+        break;
+      }
+      enqueue_agent_status_event(status);
       break;
+    }
     case protocol::ControlType::config_update: {
       BackendEvent event{};
       event.type = BackendEventType::config;
-      event.config = parse_config(payload);
+      event.set_config(parse_config(payload));
       std::lock_guard lock(state_mutex_);
       if (events_.size() == kMaximumEvents) events_.pop_front();
       events_.push_back(event);

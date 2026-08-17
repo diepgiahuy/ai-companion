@@ -119,6 +119,9 @@ private:
                              std::string idempotency_key = {},
                              std::string occurred_at = {});
   void enqueue_event(BackendEventType type, std::string_view text = {});
+  void enqueue_card_event(const PresentationCardV1& card);
+  void enqueue_hint_event(const PresentationHint& hint);
+  void enqueue_agent_status_event(const AgentPresentationStatus& status);
   void enqueue_voice_mail_event(BackendEventType type,
                                 const VoiceMailMetadata& item,
                                 std::string_view text = {});

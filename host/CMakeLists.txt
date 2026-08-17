@@ -66,6 +66,12 @@ target_compile_features(presentation_display_tests PRIVATE cxx_std_20)
 target_compile_options(presentation_display_tests PRIVATE -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
 add_test(NAME presentation_display_tests COMMAND presentation_display_tests)
 
+add_executable(presentation_ingress_tests tests/presentation_ingress.cpp)
+target_include_directories(presentation_ingress_tests PRIVATE ../components/companion_app/include)
+target_compile_features(presentation_ingress_tests PRIVATE cxx_std_20)
+target_compile_options(presentation_ingress_tests PRIVATE -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
+add_test(NAME presentation_ingress_tests COMMAND presentation_ingress_tests)
+
 add_executable(transport_policy_tests tests/transport_policy.cpp)
 target_include_directories(transport_policy_tests PRIVATE ../components/esp32_network/include)
 target_compile_features(transport_policy_tests PRIVATE cxx_std_20)
