@@ -100,6 +100,11 @@ Use native GitHub blocker/sub-issue/project state as the live dependency source.
 may explain intent but must not be treated as authoritative current status after the
 issue ages.
 
+An open blocker forces `Blocked`. Closing the last blocker removes that objective
+blocker but does **not** prove the issue is still executable: reconciliation returns it
+to Backlog/no execution label. Only an explicit current-state revalidation may mark it
+`status:ready` again.
+
 ### Rollback / recovery
 
 State how the behavior can be disabled/reverted/recovered without introducing a

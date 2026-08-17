@@ -26,8 +26,8 @@ implementation facts must be refreshed before implementation.
 ## Core rule
 
 Use the cheapest objective oracle that can catch the failure. Broaden verification only
-when the change crosses a real boundary or reaches final review. More commands, agents,
-artifacts, or narration are not stronger evidence by themselves.
+when the change crosses a real boundary or reaches promotion/final review. More commands,
+agents, artifacts, or narration are not stronger evidence by themselves.
 
 Do not make a material assumption silently. Verify project facts from current repo/GitHub
 state, external/version-sensitive facts from current primary sources, and use common
@@ -46,8 +46,9 @@ GitHub Issue
   -> implement + nearest oracle
   -> refresh/reconcile main if it moved materially
   -> fresh final integrated diff review
-  -> exact-head hosted CI
+  -> exact-head targeted PR Gate
   -> merge
+  -> broad Promotion Gate on exact main SHA
   -> human-only / higher-tier evidence separately when required
 ```
 
@@ -107,8 +108,8 @@ Run the risk-matched final local gate once against the final local diff. Record 
 result, and tested commit SHA in the PR when local proof actually ran. Rerun only when
 later edits can affect that oracle.
 
-Local proof is diagnostic evidence. Required GitHub Checks are the exact-head hosted
-merge oracle.
+Local proof is diagnostic evidence. The ruleset-required `PR Gate` is the exact-head
+hosted merge oracle; promotion/release claims require their stronger gate separately.
 
 ### Fresh final review
 
@@ -147,12 +148,22 @@ HEAD.
 A second independent review is required for L3/release-critical changes or when the
 first review exposes systemic risk.
 
-### Hosted proof and merge
+### Hosted proof, merge and promotion
 
-The repository ruleset-required `PR Gate` at current PR HEAD is the authoritative hosted
-merge gate. Domain-specific workflows may provide additional required-by-process evidence
-for the affected boundary; do not claim that evidence until the corresponding check
-actually succeeds on the tested head.
+The repository ruleset-required `PR Gate` at the current PR HEAD is the authoritative
+hosted **merge** gate. It is intentionally risk-aware: ordinary PRs run the nearest
+relevant oracles, while cross-boundary/data/protocol changes retain the stronger boundary
+checks that can catch their real failure modes. Draft/ready-for-review state does not
+select fast versus full verification.
+
+After merge, `main` runs the broad software suite and aggregates one exact-SHA
+`Promotion Gate`. Promotion/release must not infer broad proof from the lighter PR Gate.
+If Promotion Gate fails, diagnose the owning lane and keep that SHA unpromoted; do not
+weaken PR Gate or release policy to hide the failure.
+
+Domain-specific workflows may provide additional required-by-process evidence for the
+affected boundary; do not claim that evidence until the corresponding check actually
+succeeds on the tested SHA.
 
 Do not copy hosted check lists or a synthetic `hosted-proven` status into the PR body.
 After merge, the repository automatically deletes the implementation branch when GitHub
@@ -172,10 +183,10 @@ If an issue itself still requires the human gate, use `Refs #N`, not `Closes #N`
 
 | Risk | Typical change | Local loop | Final local gate | Extra proof |
 |---|---|---|---|---|
-| L0 | docs/comments/metadata | syntax/link check | relevant validator | normal PR CI |
-| L1 | pure logic/isolated UI/tooling | nearest unit/host test | touched package/tool tests | normal PR CI |
-| L2 | API/protocol/auth/persistence/firmware FSM | unit + focused integration | affected packages + one boundary E2E | exact-head CI + final diff review |
-| L3 | migration/destructive data/concurrency runtime/credential/security/release | focused failure/recovery tests | full relevant race/integration/recovery gate | independent review + immutable evidence only where it proves a distinct property |
+| L0 | docs/comments/metadata | syntax/link check | relevant validator | targeted PR Gate |
+| L1 | pure logic/isolated UI/tooling | nearest unit/host test | touched package/tool tests | targeted PR Gate |
+| L2 | API/protocol/auth/persistence/firmware FSM | unit + focused integration | affected packages + one boundary E2E | exact-head targeted CI + final diff review |
+| L3 | migration/destructive data/concurrency runtime/credential/security/release | focused failure/recovery tests | full relevant race/integration/recovery gate | independent review + broad promotion/immutable evidence where it proves a distinct property |
 
 Risk can rise during implementation. Do not mark an entire issue L3 merely because the
 repository contains L3 code.
@@ -281,6 +292,10 @@ A software child issue is done when:
 - rollback/recovery is understood;
 - the PR states any remaining unproven higher-tier claim;
 - code is merged to `main` and the implementation branch is retired.
+
+A merged SHA is not automatically a promoted/release-qualified SHA. Broad software,
+provider, physical, manufacturing, or human gates remain separate when the claimed
+property requires them.
 
 Parent features may remain open for separate provider/HIL/human qualification without
 keeping completed software implementation issues artificially open.

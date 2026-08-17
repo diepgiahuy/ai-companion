@@ -24,7 +24,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Verify attested source and hosted gate
+      - name: Verify attested source and hosted promotion gate
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_SHA: ${{ github.sha }}
@@ -39,9 +39,15 @@ jobs:
           }
 
           checks_json="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${RELEASE_SHA}/check-runs?per_page=100")"
-          ok="$(jq '[.check_runs[] | select(.name == "PR Gate" and .head_sha == env.RELEASE_SHA and .status == "completed" and .conclusion == "success")] | length' <<<"$checks_json")"
+          ok="$(jq '[.check_runs[] | select(
+            .name == "Promotion Gate" and
+            .head_sha == env.RELEASE_SHA and
+            .status == "completed" and
+            .conclusion == "success" and
+            .app.slug == "github-actions"
+          )] | length' <<<"$checks_json")"
           if [[ "$ok" == "0" ]]; then
-            echo "::error::Required successful PR Gate missing on attested SHA ${RELEASE_SHA}"
+            echo "::error::Required successful GitHub Actions Promotion Gate missing on attested SHA ${RELEASE_SHA}"
             exit 1
           fi
 
@@ -51,7 +57,7 @@ jobs:
             echo "- Ref: ${GITHUB_REF}"
             echo "- Commit: ${RELEASE_SHA}"
             echo '- Reachable from main: yes'
-            echo '- Required hosted gate: PR Gate success'
+            echo '- Required hosted gate: GitHub Actions Promotion Gate success'
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Validate evidence policy

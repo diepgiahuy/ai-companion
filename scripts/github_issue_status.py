@@ -36,7 +36,10 @@ def derive_execution_label(
     if "status:ready" in current:
         return "status:ready", "explicit ready"
     if "status:blocked" in current:
-        return "status:ready", "blockers cleared"
+        # Clearing a dependency only removes the objective blocker. It does not prove
+        # the issue contract is still current or safe to execute. Return it to the
+        # unclaimed backlog until a human/agent explicitly revalidates it as Ready.
+        return None, "blockers cleared; revalidation required"
     return None, "unclaimed backlog"
 
 
