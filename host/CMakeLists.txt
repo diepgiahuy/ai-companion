@@ -54,6 +54,12 @@ target_compile_features(press_gesture_tests PRIVATE cxx_std_20)
 target_compile_options(press_gesture_tests PRIVATE -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
 add_test(NAME press_gesture_tests COMMAND press_gesture_tests)
 
+add_executable(input_router_tests tests/input_router.cpp)
+target_include_directories(input_router_tests PRIVATE ../components/companion_app/include)
+target_compile_features(input_router_tests PRIVATE cxx_std_20)
+target_compile_options(input_router_tests PRIVATE -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
+add_test(NAME input_router_tests COMMAND input_router_tests)
+
 add_executable(presentation_reducer_tests tests/presentation_reducer.cpp)
 target_include_directories(presentation_reducer_tests PRIVATE ../components/companion_app/include)
 target_compile_features(presentation_reducer_tests PRIVATE cxx_std_20)
