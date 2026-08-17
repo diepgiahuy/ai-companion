@@ -154,6 +154,22 @@ int main() {
     assert(reducer.apply(attention(PresentationDomain::card, 1, oversized)));
     assert(reducer.model().text_view().size() == 96);
     assert(reducer.counters().truncated_text == 1);
+    assert(!reducer.apply(attention(PresentationDomain::card, 1, oversized)));
+    assert(reducer.counters().duplicate_drops == 1);
+    assert(reducer.counters().revision_conflicts == 0);
+    assert(reducer.counters().truncated_text == 1);
+  }
+
+  {
+    // The bound is in bytes, but valid Vietnamese/UTF-8 content must never be
+    // cut in the middle of a multi-byte code point.
+    PresentationReducer reducer;
+    std::string utf8(95, 'x');
+    utf8 += "\xC3\xA9"; // U+00E9; total 97 bytes, proposed byte 96 is continuation.
+    assert(reducer.apply(attention(PresentationDomain::card, 1, utf8)));
+    assert(reducer.model().text_view().size() == 95);
+    assert(reducer.model().text_view() == std::string_view(utf8.data(), 95));
+    assert(reducer.counters().truncated_text == 1);
   }
 
   return 0;
