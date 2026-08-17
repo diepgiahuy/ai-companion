@@ -36,6 +36,12 @@ target_link_libraries(audio_frontend_app_tests PRIVATE companion_app)
 target_compile_options(audio_frontend_app_tests PRIVATE -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
 add_test(NAME audio_frontend_app_tests COMMAND audio_frontend_app_tests)
 
+add_executable(capability_dispatch_tests tests/capability_dispatch.cpp)
+target_include_directories(capability_dispatch_tests PRIVATE ../components/companion_app/include)
+target_compile_features(capability_dispatch_tests PRIVATE cxx_std_20)
+target_compile_options(capability_dispatch_tests PRIVATE -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
+add_test(NAME capability_dispatch_tests COMMAND capability_dispatch_tests)
+
 add_executable(pairing_fsm_tests tests/pairing_fsm.cpp)
 target_include_directories(pairing_fsm_tests PRIVATE ../components/companion_app/include)
 target_compile_features(pairing_fsm_tests PRIVATE cxx_std_20)
