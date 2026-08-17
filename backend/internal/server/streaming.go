@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"companion-server/internal/pipeline"
+	"companion-server/internal/presentation"
 	"companion-server/internal/protocol"
 	"companion-server/internal/realtime"
 
@@ -47,7 +48,16 @@ func (s *session) processStreamingReply(current *turn, agentCtx context.Context,
 
 		err := agent.Stream(agentCtx, current.id, transcript, func(event pipeline.AgentStreamEvent) error {
 			if event.UI != nil {
-				if err := s.sendTurnJSON(current.ctx, current, protocol.UICardType, protocol.UICardPayload{UI: event.UI}); err != nil {
+				card, cardErr := presentation.NewCardV1(
+					event.UI.Kind,
+					event.UI.Title,
+					event.UI.Primary,
+					event.UI.Secondary,
+					event.UI.Progress,
+				)
+				if cardErr != nil {
+					s.logger.Warn("drop invalid semantic ui card", "error", cardErr)
+				} else if err := s.sendTurnJSON(current.ctx, current, protocol.UICardType, protocol.UICardPayload{UI: card}); err != nil {
 					return err
 				}
 			}
