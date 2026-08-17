@@ -89,6 +89,8 @@ public:
   uint32_t playback_sample_rate_hz() const override {
     return playback_sample_rate_hz_.load();
   }
+  uint64_t session_epoch() const override { return session_epoch_.load(); }
+  uint64_t media_generation() const override { return media_generation_.load(); }
 
   bool enable_confirmation_protocol();
   bool advertise_user_confirmation();
@@ -177,6 +179,7 @@ private:
   std::atomic<bool> turn_active_{false};
   std::atomic<bool> tts_active_{false};
   std::atomic<uint32_t> playback_sample_rate_hz_{24'000};
+  std::atomic<uint64_t> session_epoch_{0};
   std::atomic<uint64_t> media_generation_{};
   uint64_t turn_sequence_{};
   std::atomic<uint64_t> message_sequence_{};

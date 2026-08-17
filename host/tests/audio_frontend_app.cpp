@@ -1,5 +1,6 @@
 #include "companion/app.hpp"
 #include "companion/audio_runtime.hpp"
+#include "companion/input_router.hpp"
 
 #include <algorithm>
 #include <array>
@@ -43,8 +44,6 @@ struct RecordingDisplay final : Display {
   std::vector<std::pair<UiState, std::string>> events;
   void show(UiState state, std::string_view text) override { events.emplace_back(state, std::string(text)); }
 };
-
-struct NoButton final : Button { bool consume_press(uint64_t) override { return false; } };
 
 struct ScriptedFrontend final : AudioFrontend {
   bool started{};
@@ -146,10 +145,10 @@ void wake_and_finish_one_turn(CompanionApp& app, ScriptedFrontend& frontend, Scr
 }
 
 void wake_and_vad_use_canonical_turn_path() {
-  MonitorMicrophone microphone; RecordingSpeaker speaker; RecordingDisplay display; NoButton button;
+  MonitorMicrophone microphone; RecordingSpeaker speaker; RecordingDisplay display; InputRouter input;
   ScriptedBackend backend; ScriptedFrontend frontend; AudioRuntime audio(microphone, speaker, frontend);
   AppConfig config{}; config.vad_min_speech_ms = 0;
-  CompanionApp app(audio, display, button, backend, config);
+  CompanionApp app(audio, display, input, backend, config);
   connect_without_wake(app, frontend);
   assert(frontend.started && microphone.active && microphone.starts == 1);
   wake_and_finish_one_turn(app, frontend, backend);
@@ -157,10 +156,10 @@ void wake_and_vad_use_canonical_turn_path() {
 }
 
 void playback_reference_and_speech_barge_in_share_generation_path() {
-  MonitorMicrophone microphone; RecordingSpeaker speaker; RecordingDisplay display; NoButton button;
+  MonitorMicrophone microphone; RecordingSpeaker speaker; RecordingDisplay display; InputRouter input;
   ScriptedBackend backend; ScriptedFrontend frontend; AudioRuntime audio(microphone, speaker, frontend);
   AppConfig config{}; config.vad_min_speech_ms = 0;
-  CompanionApp app(audio, display, button, backend, config);
+  CompanionApp app(audio, display, input, backend, config);
   connect_without_wake(app, frontend); wake_and_finish_one_turn(app, frontend, backend);
   backend.playback = {100, 200, 300, 400, 500, 600}; backend.playback_offset = 0;
   backend.push(BackendEventType::tts_started); frontend.events.push_back(AudioFrontendEvent::speech_started); app.tick(100);
@@ -183,10 +182,10 @@ void playback_reference_and_speech_barge_in_share_generation_path() {
 }
 
 void alarm_suspends_hands_free_monitor_and_ready_restarts_it() {
-  MonitorMicrophone microphone; RecordingSpeaker speaker; RecordingDisplay display; NoButton button;
+  MonitorMicrophone microphone; RecordingSpeaker speaker; RecordingDisplay display; InputRouter input;
   ScriptedBackend backend; ScriptedFrontend frontend; AudioRuntime audio(microphone, speaker, frontend);
   AppConfig config{}; config.alarm_tone_ms = 0; config.alarm_visible_ms = 100;
-  CompanionApp app(audio, display, button, backend, config);
+  CompanionApp app(audio, display, input, backend, config);
   connect_without_wake(app, frontend); backend.push(BackendEventType::alarm); app.tick(10);
   assert(app.state() == UiState::alarm); assert(!microphone.active); assert(microphone.stops == 1);
   assert(audio.stats().reference_epochs == 0);

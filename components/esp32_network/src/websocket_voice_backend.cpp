@@ -898,7 +898,27 @@ void WebSocketVoiceBackend::cancel_turn() {
 }
 
 bool WebSocketVoiceBackend::poll_event(BackendEvent& event) {
-  return xQueueReceive(event_queue_, &event, 0) == pdPASS;
+  while (xQueueReceive(event_queue_, &event, 0) == pdPASS) {
+    if (event.scope == BackendEventScope::generation) {
+      const uint64_t expected_generation =
+          (event.type == BackendEventType::voice_mail_playback_ready ||
+           event.type == BackendEventType::voice_mail_playback_finished ||
+           event.type == BackendEventType::voice_mail_failed)
+              ? voice_mail_generation_.load()
+              : media_generation_.load();
+      if (event.session_epoch != session_epoch_.load() ||
+          event.generation != expected_generation) {
+        continue;
+      }
+    } else if (event.scope == BackendEventScope::session) {
+      if (event.type != BackendEventType::disconnected &&
+          event.session_epoch != session_epoch_.load()) {
+        continue;
+      }
+    }
+    return true;
+  }
+  return false;
 }
 
 bool WebSocketVoiceBackend::report_config(const RuntimeConfigPatch& config, bool applied) {
@@ -1059,6 +1079,7 @@ void WebSocketVoiceBackend::on_event(int32_t event_id,
     tts_active_.store(false);
     taskEXIT_CRITICAL(&turn_id_lock_);
     xQueueReset(outbound_queue_);
+    session_epoch_.fetch_add(1);
     reset_turn_queues();
     clear_voice_mail(true);
     enqueue_event(BackendEventType::disconnected);
@@ -1551,6 +1572,8 @@ void WebSocketVoiceBackend::handle_text(std::string_view json) {
       enqueue_event(BackendEventType::error, "INVALID SESSION READY");
       return;
     }
+    session_epoch_.fetch_add(1);
+    reset_turn_queues();
     protocol_connected_.store(true);
     RuntimeConfigPatch config{};
     if (parse_runtime_config(payload, config)) enqueue_config_event(config);
@@ -1795,6 +1818,9 @@ bool WebSocketVoiceBackend::enqueue_event(BackendEventType type,
                                           std::string_view text) {
   BackendEvent event{};
   event.type = type;
+  event.scope = scope_for_event_type(type);
+  event.session_epoch = session_epoch_.load();
+  event.generation = media_generation_.load();
   event.set_text(text);
   return xQueueSend(event_queue_, &event, 0) == pdPASS;
 }
@@ -1802,6 +1828,9 @@ bool WebSocketVoiceBackend::enqueue_event(BackendEventType type,
 bool WebSocketVoiceBackend::enqueue_card_event(const PresentationCardV1& card) {
   BackendEvent event{};
   event.type = BackendEventType::presentation_card;
+  event.scope = BackendEventScope::generation;
+  event.session_epoch = session_epoch_.load();
+  event.generation = media_generation_.load();
   event.set_card(card);
   return xQueueSend(event_queue_, &event, 0) == pdPASS;
 }
@@ -1809,6 +1838,9 @@ bool WebSocketVoiceBackend::enqueue_card_event(const PresentationCardV1& card) {
 bool WebSocketVoiceBackend::enqueue_hint_event(const PresentationHint& hint) {
   BackendEvent event{};
   event.type = BackendEventType::presentation_hint;
+  event.scope = BackendEventScope::generation;
+  event.session_epoch = session_epoch_.load();
+  event.generation = media_generation_.load();
   event.set_hint(hint);
   return xQueueSend(event_queue_, &event, 0) == pdPASS;
 }
@@ -1817,6 +1849,9 @@ bool WebSocketVoiceBackend::enqueue_agent_status_event(
     const AgentPresentationStatus& status) {
   BackendEvent event{};
   event.type = BackendEventType::agent_status;
+  event.scope = BackendEventScope::generation;
+  event.session_epoch = session_epoch_.load();
+  event.generation = media_generation_.load();
   event.set_agent_status(status);
   return xQueueSend(event_queue_, &event, 0) == pdPASS;
 }
@@ -1824,6 +1859,9 @@ bool WebSocketVoiceBackend::enqueue_agent_status_event(
 bool WebSocketVoiceBackend::enqueue_config_event(const RuntimeConfigPatch& config) {
   BackendEvent event{};
   event.type = BackendEventType::config;
+  event.scope = BackendEventScope::global;
+  event.session_epoch = 0;
+  event.generation = 0;
   event.set_config(config);
   return xQueueSend(event_queue_, &event, 0) == pdPASS;
 }
@@ -1832,6 +1870,9 @@ bool WebSocketVoiceBackend::enqueue_voice_mail_event(
     BackendEventType type, const VoiceMailMetadata& item, std::string_view text) {
   BackendEvent event{};
   event.type = type;
+  event.scope = scope_for_event_type(type);
+  event.session_epoch = session_epoch_.load();
+  event.generation = voice_mail_generation_.load();
   event.set_voice_mail(item);
   event.set_text(text);
   return xQueueSend(event_queue_, &event, 0) == pdPASS;

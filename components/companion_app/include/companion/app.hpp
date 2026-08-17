@@ -1,6 +1,7 @@
 #pragma once
 
 #include "companion/audio_frontend.hpp"
+#include "companion/input_router.hpp"
 #include "companion/presentation_ingress.hpp"
 
 #include <algorithm>
@@ -89,6 +90,42 @@ struct VoiceMailMetadata {
   bool valid() const;
 };
 
+enum class BackendEventScope : uint8_t {
+  global,
+  session,
+  generation,
+};
+
+constexpr BackendEventScope scope_for_event_type(BackendEventType type) {
+  switch (type) {
+  case BackendEventType::connected:
+  case BackendEventType::disconnected:
+    return BackendEventScope::session;
+
+  case BackendEventType::transcript:
+  case BackendEventType::tts_started:
+  case BackendEventType::tts_sentence:
+  case BackendEventType::tts_finished:
+  case BackendEventType::presentation_card:
+  case BackendEventType::presentation_hint:
+  case BackendEventType::agent_status:
+  case BackendEventType::voice_mail_playback_ready:
+  case BackendEventType::voice_mail_playback_finished:
+  case BackendEventType::voice_mail_failed:
+    return BackendEventScope::generation;
+
+  case BackendEventType::alarm:
+  case BackendEventType::schedule:
+  case BackendEventType::config:
+  case BackendEventType::voice_mail_available:
+  case BackendEventType::voice_mail_consumed:
+  case BackendEventType::voice_mail_expired:
+  case BackendEventType::error:
+    return BackendEventScope::global;
+  }
+  return BackendEventScope::global;
+}
+
 // FreeRTOS queues byte-copy BackendEvent values. Keep the payload tagged by
 // BackendEventType and union-backed so typed presentation data does not multiply
 // the queue's static DRAM footprint. Every member is trivially copyable.
@@ -104,6 +141,9 @@ union BackendEventPayload {
 
 struct BackendEvent {
   BackendEventType type{BackendEventType::error};
+  BackendEventScope scope{BackendEventScope::global};
+  uint64_t session_epoch{};
+  uint64_t generation{};
   std::array<char, 96> text{};
   BackendEventPayload payload{};
 
@@ -142,27 +182,6 @@ static_assert(std::is_trivially_copyable_v<PresentationHint>);
 static_assert(std::is_trivially_copyable_v<AgentPresentationStatus>);
 static_assert(std::is_trivially_copyable_v<BackendEvent>);
 
-// Board-facing capture port. Only AudioRuntime should compose this into the
-// product runtime; CompanionApp must not own physical audio adapters directly.
-class Microphone {
-public:
-  virtual ~Microphone() = default;
-  virtual bool start_capture() = 0;
-  virtual size_t read_capture(std::span<int16_t> destination) = 0;
-  virtual void stop_capture() = 0;
-};
-
-// Board-facing playback port. Accepted-frame semantics are the authoritative
-// source for the AEC reference owned by AudioRuntime.
-class Speaker {
-public:
-  virtual ~Speaker() = default;
-  virtual bool start_playback(uint32_t sample_rate_hz) = 0;
-  virtual size_t write_playback(std::span<const int16_t> mono_pcm) = 0;
-  virtual bool playback_drained() const = 0;
-  virtual void stop_playback() = 0;
-};
-
 // Single app-facing audio owner. It hides physical microphone/speaker adapters,
 // optional vendor AFE state, playback-reference epochs and rate conversion from
 // CompanionApp so there is only one audio lifecycle boundary in the product.
@@ -194,12 +213,7 @@ public:
   virtual bool show_agent_status(UiState, const AgentPresentationStatus&) {
     return false;
   }
-};
-
-class Button {
-public:
-  virtual ~Button() = default;
-  virtual bool consume_press(uint64_t now_ms) = 0;
+  virtual void set_context(uint64_t /*session_epoch*/, uint64_t /*generation*/) {}
 };
 
 class VoiceBackend {
@@ -224,6 +238,8 @@ public:
   virtual size_t read_playback(std::span<int16_t> destination) = 0;
   virtual bool playback_empty() const = 0;
   virtual uint32_t playback_sample_rate_hz() const = 0;
+  virtual uint64_t session_epoch() const { return 0; }
+  virtual uint64_t media_generation() const { return 0; }
 };
 
 struct AppConfig {
@@ -243,7 +259,7 @@ struct AppConfig {
 
 class CompanionApp final {
 public:
-  CompanionApp(AudioEngine& audio, Display& display, Button& button,
+  CompanionApp(AudioEngine& audio, Display& display, InputRouter& input,
                VoiceBackend& backend, AppConfig config = {});
 
   bool start(uint64_t now_ms);
@@ -256,7 +272,7 @@ public:
 private:
   AudioEngine& audio_;
   Display& display_;
-  Button& button_;
+  InputRouter& input_;
   VoiceBackend& backend_;
   AppConfig config_;
   UiState state_{UiState::booting};
@@ -275,7 +291,6 @@ private:
   bool tts_finished_{};
   bool alarm_pending_{};
   bool alarm_tone_active_{};
-  bool capture_active_{};
   bool voice_mail_stream_finished_{};
   bool voice_mail_result_pending_{};
   static constexpr size_t kVoiceMailQueueCapacity = 4;

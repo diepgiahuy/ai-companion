@@ -24,7 +24,10 @@ MockVoiceBackend::MockVoiceBackend() {
 bool MockVoiceBackend::start(uint64_t) {
   if (!connected_) {
     connected_ = true;
-    return push_event(BackendEventType::connected);
+    ++session_epoch_;
+    ++media_generation_;
+    return push_event(BackendEventType::connected, {}, BackendEventScope::session,
+                      session_epoch_, 0);
   }
   return true;
 }
@@ -44,6 +47,7 @@ bool MockVoiceBackend::begin_turn(uint64_t, ListenMode) {
   active_ = true;
   received_samples_ = 0;
   playback_offset_ = reply_pcm_.size();
+  ++media_generation_;
   return true;
 }
 
@@ -65,7 +69,20 @@ void MockVoiceBackend::cancel_turn() {
   active_ = false;
   response_pending_ = false;
   playback_offset_ = reply_pcm_.size();
-  clear_events();
+  ++media_generation_;
+}
+
+void MockVoiceBackend::disconnect() {
+  if (connected_) {
+    connected_ = false;
+    active_ = false;
+    response_pending_ = false;
+    playback_offset_ = reply_pcm_.size();
+    ++session_epoch_;
+    ++media_generation_;
+    push_event(BackendEventType::disconnected, {}, BackendEventScope::session,
+               session_epoch_, 0);
+  }
 }
 
 bool MockVoiceBackend::report_config(const RuntimeConfigPatch& config, bool applied) {
@@ -102,12 +119,75 @@ void MockVoiceBackend::cancel_voice_mail(const VoiceMailMetadata& item,
                                          std::string_view, uint64_t) {
   if (item.valid()) ++voice_mail_failures_;
   playback_offset_ = reply_pcm_.size();
+  ++media_generation_;
+}
+
+bool MockVoiceBackend::inject_card(const PresentationCardV1& card,
+                                   BackendEventScope scope,
+                                   uint64_t session_epoch,
+                                   uint64_t generation) {
+  if (event_count_ == event_capacity_) return false;
+  BackendEvent event{};
+  event.type = BackendEventType::presentation_card;
+  event.scope = scope;
+  event.session_epoch = session_epoch == 0 ? session_epoch_ : session_epoch;
+  event.generation = generation == 0 ? media_generation_ : generation;
+  event.set_card(card);
+  events_[event_tail_] = event;
+  event_tail_ = (event_tail_ + 1) % event_capacity_;
+  ++event_count_;
+  return true;
+}
+
+bool MockVoiceBackend::inject_hint(const PresentationHint& hint,
+                                   BackendEventScope scope,
+                                   uint64_t session_epoch,
+                                   uint64_t generation) {
+  if (event_count_ == event_capacity_) return false;
+  BackendEvent event{};
+  event.type = BackendEventType::presentation_hint;
+  event.scope = scope;
+  event.session_epoch = session_epoch == 0 ? session_epoch_ : session_epoch;
+  event.generation = generation == 0 ? media_generation_ : generation;
+  event.set_hint(hint);
+  events_[event_tail_] = event;
+  event_tail_ = (event_tail_ + 1) % event_capacity_;
+  ++event_count_;
+  return true;
+}
+
+bool MockVoiceBackend::inject_agent_status(const AgentPresentationStatus& status,
+                                           BackendEventScope scope,
+                                           uint64_t session_epoch,
+                                           uint64_t generation) {
+  if (event_count_ == event_capacity_) return false;
+  BackendEvent event{};
+  event.type = BackendEventType::agent_status;
+  event.scope = scope;
+  event.session_epoch = session_epoch == 0 ? session_epoch_ : session_epoch;
+  event.generation = generation == 0 ? media_generation_ : generation;
+  event.set_agent_status(status);
+  events_[event_tail_] = event;
+  event_tail_ = (event_tail_ + 1) % event_capacity_;
+  ++event_count_;
+  return true;
+}
+
+bool MockVoiceBackend::inject_scoped_event(BackendEventType type,
+                                           std::string_view text,
+                                           BackendEventScope scope,
+                                           uint64_t session_epoch,
+                                           uint64_t generation) {
+  return push_event(type, text, scope, session_epoch, generation);
 }
 
 bool MockVoiceBackend::inject_config(const RuntimeConfigPatch& config) {
   if (event_count_ == event_capacity_) return false;
   BackendEvent event{};
   event.type = BackendEventType::config;
+  event.scope = BackendEventScope::global;
+  event.session_epoch = 0;
+  event.generation = 0;
   event.set_config(config);
   events_[event_tail_] = event;
   event_tail_ = (event_tail_ + 1) % event_capacity_;
@@ -120,6 +200,9 @@ bool MockVoiceBackend::inject_voice_mail(const VoiceMailMetadata& item,
   if (event_count_ == event_capacity_) return false;
   BackendEvent event{};
   event.type = type;
+  event.scope = scope_for_event_type(type);
+  event.session_epoch = session_epoch_;
+  event.generation = media_generation_;
   event.set_voice_mail(item);
   events_[event_tail_] = event;
   event_tail_ = (event_tail_ + 1) % event_capacity_;
@@ -128,11 +211,24 @@ bool MockVoiceBackend::inject_voice_mail(const VoiceMailMetadata& item,
 }
 
 bool MockVoiceBackend::poll_event(BackendEvent& event) {
-  if (event_count_ == 0) return false;
-  event = events_[event_head_];
-  event_head_ = (event_head_ + 1) % event_capacity_;
-  --event_count_;
-  return true;
+  while (event_count_ > 0) {
+    event = events_[event_head_];
+    event_head_ = (event_head_ + 1) % event_capacity_;
+    --event_count_;
+    if (event.scope == BackendEventScope::generation) {
+      if (event.session_epoch != session_epoch_ ||
+          event.generation != media_generation_) {
+        continue;
+      }
+    } else if (event.scope == BackendEventScope::session) {
+      if (event.type != BackendEventType::disconnected &&
+          event.session_epoch != session_epoch_) {
+        continue;
+      }
+    }
+    return true;
+  }
+  return false;
 }
 
 size_t MockVoiceBackend::read_playback(std::span<int16_t> destination) {
@@ -147,10 +243,23 @@ bool MockVoiceBackend::playback_empty() const {
   return playback_offset_ >= reply_pcm_.size();
 }
 
-bool MockVoiceBackend::push_event(BackendEventType type, std::string_view text) {
+bool MockVoiceBackend::push_event(BackendEventType type, std::string_view text,
+                                  BackendEventScope scope,
+                                  uint64_t session_epoch, uint64_t generation) {
   if (event_count_ == event_capacity_) return false;
   BackendEvent event{};
   event.type = type;
+  event.scope = (scope == BackendEventScope::global &&
+                 type != BackendEventType::alarm &&
+                 type != BackendEventType::schedule &&
+                 type != BackendEventType::config &&
+                 type != BackendEventType::voice_mail_available &&
+                 type != BackendEventType::voice_mail_consumed &&
+                 type != BackendEventType::voice_mail_expired)
+                    ? scope_for_event_type(type)
+                    : scope;
+  event.session_epoch = session_epoch == 0 ? session_epoch_ : session_epoch;
+  event.generation = generation == 0 ? media_generation_ : generation;
   event.set_text(text);
   events_[event_tail_] = event;
   event_tail_ = (event_tail_ + 1) % event_capacity_;

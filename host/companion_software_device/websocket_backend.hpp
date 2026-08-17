@@ -59,6 +59,8 @@ public:
   size_t read_playback(std::span<int16_t> destination) override;
   bool playback_empty() const override;
   uint32_t playback_sample_rate_hz() const override;
+  uint64_t session_epoch() const override { return connection_generation_.load(); }
+  uint64_t media_generation() const override { return media_generation_.load(); }
 
   bool resend_last_begin_for_test();
   void disconnect_for_test();
@@ -76,6 +78,7 @@ private:
   std::atomic<uint64_t> connection_generation_{0};
   std::atomic<uint64_t> message_sequence_{0};
   std::atomic<uint64_t> turn_sequence_{0};
+  std::atomic<uint64_t> media_generation_{0};
   std::atomic<bool> protocol_connected_{false};
   std::atomic<bool> stopping_{false};
   std::atomic<bool> media_worker_running_{false};

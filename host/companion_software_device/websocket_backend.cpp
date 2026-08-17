@@ -477,6 +477,7 @@ bool WebSocketVoiceBackend::begin_turn(uint64_t, ListenMode mode) {
     active_turn_id_ = turn_id;
     turn_active_ = true;
     tts_active_ = false;
+    media_generation_.fetch_add(1);
     clear_turn_media_locked();
     ++stats_.turns_started;
   }
@@ -517,15 +518,17 @@ bool WebSocketVoiceBackend::send_audio(std::span<const int16_t> pcm) {
 }
 
 bool WebSocketVoiceBackend::finish_turn(uint64_t) {
+  std::string turn_id;
   std::array<int16_t, kUplinkFrameSamples> final{};
   bool has_final = false;
-  std::string turn_id;
   {
     std::lock_guard lock(state_mutex_);
     if (!turn_active_) return false;
     turn_id = active_turn_id_;
     if (!upload_samples_.empty()) {
-      std::copy(upload_samples_.begin(), upload_samples_.end(), final.begin());
+      std::copy_n(upload_samples_.begin(),
+                  std::min(upload_samples_.size(), final.size()),
+                  final.begin());
       upload_samples_.clear();
       has_final = true;
     }
@@ -540,10 +543,10 @@ void WebSocketVoiceBackend::cancel_turn() {
   std::string turn_id;
   {
     std::lock_guard lock(state_mutex_);
-    if (!turn_active_ && !tts_active_) return;
     turn_id = active_turn_id_;
     turn_active_ = false;
     tts_active_ = false;
+    media_generation_.fetch_add(1);
     clear_turn_media_locked();
     ++stats_.cancels;
   }
@@ -556,10 +559,23 @@ void WebSocketVoiceBackend::cancel_turn() {
 
 bool WebSocketVoiceBackend::poll_event(BackendEvent& event) {
   std::lock_guard lock(state_mutex_);
-  if (events_.empty()) return false;
-  event = events_.front();
-  events_.pop_front();
-  return true;
+  while (!events_.empty()) {
+    event = events_.front();
+    events_.pop_front();
+    if (event.scope == BackendEventScope::generation) {
+      if (event.session_epoch != connection_generation_.load() ||
+          event.generation != media_generation_.load()) {
+        continue;
+      }
+    } else if (event.scope == BackendEventScope::session) {
+      if (event.type != BackendEventType::disconnected &&
+          event.session_epoch != connection_generation_.load()) {
+        continue;
+      }
+    }
+    return true;
+  }
+  return false;
 }
 
 bool WebSocketVoiceBackend::report_config(const RuntimeConfigPatch& config, bool applied) {
@@ -796,6 +812,9 @@ void WebSocketVoiceBackend::enqueue_event(BackendEventType type, std::string_vie
   if (events_.size() == kMaximumEvents) events_.pop_front();
   BackendEvent event{};
   event.type = type;
+  event.scope = scope_for_event_type(type);
+  event.session_epoch = connection_generation_.load();
+  event.generation = media_generation_.load();
   event.set_text(text);
   events_.push_back(event);
 }
@@ -805,6 +824,9 @@ void WebSocketVoiceBackend::enqueue_card_event(const PresentationCardV1& card) {
   if (events_.size() == kMaximumEvents) events_.pop_front();
   BackendEvent event{};
   event.type = BackendEventType::presentation_card;
+  event.scope = BackendEventScope::generation;
+  event.session_epoch = connection_generation_.load();
+  event.generation = media_generation_.load();
   event.set_card(card);
   events_.push_back(event);
 }
@@ -814,6 +836,9 @@ void WebSocketVoiceBackend::enqueue_hint_event(const PresentationHint& hint) {
   if (events_.size() == kMaximumEvents) events_.pop_front();
   BackendEvent event{};
   event.type = BackendEventType::presentation_hint;
+  event.scope = BackendEventScope::generation;
+  event.session_epoch = connection_generation_.load();
+  event.generation = media_generation_.load();
   event.set_hint(hint);
   events_.push_back(event);
 }
@@ -824,6 +849,9 @@ void WebSocketVoiceBackend::enqueue_agent_status_event(
   if (events_.size() == kMaximumEvents) events_.pop_front();
   BackendEvent event{};
   event.type = BackendEventType::agent_status;
+  event.scope = BackendEventScope::generation;
+  event.session_epoch = connection_generation_.load();
+  event.generation = media_generation_.load();
   event.set_agent_status(status);
   events_.push_back(event);
 }
@@ -835,6 +863,9 @@ void WebSocketVoiceBackend::enqueue_voice_mail_event(BackendEventType type,
   if (events_.size() == kMaximumEvents) events_.pop_front();
   BackendEvent event{};
   event.type = type;
+  event.scope = scope_for_event_type(type);
+  event.session_epoch = connection_generation_.load();
+  event.generation = media_generation_.load();
   event.set_voice_mail(item);
   event.set_text(text);
   events_.push_back(event);
@@ -859,6 +890,7 @@ void WebSocketVoiceBackend::handle_connection_closed(uint64_t generation,
     std::lock_guard lock(state_mutex_);
     turn_active_ = false;
     tts_active_ = false;
+    media_generation_.fetch_add(1);
     clear_turn_media_locked();
     clear_voice_mail_locked();
   }

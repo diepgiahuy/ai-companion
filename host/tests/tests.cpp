@@ -1,5 +1,6 @@
 #include "companion/app.hpp"
 #include "companion/audio_runtime.hpp"
+#include "companion/input_router.hpp"
 #include "companion/wire_protocol.hpp"
 #include "companion/mock_backend.hpp"
 
@@ -70,18 +71,39 @@ struct FakeDisplay final : Display {
   }
 };
 
-struct FakeButton final : Button {
-  explicit FakeButton(std::vector<uint64_t> scheduled = {})
+struct ScheduledInput final {
+  explicit ScheduledInput(std::vector<uint64_t> scheduled = {})
       : presses(std::move(scheduled)) {}
   std::vector<uint64_t> presses;
   size_t next{};
-  bool consume_press(uint64_t now_ms) override {
+  InputRouter router;
+
+  void sample(uint64_t now_ms) {
     if (next < presses.size() && now_ms >= presses[next]) {
       ++next;
-      return true;
+      router.queue_primary_action(InputIntent::primary_action);
     }
-    return false;
   }
+};
+
+struct TestApp final {
+  ScheduledInput input;
+  CompanionApp app;
+
+  TestApp(AudioEngine& audio, Display& display, ScheduledInput scheduled_input,
+          VoiceBackend& backend, AppConfig config = {})
+      : input(std::move(scheduled_input)),
+        app(audio, display, input.router, backend, config) {}
+
+  bool start(uint64_t now_ms) { return app.start(now_ms); }
+  void tick(uint64_t now_ms) {
+    input.sample(now_ms);
+    app.tick(now_ms);
+  }
+  UiState state() const { return app.state(); }
+  const AppConfig& config() const { return app.config(); }
+  uint64_t streamed_samples() const { return app.streamed_samples(); }
+  uint64_t runtime_config_version() const { return app.runtime_config_version(); }
 };
 
 VoiceMailMetadata voice_mail(std::string_view id = "voice-1") {
@@ -211,7 +233,7 @@ void canonical_v2_envelope_matches_golden_fixture() {
   assert(!protocol::parse_type("config", parsed));
 }
 
-void connect(CompanionApp& app) {
+void connect(TestApp& app) {
   assert(app.start(0));
   assert(app.state() == UiState::connecting);
   app.tick(0);
@@ -223,9 +245,9 @@ void conversation_happy_path() {
   FakeSpeaker speaker;
   AudioRuntime audio(microphone, speaker);
   FakeDisplay display;
-  FakeButton button{{100, 200}};
+  ScheduledInput input{{100, 200}};
   MockVoiceBackend backend;
-  CompanionApp app(audio, display, button, backend);
+  TestApp app(audio, display, input, backend);
 
   connect(app);
   app.tick(100);
@@ -251,9 +273,9 @@ void timeout_finishes_recording() {
   FakeSpeaker speaker;
   AudioRuntime audio(microphone, speaker);
   FakeDisplay display;
-  FakeButton button{{10}};
+  ScheduledInput input{{10}};
   MockVoiceBackend backend;
-  CompanionApp app(audio, display, button, backend, AppConfig{100});
+  TestApp app(audio, display, input, backend, AppConfig{100});
   connect(app);
   app.tick(10);
   app.tick(30);
@@ -266,9 +288,9 @@ void silence_is_rejected() {
   FakeSpeaker speaker;
   AudioRuntime audio(microphone, speaker);
   FakeDisplay display;
-  FakeButton button{{10, 20}};
+  ScheduledInput input{{10, 20}};
   MockVoiceBackend backend;
-  CompanionApp app(audio, display, button, backend);
+  TestApp app(audio, display, input, backend);
   connect(app);
   app.tick(10);
   app.tick(20);
@@ -281,9 +303,9 @@ void barge_in_cancels_reply_and_starts_capture() {
   FakeSpeaker speaker;
   AudioRuntime audio(microphone, speaker);
   FakeDisplay display;
-  FakeButton button{{10, 20, 271}};
+  ScheduledInput input{{10, 20, 271}};
   MockVoiceBackend backend;
-  CompanionApp app(audio, display, button, backend);
+  TestApp app(audio, display, input, backend);
   connect(app);
   app.tick(10);
   app.tick(15);
@@ -302,14 +324,14 @@ void smart_vad_finishes_after_speech_silence() {
   FakeSpeaker speaker;
   AudioRuntime audio(microphone, speaker);
   FakeDisplay display;
-  FakeButton button{{10}};
+  ScheduledInput input{{10}};
   MockVoiceBackend backend;
   AppConfig config{};
   config.smart_vad_enabled = true;
   config.vad_mean_abs_threshold = 100;
   config.vad_min_speech_ms = 0;
   config.vad_silence_ms = 100;
-  CompanionApp app(audio, display, button, backend, config);
+  TestApp app(audio, display, input, backend, config);
   connect(app);
   app.tick(10);
   app.tick(20);
@@ -323,12 +345,12 @@ void idle_and_alarm_states_are_non_destructive() {
   FakeSpeaker speaker;
   AudioRuntime audio(microphone, speaker);
   FakeDisplay display;
-  FakeButton button;
+  ScheduledInput input;
   MockVoiceBackend backend;
   AppConfig config{};
   config.idle_after_ms = 100;
   config.alarm_visible_ms = 100;
-  CompanionApp app(audio, display, button, backend, config);
+  TestApp app(audio, display, input, backend, config);
   connect(app);
   app.tick(100);
   assert(app.state() == UiState::idle);
@@ -350,9 +372,9 @@ void runtime_config_is_versioned_and_last_known_good() {
   FakeSpeaker speaker;
   AudioRuntime audio(microphone, speaker);
   FakeDisplay display;
-  FakeButton button;
+  ScheduledInput input;
   MockVoiceBackend backend;
-  CompanionApp app(audio, display, button, backend);
+  TestApp app(audio, display, input, backend);
   connect(app);
   RuntimeConfigPatch good{};
   good.version = 3;
@@ -406,9 +428,9 @@ void voice_mail_waits_deduplicates_and_completes_only_after_drain() {
   AudioRuntime audio(microphone, speaker);
   speaker.drained = false;
   FakeDisplay display;
-  FakeButton button{{10}};
+  ScheduledInput input{{10}};
   MockVoiceBackend backend;
-  CompanionApp app(audio, display, button, backend);
+  TestApp app(audio, display, input, backend);
   connect(app);
 
   const auto item = voice_mail();
@@ -441,9 +463,9 @@ void voice_mail_invalid_cancel_and_expiry_are_safe() {
   FakeSpeaker speaker;
   AudioRuntime audio(microphone, speaker);
   FakeDisplay display;
-  FakeButton button{{10, 12}};
+  ScheduledInput input{{10, 12}};
   MockVoiceBackend backend;
-  CompanionApp app(audio, display, button, backend);
+  TestApp app(audio, display, input, backend);
   connect(app);
 
   auto invalid = voice_mail("invalid");
@@ -475,11 +497,11 @@ void voice_mail_output_stall_times_out_without_consuming() {
   AudioRuntime audio(microphone, speaker);
   speaker.maximum_write = 0;
   FakeDisplay display;
-  FakeButton button{{10}};
+  ScheduledInput input{{10}};
   MockVoiceBackend backend;
   AppConfig config{};
   config.voice_mail_operation_timeout_ms = 5;
-  CompanionApp app(audio, display, button, backend, config);
+  TestApp app(audio, display, input, backend, config);
   connect(app);
 
   const auto item = voice_mail("voice-timeout");
@@ -500,9 +522,9 @@ void retained_voice_mail_returns_to_waiting_after_drain() {
   FakeSpeaker speaker;
   AudioRuntime audio(microphone, speaker);
   FakeDisplay display;
-  FakeButton button{{10}};
+  ScheduledInput input{{10}};
   MockVoiceBackend backend;
-  CompanionApp app(audio, display, button, backend);
+  TestApp app(audio, display, input, backend);
   connect(app);
 
   auto item = voice_mail("voice-retained");
@@ -517,6 +539,91 @@ void retained_voice_mail_returns_to_waiting_after_drain() {
   }
   assert(backend.voice_mail_successes() == 1);
   assert(app.state() == UiState::voice_mail_waiting);
+}
+
+void stale_generation_events_after_barge_in_or_cancel_are_invalidated() {
+  FakeMicrophone microphone;
+  FakeSpeaker speaker;
+  AudioRuntime audio(microphone, speaker);
+  FakeDisplay display;
+  ScheduledInput input{{10, 20, 271}};
+  MockVoiceBackend backend;
+  TestApp app(audio, display, input, backend);
+  connect(app);
+
+  const uint64_t initial_epoch = backend.session_epoch();
+  app.tick(10);
+  app.tick(15);
+  app.tick(20);
+  const uint64_t turn1_gen = backend.media_generation();
+  app.tick(270);
+  assert(app.state() == UiState::speaking);
+
+  app.tick(271);
+  assert(app.state() == UiState::listening);
+  assert(backend.media_generation() > turn1_gen);
+
+  PresentationCardV1 stale_card{};
+  assert(stale_card.assign(1, "card", "STALE TITLE", "STALE PRIMARY", "STALE SECONDARY", 0));
+  assert(backend.inject_card(stale_card, BackendEventScope::generation, initial_epoch, turn1_gen));
+  assert(backend.inject_scoped_event(BackendEventType::tts_sentence, "OBSOLETE SENTENCE",
+                                     BackendEventScope::generation, initial_epoch, turn1_gen));
+  assert(backend.inject_scoped_event(BackendEventType::transcript, "OBSOLETE TRANSCRIPT",
+                                     BackendEventScope::generation, initial_epoch, turn1_gen));
+
+  app.tick(272);
+  assert(app.state() == UiState::listening);
+  for (const auto& ev : display.events) {
+    assert(ev.second != "STALE PRIMARY");
+    assert(ev.second != "OBSOLETE SENTENCE");
+    assert(ev.second != "OBSOLETE TRANSCRIPT");
+  }
+}
+
+void disconnect_and_reconnect_invalidates_stale_session_and_generation_events() {
+  FakeMicrophone microphone;
+  FakeSpeaker speaker;
+  AudioRuntime audio(microphone, speaker);
+  FakeDisplay display;
+  ScheduledInput input{{10, 20, 500}};
+  MockVoiceBackend backend;
+  TestApp app(audio, display, input, backend);
+  connect(app);
+
+  const uint64_t session1_epoch = backend.session_epoch();
+  app.tick(10);
+  app.tick(15);
+  app.tick(20);
+  app.tick(270);
+  assert(app.state() == UiState::speaking);
+
+  backend.disconnect();
+  const uint64_t disconnected_epoch = backend.session_epoch();
+  assert(disconnected_epoch > session1_epoch);
+
+  PresentationCardV1 stale_card{};
+  assert(stale_card.assign(1, "card", "OLD SESSION CARD", "OLD SESSION PRIMARY", "", 0));
+  assert(backend.inject_card(stale_card, BackendEventScope::generation, session1_epoch, 1));
+  assert(backend.inject_scoped_event(BackendEventType::tts_started, {},
+                                     BackendEventScope::generation, session1_epoch, 1));
+
+  app.tick(300);
+  assert(app.state() == UiState::error);
+  assert(display.events.back().second == "DISCONNECTED");
+  assert(!speaker.active);
+
+  app.tick(500);
+  assert(app.state() == UiState::connecting);
+  assert(backend.session_epoch() > disconnected_epoch);
+
+  app.tick(501);
+  assert(app.state() == UiState::ready);
+
+  assert(!speaker.active);
+  for (const auto& ev : display.events) {
+    assert(ev.second != "OLD SESSION PRIMARY");
+    assert(ev.second != "OLD SESSION CARD");
+  }
 }
 
 } // namespace
@@ -534,5 +641,7 @@ int main() {
   voice_mail_invalid_cancel_and_expiry_are_safe();
   voice_mail_output_stall_times_out_without_consuming();
   retained_voice_mail_returns_to_waiting_after_drain();
-  std::cout << "PASS: protocol-v2 + streaming + timeout + silence + barge-in + smart VAD + idle/alarm + runtime-config + voice-mail FSM\n";
+  stale_generation_events_after_barge_in_or_cancel_are_invalidated();
+  disconnect_and_reconnect_invalidates_stale_session_and_generation_events();
+  std::cout << "PASS: protocol-v2 + streaming + timeout + silence + barge-in + smart VAD + idle/alarm + runtime-config + voice-mail FSM + A6 recovery/stale-event convergence\n";
 }

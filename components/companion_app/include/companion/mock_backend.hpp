@@ -28,8 +28,26 @@ public:
   bool playback_empty() const override;
   uint32_t playback_sample_rate_hz() const override { return kAudioSampleRateHz; }
 
+  uint64_t session_epoch() const override { return session_epoch_; }
+  uint64_t media_generation() const override { return media_generation_; }
+  void set_session_epoch(uint64_t epoch) { session_epoch_ = epoch; }
+  void set_media_generation(uint64_t gen) { media_generation_ = gen; }
+  void disconnect();
+
   uint64_t received_samples() const { return received_samples_; }
   bool inject_event(BackendEventType type, std::string_view text = {}) { return push_event(type, text); }
+  bool inject_card(const PresentationCardV1& card,
+                   BackendEventScope scope = BackendEventScope::generation,
+                   uint64_t session_epoch = 0, uint64_t generation = 0);
+  bool inject_hint(const PresentationHint& hint,
+                   BackendEventScope scope = BackendEventScope::generation,
+                   uint64_t session_epoch = 0, uint64_t generation = 0);
+  bool inject_agent_status(const AgentPresentationStatus& status,
+                           BackendEventScope scope = BackendEventScope::generation,
+                           uint64_t session_epoch = 0, uint64_t generation = 0);
+  bool inject_scoped_event(BackendEventType type, std::string_view text = {},
+                           BackendEventScope scope = BackendEventScope::generation,
+                           uint64_t session_epoch = 0, uint64_t generation = 0);
   bool inject_config(const RuntimeConfigPatch& config);
   bool inject_voice_mail(const VoiceMailMetadata& item,
                          BackendEventType type = BackendEventType::voice_mail_available);
@@ -49,6 +67,8 @@ private:
   uint64_t received_samples_{};
   uint64_t reply_at_ms_{};
   size_t playback_offset_{};
+  uint64_t session_epoch_{1};
+  uint64_t media_generation_{1};
   uint64_t reported_config_version_{};
   bool reported_config_applied_{};
   uint32_t voice_mail_claims_{};
@@ -60,7 +80,9 @@ private:
   size_t event_tail_{};
   size_t event_count_{};
 
-  bool push_event(BackendEventType type, std::string_view text = {});
+  bool push_event(BackendEventType type, std::string_view text = {},
+                  BackendEventScope scope = BackendEventScope::global,
+                  uint64_t session_epoch = 0, uint64_t generation = 0);
   void clear_events();
 };
 

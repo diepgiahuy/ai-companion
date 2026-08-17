@@ -58,10 +58,8 @@ public:
     return InputIntent::none;
   }
 
-  // CompanionApp still has a temporary Button compatibility seam during the
-  // #228 cutover. Queue only the already-routed semantic primary action so the
-  // app can interpret it after backend events, preserving the previous tick
-  // ordering without giving it direct access to the physical button.
+  // Bounded single-consumer primary action queue for semantic input between
+  // gesture sampling and CompanionApp turn processing.
   bool queue_primary_action(InputIntent intent) {
     if (intent != InputIntent::primary_action || primary_action_pending_) {
       return false;
