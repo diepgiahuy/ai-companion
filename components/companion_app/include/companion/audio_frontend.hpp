@@ -33,6 +33,9 @@ struct PlaybackReferenceStats {
 // time-aligned speaker reference used for echo cancellation, and emits cleaned
 // 16 kHz PCM plus wake/VAD events into the canonical Companion turn flow.
 //
+// The reference source is the PCM actually accepted by speaker TX. Its source
+// sample-rate travels with the accepted PCM so the owning audio runtime, not
+// CompanionApp, can perform the bounded conversion into the AFE's 16 kHz domain.
 // Playback-reference lifetime is explicit: zero reference while no epoch is
 // active is normal idle behavior and must not be reported as an AEC underflow.
 class AudioFrontend {
@@ -42,7 +45,8 @@ public:
   virtual void reset() = 0;
   virtual bool begin_playback_reference(uint64_t epoch) = 0;
   virtual void end_playback_reference(uint64_t epoch) = 0;
-  virtual bool push_playback_reference(std::span<const int16_t> pcm_16k) = 0;
+  virtual bool push_playback_reference(std::span<const int16_t> accepted_pcm,
+                                       uint32_t sample_rate_hz) = 0;
   virtual PlaybackReferenceStats playback_reference_stats() const = 0;
   virtual AudioFrontendResult process_capture(std::span<const int16_t> microphone_16k,
                                               std::span<int16_t> cleaned_16k) = 0;
