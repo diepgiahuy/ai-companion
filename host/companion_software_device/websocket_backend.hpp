@@ -48,6 +48,7 @@ public:
   bool finish_turn(uint64_t now_ms) override;
   void cancel_turn() override;
   bool poll_event(BackendEvent& event) override;
+  bool report_settings_apply(const SettingsTwin& twin, bool applied) override;
   bool claim_voice_mail(const VoiceMailMetadata& item, uint64_t now_ms) override;
   bool report_voice_mail_playback(const VoiceMailMetadata& item, bool succeeded,
                                   std::string_view failure_code,
@@ -91,6 +92,9 @@ private:
   uint32_t playback_sample_rate_{24'000};
   uint64_t settings_version_{};
   DeviceSettings current_settings_{};
+  SettingsTwin pending_settings_{};
+  std::string pending_settings_correlation_;
+  bool settings_pending_{};
   std::vector<int16_t> upload_samples_;
   std::deque<int16_t> playback_samples_;
   std::vector<int16_t> voice_mail_samples_;
