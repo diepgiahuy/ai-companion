@@ -6,6 +6,7 @@
 #include "companion/nimble_pairing_discovery.hpp"
 #include "companion/ota_manager.hpp"
 #include "companion/pairing_controller.hpp"
+#include "companion/presentation_display.hpp"
 #include "companion/press_gesture.hpp"
 #include "companion/provisioning_store.hpp"
 #include "companion/setup_portal.hpp"
@@ -67,7 +68,7 @@ private:
 };
 
 BootGesture boot_gesture(companion::GpioButton& button,
-                         companion::Ssd1306Display& display) {
+                         companion::Display& display) {
   if (!button.is_pressed()) return BootGesture::none;
   const uint64_t started = now_ms();
   display.show(companion::UiState::connecting, "HOLD 3S WIFI");
@@ -87,7 +88,7 @@ BootGesture boot_gesture(companion::GpioButton& button,
       : BootGesture::none;
 }
 
-[[noreturn]] void restart_after_message(companion::Ssd1306Display& display,
+[[noreturn]] void restart_after_message(companion::Display& display,
                                         std::string_view message) {
   display.show(companion::UiState::connecting, message);
   vTaskDelay(pdMS_TO_TICKS(750));
@@ -95,7 +96,7 @@ BootGesture boot_gesture(companion::GpioButton& button,
   while (true) vTaskDelay(portMAX_DELAY);
 }
 
-void show_portal_access(companion::Ssd1306Display& display,
+void show_portal_access(companion::Display& display,
                         const companion::provisioning::SetupPortal& portal,
                         uint32_t& frame) {
   std::array<char, 24> line{};
@@ -113,7 +114,7 @@ void show_portal_access(companion::Ssd1306Display& display,
   display.show(companion::UiState::connecting, line.data());
 }
 
-[[noreturn]] void run_setup_portal(companion::Ssd1306Display& display,
+[[noreturn]] void run_setup_portal(companion::Display& display,
                                    const companion::provisioning::ProvisioningStore& store,
                                    std::string_view device_suffix) {
   companion::provisioning::SetupPortal portal;
@@ -142,7 +143,7 @@ void show_portal_access(companion::Ssd1306Display& display,
 }
 
 [[noreturn]] void run_wifi_reprovision_portal(
-    companion::Ssd1306Display& display,
+    companion::Display& display,
     const companion::provisioning::ProvisioningStore& store,
     std::string_view device_suffix) {
   companion::provisioning::SetupPortal portal;
@@ -170,7 +171,7 @@ void show_portal_access(companion::Ssd1306Display& display,
   }
 }
 
-[[noreturn]] void run_claim_phase(companion::Ssd1306Display& display,
+[[noreturn]] void run_claim_phase(companion::Display& display,
                                   companion::WifiStation& wifi,
                                   const companion::provisioning::ProvisioningStore& store,
                                   const companion::provisioning::PendingConfig& pending,
@@ -250,6 +251,7 @@ extern "C" void app_main() {
   static Esp32Audio audio;
   static EspSrAudioFrontend audio_frontend;
   static Ssd1306Display display;
+  static PresentationDisplay presentation(display);
   static GpioButton physical_button;
   static RuntimeButton button(physical_button);
   static WifiStation wifi;
@@ -265,16 +267,16 @@ extern "C" void app_main() {
   }
   if (!physical_button.initialize()) {
     ESP_LOGE(kTag, "button initialization failed");
-    display.show(UiState::error, "BUTTON ERROR");
+    presentation.show(UiState::error, "BUTTON ERROR");
     return;
   }
 
-  const BootGesture gesture = boot_gesture(physical_button, display);
+  const BootGesture gesture = boot_gesture(physical_button, presentation);
   button.reset(now_ms());
 
   if (!provisioning::secure_storage_preflight()) {
     ESP_LOGE(kTag, "secure storage preflight failed before NVS initialization");
-    display.show(UiState::error, "SECURE STORAGE");
+    presentation.show(UiState::error, "SECURE STORAGE");
     return;
   }
 
@@ -283,12 +285,12 @@ extern "C" void app_main() {
     ESP_LOGE(kTag, "NVS initialization failed: %s", esp_err_to_name(nvs_result));
     if (gesture == BootGesture::factory_reset) {
       if (nvs_flash_erase() != ESP_OK) {
-        display.show(UiState::error, "RESET ERROR");
+        presentation.show(UiState::error, "RESET ERROR");
         return;
       }
-      restart_after_message(display, "LOCAL RESET");
+      restart_after_message(presentation, "LOCAL RESET");
     }
-    display.show(UiState::error, "STORAGE ERROR");
+    presentation.show(UiState::error, "STORAGE ERROR");
     return;
   }
 
@@ -302,15 +304,15 @@ extern "C" void app_main() {
 
   if (gesture == BootGesture::factory_reset) {
     if (!provisioning_store.clear()) {
-      display.show(UiState::error, "RESET ERROR");
+      presentation.show(UiState::error, "RESET ERROR");
       return;
     }
-    restart_after_message(display, "LOCAL RESET");
+    restart_after_message(presentation, "LOCAL RESET");
   }
 
   provisioning::PersistedState persisted = provisioning_store.state();
   if (persisted == provisioning::PersistedState::invalid) {
-    display.show(UiState::error, "CONFIG CORRUPT");
+    presentation.show(UiState::error, "CONFIG CORRUPT");
     ESP_LOGE(kTag, "provisioning state invalid; hold the boot button 8 seconds to clear local provisioning");
     return;
   }
@@ -320,42 +322,42 @@ extern "C" void app_main() {
        persisted == provisioning::PersistedState::validating)) {
     provisioning::RuntimeConfig existing{};
     if (!provisioning_store.load_runtime(existing)) {
-      display.show(UiState::error, "RUNTIME CORRUPT");
+      presentation.show(UiState::error, "RUNTIME CORRUPT");
       return;
     }
-    run_wifi_reprovision_portal(display, provisioning_store, device_suffix.data());
+    run_wifi_reprovision_portal(presentation, provisioning_store, device_suffix.data());
   }
 
   if (persisted == provisioning::PersistedState::unprovisioned) {
-    run_setup_portal(display, provisioning_store, device_suffix.data());
+    run_setup_portal(presentation, provisioning_store, device_suffix.data());
   }
   if (persisted == provisioning::PersistedState::pending_claim) {
     provisioning::PendingConfig pending{};
     if (!provisioning_store.load_pending(pending)) {
-      display.show(UiState::error, "PENDING CORRUPT");
+      presentation.show(UiState::error, "PENDING CORRUPT");
       return;
     }
-    run_claim_phase(display, wifi, provisioning_store, pending, device_id.data());
+    run_claim_phase(presentation, wifi, provisioning_store, pending, device_id.data());
   }
 
   provisioning::RuntimeConfig runtime{};
   if (!provisioning_store.load_runtime(runtime) ||
       !secure_product_transport(runtime.server_url.view(), runtime.device_credential.view())) {
     ESP_LOGE(kTag, "stored product transport/runtime configuration rejected");
-    display.show(UiState::error, "SECURE CONFIG ERROR");
+    presentation.show(UiState::error, "SECURE CONFIG ERROR");
     return;
   }
 
   if (!audio.initialize()) {
     ESP_LOGE(kTag, "I2S audio initialization failed");
-    display.show(UiState::error, "AUDIO ERROR");
+    presentation.show(UiState::error, "AUDIO ERROR");
     return;
   }
 
   const bool initially_connected = wifi.connect(runtime.wifi_ssid.view(), runtime.wifi_password.view());
   if (!initially_connected) {
     ESP_LOGW(kTag, "Wi-Fi not connected yet; continuing in reconnecting state");
-    display.show(UiState::connecting, "WIFI RETRY");
+    presentation.show(UiState::connecting, "WIFI RETRY");
   }
   if (!wifi.start_time_sync(CONFIG_COMPANION_TZ_RULE)) {
     ESP_LOGW(kTag, "SNTP initialization failed; wall clock remains invalid");
@@ -374,7 +376,7 @@ extern "C" void app_main() {
   if (!backend.initialize(runtime.server_url.view(), runtime.device_credential.view(),
                           device_id.data(), device_id.data())) {
     ESP_LOGE(kTag, "WebSocket backend initialization failed");
-    display.show(UiState::error, "BACKEND INIT ERROR");
+    presentation.show(UiState::error, "BACKEND INIT ERROR");
     return;
   }
 
@@ -385,7 +387,7 @@ extern "C" void app_main() {
   }
   if (!backend.enable_confirmation_protocol()) {
     ESP_LOGE(kTag, "destructive confirmation protocol initialization failed");
-    display.show(UiState::error, "CONFIRM INIT ERROR");
+    presentation.show(UiState::error, "CONFIRM INIT ERROR");
     return;
   }
 
@@ -402,14 +404,13 @@ extern "C" void app_main() {
   app_config.smart_vad_enabled = false;
 #endif
 
-  static CompanionApp app(audio, audio, display, button, backend,
+  static CompanionApp app(audio, audio, presentation, button, backend,
                           audio_frontend, app_config);
   app.start(now_ms());
   ESP_LOGI(kTag, "hardware product path using stored provisioning + ESP-SR + secure WebSocket protocol v2");
 
   bool readiness_committed = persisted == provisioning::PersistedState::ready;
   pairing::State previous_pairing_state = pairing_controller.state();
-  pairing::StopReason previous_pairing_stop = pairing_controller.last_stop_reason();
   UserConfirmationRequest confirmation{};
   bool confirmation_pending = false;
   uint64_t confirmation_deadline_ms = 0;
@@ -421,18 +422,24 @@ extern "C" void app_main() {
       button.suppress_current_press(now);
       confirmation_pending = true;
       confirmation_deadline_ms = now + confirmation.deadline_ms;
+      (void)presentation.show_attention(PresentationDomain::confirmation,
+                                        UiState::ready,
+                                        confirmation.prompt_view());
     }
     if (confirmation_pending) {
       if (!backend.user_confirmation_current(confirmation)) {
         button.suppress_current_press(now);
         confirmation_pending = false;
+        (void)presentation.clear_attention(PresentationDomain::confirmation);
       } else if (now >= confirmation_deadline_ms) {
         button.suppress_current_press(now);
         (void)backend.respond_user_confirmation(confirmation, false);
         confirmation_pending = false;
+        (void)presentation.clear_attention(PresentationDomain::confirmation);
       } else if (button.consume_press(now)) {
         (void)backend.respond_user_confirmation(confirmation, true);
         confirmation_pending = false;
+        (void)presentation.clear_attention(PresentationDomain::confirmation);
       }
     }
 
@@ -441,7 +448,7 @@ extern "C" void app_main() {
       if (!pairing_controller.active() && held &&
           (app.state() == UiState::ready || app.state() == UiState::idle)) {
         if (!pairing_controller.start(now)) {
-          display.show(UiState::error, "PAIR START FAIL");
+          (void)presentation.show_transient(UiState::error, "PAIR START FAIL");
         }
       } else if (pairing_controller.active()) {
         if (held) {
@@ -462,18 +469,20 @@ extern "C" void app_main() {
     ota.tick(now);
 
     const pairing::State current_pairing_state = pairing_controller.state();
-    if (confirmation_pending && backend.user_confirmation_current(confirmation)) {
-      display.show(UiState::ready, confirmation.prompt_view());
-    } else if (pairing_controller.active()) {
-      display.show(UiState::ready, pairing_status(current_pairing_state));
+    if (pairing_controller.active()) {
+      if (current_pairing_state != previous_pairing_state) {
+        (void)presentation.show_attention(PresentationDomain::pairing,
+                                          UiState::ready,
+                                          pairing_status(current_pairing_state));
+      }
     } else if (previous_pairing_state != pairing::State::idle) {
+      (void)presentation.clear_attention(PresentationDomain::pairing);
       const pairing::StopReason stopped = pairing_controller.last_stop_reason();
-      display.show(stopped == pairing::StopReason::success ? UiState::ready : UiState::error,
-                   stopped == pairing::StopReason::success ? "PAIRED" : "PAIR ENDED");
-      previous_pairing_stop = stopped;
+      (void)presentation.show_transient(
+          stopped == pairing::StopReason::success ? UiState::ready : UiState::error,
+          stopped == pairing::StopReason::success ? "PAIRED" : "PAIR ENDED");
     }
     previous_pairing_state = current_pairing_state;
-    (void)previous_pairing_stop;
 
     if (!readiness_committed && app.state() == UiState::ready) {
       if (provisioning_store.mark_ready()) {
