@@ -34,7 +34,12 @@ curl -fsS http://127.0.0.1:19000/healthz >/dev/null || { cat "$MODEL_LOG" >&2; e
 CORE_DEVICE="software-device-core"; export MOCK_TRANSCRIPT="tier1 transcript" COMPANION_EVIDENCE_CONFIG_SHA256
 COMPANION_EVIDENCE_CONFIG_SHA256="$(printf '%s\n' 'profile=test' 'allow_mock=true' 'agent=adk:fake_responses' 'auth=database_enrolled' 'asr=mock:tier1 transcript' 'tts=mock' 'protocol=v2' | sha256sum | awk '{print $1}')"
 export COMPANION_OBSERVABILITY_FILE="$CORE_OBS_OUT"; start_server "$SERVER_LOG"; CORE_CREDENTIAL="$(enroll_device "$CORE_DEVICE")"; expect_unauthorized "$CORE_DEVICE" "wrong-tier1-credential"
-"${SOFTWARE_DEVICE_BIN:-/usr/local/bin/companion_software_device}" --url ws://127.0.0.1:18000/v2/device --device-id "$CORE_DEVICE" --token "$CORE_CREDENTIAL" --admin-token "$COMPANION_ADMIN_TOKEN" --scenario-set core --evidence "$OUT"
+if ! "${SOFTWARE_DEVICE_BIN:-/usr/local/bin/companion_software_device}" --url ws://127.0.0.1:18000/v2/device --device-id "$CORE_DEVICE" --token "$CORE_CREDENTIAL" --admin-token "$COMPANION_ADMIN_TOKEN" --scenario-set core --evidence "$OUT"; then
+  echo "Tier-1 core scenario set failed" >&2
+  cat "$SERVER_LOG" >&2
+  cat "$MODEL_LOG" >&2
+  exit 1
+fi
 VOICE_MAIL_SENDER="software-device-voice-mail-sender"; VOICE_MAIL_SENDER_CREDENTIAL="$(enroll_device "$VOICE_MAIL_SENDER")"; set_voice_mail_policy default
 VOICE_MAIL_RELATIONSHIP="$(create_voice_mail_relationship "$VOICE_MAIL_SENDER" "$CORE_DEVICE")"; test -n "$VOICE_MAIL_RELATIONSHIP"
 VOICE_MAIL_FIXTURE="$TMP/voice-mail-tier1.ogg"; base64 -d < "$ROOT/testdata/scenarios/voice-mail/tone.ogg.b64" > "$VOICE_MAIL_FIXTURE"
