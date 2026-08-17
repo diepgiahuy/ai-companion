@@ -12,6 +12,7 @@ ESP32-S3 hardware
   -> WebSocket protocol v2
      - typed JSON control envelopes
      - binary Opus media
+     - Typed Companion Capability RPC for bounded device-local actions
   -> Go session/turn runtime
   -> ASR boundary
   -> Google ADK v2 agent
@@ -26,7 +27,7 @@ There is no product transport selector, custom Qwen runtime selector, shared dev
 
 ## Session and turn runtime
 
-Each connected device has one WebSocket reader and one writer. Protocol v2 control messages and binary Opus media remain separate. Turns are generation-scoped so barge-in/cancellation can invalidate stale model/TTS output without leaking it into a new turn.
+Each connected device has one WebSocket control/reassembly owner and one writer. Protocol v2 control messages and binary Opus media remain separate. Turns are generation-scoped so barge-in/cancellation can invalidate stale model/TTS output without leaking it into a new turn.
 
 `message_id` replay suppression is intentionally session-local. Durable domain mutations use persisted idempotency semantics in their authoritative repository/tool implementation.
 
@@ -35,6 +36,23 @@ Each connected device has one WebSocket reader and one writer. Protocol v2 contr
 Database-enrolled per-device credentials are the only product device-auth mechanism. The server fails closed before WebSocket upgrade when the authenticator is unavailable or when `Device-Id`/credential validation fails. Revocation makes the previously issued credential unusable.
 
 Enrollment-owned user/device/tenant/plan claims are trusted; client headers cannot override them. Admin credential provisioning is a control-plane operation and the raw device credential is shown once, while storage keeps its digest.
+
+## Device capability plane
+
+ADR-003 selects **Typed Companion Capability RPC** as the one Product-v1 boundary for bounded device-local capabilities over the authenticated Protocol-v2 connection:
+
+- `capability.advertise` — device advertises exact supported capability name/version pairs;
+- `capability.call` — backend invokes one advertised bounded capability;
+- `capability.result` — device returns a correlated typed success/error result;
+- `capability.cancel` — backend cancels a current correlated operation where supported.
+
+Firmware never exposes arbitrary remote execution and never connects directly to an MCP server, model, or provider. Capability payload identity cannot override authenticated device/owner authorization. Privileged/destructive actions remain policy-gated and may additionally require local physical confirmation.
+
+The currently implemented physical capability is `device.user_confirmation` v1. It preserves the fresh-press rule: approval requires a new physical press after the bounded prompt becomes active. A capability is not advertised by physical firmware until the exact build can perform a truthful local effect/result.
+
+MCP remains an optional **backend external-integration** boundary behind Companion policy and egress controls; the embedded capability protocol is deliberately not called MCP.
+
+`config.update` / `config.report` are legacy transitional settings controls. Issue #197 owns preserving desired/reported requested/applied/rejected/stale/offline semantics while rebasing settings onto the selected capability/state architecture. No new Product-v1 feature should treat the legacy config messages as the permanent device capability path; after the replacement is proven, the old path is deleted rather than kept as a fallback.
 
 ## Capability/context architecture
 
