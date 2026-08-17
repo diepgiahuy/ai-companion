@@ -50,6 +50,7 @@ struct ScriptedFrontend final : AudioFrontend {
   bool started{};
   bool reference_active{};
   uint64_t reference_epoch{};
+  uint32_t last_reference_rate{};
   size_t resets{};
   size_t reference_begins{};
   size_t reference_ends{};
@@ -77,8 +78,10 @@ struct ScriptedFrontend final : AudioFrontend {
     stats.epoch = 0;
     stats.active = false;
   }
-  bool push_playback_reference(std::span<const int16_t> pcm_16k) override {
-    if (!reference_active) return false;
+  bool push_playback_reference(std::span<const int16_t> pcm_16k,
+                               uint32_t sample_rate_hz) override {
+    if (!reference_active || sample_rate_hz != 16'000) return false;
+    last_reference_rate = sample_rate_hz;
     references.insert(references.end(), pcm_16k.begin(), pcm_16k.end());
     stats.pushed_samples += pcm_16k.size();
     return true;
@@ -114,11 +117,8 @@ struct ScriptedBackend final : VoiceBackend {
   bool report_config(const RuntimeConfigPatch&, bool) override { return true; }
   bool claim_voice_mail(const VoiceMailMetadata&, uint64_t) override { return false; }
   bool report_voice_mail_playback(const VoiceMailMetadata&, bool,
-                                  std::string_view, uint64_t) override {
-    return false;
-  }
-  void cancel_voice_mail(const VoiceMailMetadata&, std::string_view,
-                         uint64_t) override {}
+                                  std::string_view, uint64_t) override { return false; }
+  void cancel_voice_mail(const VoiceMailMetadata&, std::string_view, uint64_t) override {}
   size_t read_playback(std::span<int16_t> destination) override {
     const size_t remaining = playback.size() - playback_offset;
     const size_t count = std::min(remaining, destination.size());
@@ -165,6 +165,9 @@ void playback_reference_and_speech_barge_in_share_generation_path() {
   backend.playback = {100, 200, 300, 400, 500, 600}; backend.playback_offset = 0;
   backend.push(BackendEventType::tts_started); frontend.events.push_back(AudioFrontendEvent::speech_started); app.tick(100);
   assert(speaker.rate == 24'000); assert(speaker.written == 6);
+  // CompanionApp forwards accepted 24-kHz speaker PCM unchanged. AudioRuntime
+  // alone converts it into the 16-kHz domain seen by the vendor frontend.
+  assert(frontend.last_reference_rate == 16'000);
   assert((frontend.references == std::vector<int16_t>{100, 250, 400, 550}));
   assert(frontend.reference_begins == 1);
   assert(frontend.reference_ends == 1);
@@ -174,6 +177,7 @@ void playback_reference_and_speech_barge_in_share_generation_path() {
   assert(stats.playback_stops == 1);
   assert(stats.accepted_playback_samples == 6);
   assert(stats.reference_epochs == 1);
+  assert(stats.reference_converter_dropped_groups == 0);
   assert(!stats.reference_active);
   assert(backend.cancel_count == 1); assert(backend.begin_count == 2); assert(app.state() == UiState::listening);
 }

@@ -26,7 +26,8 @@ public:
   void reset() override;
   bool begin_playback_reference(uint64_t epoch) override;
   void end_playback_reference(uint64_t epoch) override;
-  bool push_playback_reference(std::span<const int16_t> pcm_16k) override;
+  bool push_playback_reference(std::span<const int16_t> accepted_pcm,
+                               uint32_t sample_rate_hz) override;
   PlaybackReferenceStats playback_reference_stats() const override;
   AudioFrontendResult process_capture(std::span<const int16_t> microphone_16k,
                                       std::span<int16_t> cleaned_16k) override;

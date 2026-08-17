@@ -2,6 +2,7 @@
 
 #include "companion/app.hpp"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -15,6 +16,9 @@ struct AudioRuntimeStats {
   uint64_t accepted_playback_samples{};
   uint64_t reference_epochs{};
   uint64_t reference_push_failures{};
+  uint64_t unsupported_reference_rates{};
+  uint64_t oversized_reference_frames{};
+  uint64_t reference_converter_dropped_groups{};
   uint64_t invalid_playback_writes{};
   bool capture_active{};
   bool playback_active{};
@@ -24,26 +28,26 @@ struct AudioRuntimeStats {
 
 // One production owner for physical capture, physical playback and the AFE.
 // CompanionApp still speaks the existing Microphone/Speaker/AudioFrontend ports
-// during the #228 migration, but all three ports resolve to this object so
-// lifetime/epoch invariants are enforced in one place rather than by unrelated
-// board adapters.
+// during the #228 migration, but playback-reference conversion/lifetime is now
+// fully owned here rather than split between CompanionApp and board adapters.
 class AudioRuntime final : public Microphone, public Speaker, public AudioFrontend {
 public:
   AudioRuntime(Microphone& microphone, Speaker& speaker, AudioFrontend& frontend)
       : microphone_(microphone), speaker_(speaker), frontend_(frontend) {}
 
   bool start() override {
-    // Startup is a real ownership boundary, not a flag reset: if this object is
-    // ever restarted after a partial failure, drain ownership deterministically
-    // rather than orphaning an active capture/playback resource.
     stop_capture();
     stop_playback();
     frontend_.reset();
+    reference_converter_.reset();
+    reference_source_rate_hz_ = 0;
     return frontend_.start();
   }
 
   void reset() override {
     end_current_reference();
+    reference_converter_.reset();
+    reference_source_rate_hz_ = 0;
     frontend_.reset();
   }
 
@@ -68,6 +72,8 @@ public:
   bool start_playback(uint32_t sample_rate_hz) override {
     if (playback_active_) return false;
     end_current_reference();
+    reference_converter_.reset();
+    reference_source_rate_hz_ = 0;
     if (!speaker_.start_playback(sample_rate_hz)) return false;
     playback_active_ = true;
     playback_epoch_ = next_epoch(playback_epoch_);
@@ -95,6 +101,8 @@ public:
 
   void stop_playback() override {
     end_current_reference();
+    reference_converter_.reset();
+    reference_source_rate_hz_ = 0;
     if (!playback_active_) return;
     speaker_.stop_playback();
     playback_active_ = false;
@@ -116,21 +124,51 @@ public:
     frontend_.end_playback_reference(epoch);
     reference_active_ = false;
     reference_epoch_ = 0;
+    reference_converter_.reset();
+    reference_source_rate_hz_ = 0;
   }
 
-  bool push_playback_reference(std::span<const int16_t> pcm_16k) override {
-    if (pcm_16k.empty()) return true;
-    if (!playback_active_) {
-      ++reference_push_failures_;
-      return false;
+  bool push_playback_reference(std::span<const int16_t> accepted_pcm,
+                               uint32_t sample_rate_hz) override {
+    if (accepted_pcm.empty()) return true;
+    if (!playback_active_) return reference_failure();
+    if (accepted_pcm.size() > reference_frame_.size()) {
+      ++oversized_reference_frames_;
+      return reference_failure();
     }
-    if (!reference_active_ && !begin_playback_reference(playback_epoch_)) {
-      ++reference_push_failures_;
-      return false;
+    if (sample_rate_hz != 16'000 && sample_rate_hz != 24'000) {
+      ++unsupported_reference_rates_;
+      return reference_failure();
     }
-    if (!frontend_.push_playback_reference(pcm_16k)) {
-      ++reference_push_failures_;
-      return false;
+    if (reference_active_ && reference_source_rate_hz_ != sample_rate_hz) {
+      ++unsupported_reference_rates_;
+      return reference_failure();
+    }
+    if (!reference_active_) {
+      reference_converter_.reset();
+      reference_source_rate_hz_ = sample_rate_hz;
+      if (!begin_playback_reference(playback_epoch_)) {
+        reference_source_rate_hz_ = 0;
+        return reference_failure();
+      }
+    }
+
+    if (sample_rate_hz == 16'000) {
+      if (!frontend_.push_playback_reference(accepted_pcm, 16'000)) {
+        return reference_failure();
+      }
+      return true;
+    }
+
+    const uint64_t dropped_before = reference_converter_.dropped_groups();
+    const size_t converted = reference_converter_.convert(accepted_pcm, reference_frame_);
+    if (reference_converter_.dropped_groups() != dropped_before) {
+      return reference_failure();
+    }
+    if (converted == 0) return true; // converter may be carrying 1–2 samples.
+    if (!frontend_.push_playback_reference(
+            std::span<const int16_t>(reference_frame_.data(), converted), 16'000)) {
+      return reference_failure();
     }
     return true;
   }
@@ -152,6 +190,9 @@ public:
         .accepted_playback_samples = accepted_playback_samples_,
         .reference_epochs = reference_epochs_,
         .reference_push_failures = reference_push_failures_,
+        .unsupported_reference_rates = unsupported_reference_rates_,
+        .oversized_reference_frames = oversized_reference_frames_,
+        .reference_converter_dropped_groups = reference_converter_.dropped_groups(),
         .invalid_playback_writes = invalid_playback_writes_,
         .capture_active = capture_active_,
         .playback_active = playback_active_,
@@ -166,19 +207,30 @@ private:
     return current == 0 ? 1 : current;
   }
 
+  bool reference_failure() {
+    ++reference_push_failures_;
+    return false;
+  }
+
   void end_current_reference() {
-    if (!reference_active_) return;
-    frontend_.end_playback_reference(reference_epoch_);
-    reference_active_ = false;
-    reference_epoch_ = 0;
+    if (reference_active_) {
+      frontend_.end_playback_reference(reference_epoch_);
+      reference_active_ = false;
+      reference_epoch_ = 0;
+    }
+    reference_converter_.reset();
+    reference_source_rate_hz_ = 0;
   }
 
   Microphone& microphone_;
   Speaker& speaker_;
   AudioFrontend& frontend_;
+  PlaybackReference24To16 reference_converter_{};
+  std::array<int16_t, kAudioFrameSamples> reference_frame_{};
   bool capture_active_{};
   bool playback_active_{};
   bool reference_active_{};
+  uint32_t reference_source_rate_hz_{};
   uint64_t playback_epoch_{};
   uint64_t reference_epoch_{};
   uint64_t playback_starts_{};
@@ -186,6 +238,8 @@ private:
   uint64_t accepted_playback_samples_{};
   uint64_t reference_epochs_{};
   uint64_t reference_push_failures_{};
+  uint64_t unsupported_reference_rates_{};
+  uint64_t oversized_reference_frames_{};
   uint64_t invalid_playback_writes_{};
 };
 
