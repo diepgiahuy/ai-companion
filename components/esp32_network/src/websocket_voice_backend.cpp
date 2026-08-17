@@ -1340,6 +1340,19 @@ void WebSocketVoiceBackend::handle_text(std::string_view json) {
     cJSON_Delete(root);
     return;
   }
+  const bool presentation_control =
+      type == protocol::ControlType::ui_card ||
+      type == protocol::ControlType::ui_state ||
+      type == protocol::ControlType::agent_status;
+  if (presentation_control &&
+      presentation_ingress::contains_unsupported_json_nul(json)) {
+    enqueue_protocol_error(
+        "invalid_envelope",
+        "presentation control contains an unsupported zero character");
+    enqueue_event(BackendEventType::error, "INVALID PRESENTATION CONTROL");
+    cJSON_Delete(root);
+    return;
+  }
   if (!payload_fields_valid(type, payload)) {
     enqueue_protocol_error("invalid_envelope", "control payload has unknown fields");
     enqueue_event(BackendEventType::error, "UNKNOWN CONTROL PAYLOAD FIELD");
@@ -1408,7 +1421,7 @@ void WebSocketVoiceBackend::handle_text(std::string_view json) {
       (type == protocol::ControlType::protocol_error && !incoming_turn_id.empty())) {
     if (!active_turn_matches(incoming_turn_id)) {
       cJSON_Delete(root);
-      return; // A delayed terminal/control from an older turn is harmless.
+      return;
     }
   }
 
@@ -1583,7 +1596,6 @@ void WebSocketVoiceBackend::handle_text(std::string_view json) {
   } else if (type == protocol::ControlType::session_ping) {
     enqueue_pong(message_id);
   } else if (type == protocol::ControlType::session_pong) {
-    // No state transition is associated with a pong.
   } else if (type == protocol::ControlType::turn_abort) {
     if (deactivate_matching_turn(incoming_turn_id)) reset_turn_queues();
   } else if (type == protocol::ControlType::protocol_error) {
