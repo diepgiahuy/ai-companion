@@ -494,7 +494,7 @@ extern "C" void app_main() {
       break;
     }
 
-    if (pairing_available) pairing_controller.tick(now);
+    if (!confirmation_pending && pairing_available) pairing_controller.tick(now);
 
     app.tick(now);
     ota.set_poll_interval_ms(static_cast<uint64_t>(app.config().ota_poll_interval_s) * 1000);
