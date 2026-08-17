@@ -264,6 +264,30 @@ private:
     return 9;
   }
 
+  static std::array<char, 97> normalize_text(std::string_view source,
+                                              bool& truncated) {
+    std::array<char, 97> normalized{};
+    size_t count = std::min(source.size(), normalized.size() - 1);
+    truncated = source.size() > count;
+    if (truncated) {
+      // If the byte immediately after the proposed prefix is a UTF-8
+      // continuation byte, the prefix ends inside a multi-byte code point.
+      // Rewind to that code point's leading byte rather than emitting invalid
+      // UTF-8. This remains allocation-free and does not reinterpret content.
+      while (count > 0 &&
+             (static_cast<unsigned char>(source[count]) & 0xC0U) == 0x80U) {
+        --count;
+      }
+    }
+    std::copy_n(source.begin(), count, normalized.begin());
+    return normalized;
+  }
+
+  static std::string_view text_view(const std::array<char, 97>& text) {
+    const auto end = std::find(text.begin(), text.end(), '\0');
+    return {text.data(), static_cast<size_t>(end - text.begin())};
+  }
+
   bool scope_current(PresentationScope scope, uint64_t session_epoch,
                      uint64_t generation) const {
     switch (scope) {
@@ -278,7 +302,9 @@ private:
   }
 
   bool apply_base(const PresentationEvent& event) {
-    if (!accept_revision(base_, event.revision, event.text)) return false;
+    bool truncated = false;
+    const auto normalized = normalize_text(event.text, truncated);
+    if (!accept_revision(base_, event.revision, normalized)) return false;
     base_.active = true;
     base_.revision_seen = true;
     base_.activity = event.activity;
@@ -287,14 +313,17 @@ private:
     base_.session_epoch = event.session_epoch;
     base_.generation = event.generation;
     base_.revision = event.revision;
-    set_text(base_.text, event.text);
+    base_.text = normalized;
+    if (truncated) ++counters_.truncated_text;
     return true;
   }
 
   bool apply_attention(const PresentationEvent& event) {
     if (event.domain == PresentationDomain::count) return false;
     Candidate& slot = attention_[domain_index(event.domain)];
-    if (!accept_revision(slot, event.revision, event.text)) return false;
+    bool truncated = false;
+    const auto normalized = normalize_text(event.text, truncated);
+    if (!accept_revision(slot, event.revision, normalized)) return false;
     if (slot.active) ++counters_.coalesced_updates;
     slot.active = true;
     slot.revision_seen = true;
@@ -304,7 +333,8 @@ private:
     slot.session_epoch = event.session_epoch;
     slot.generation = event.generation;
     slot.revision = event.revision;
-    set_text(slot.text, event.text);
+    slot.text = normalized;
+    if (truncated) ++counters_.truncated_text;
     return true;
   }
 
@@ -324,14 +354,14 @@ private:
   }
 
   bool accept_revision(const Candidate& current, uint64_t revision,
-                       std::string_view text) {
+                       const std::array<char, 97>& normalized) {
     if (!current.revision_seen) return true;
     if (revision < current.revision) {
       ++counters_.stale_drops;
       return false;
     }
     if (revision == current.revision) {
-      if (text_view(current.text) == text) {
+      if (current.text == normalized) {
         ++counters_.duplicate_drops;
       } else {
         ++counters_.revision_conflicts;
@@ -351,18 +381,6 @@ private:
     for (auto& slot : attention_) {
       if (slot.active && slot.scope == scope) slot = {};
     }
-  }
-
-  void set_text(std::array<char, 97>& destination, std::string_view source) {
-    destination.fill('\0');
-    const size_t count = std::min(source.size(), destination.size() - 1);
-    std::copy_n(source.begin(), count, destination.begin());
-    if (source.size() > count) ++counters_.truncated_text;
-  }
-
-  static std::string_view text_view(const std::array<char, 97>& text) {
-    const auto end = std::find(text.begin(), text.end(), '\0');
-    return {text.data(), static_cast<size_t>(end - text.begin())};
   }
 
   uint64_t session_epoch_{};
