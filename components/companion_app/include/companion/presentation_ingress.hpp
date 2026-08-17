@@ -17,6 +17,33 @@ inline constexpr size_t kAgentStatusBytes = 64;
 
 namespace presentation_ingress {
 
+inline bool contains_unsupported_json_nul(std::string_view json) {
+  bool in_string = false;
+  bool escaped = false;
+  for (size_t index = 0; index < json.size(); ++index) {
+    const char ch = json[index];
+    if (ch == '\0') return true;
+    if (!in_string) {
+      if (ch == '"') in_string = true;
+      continue;
+    }
+    if (escaped) {
+      if (ch == 'u' && index + 4 < json.size() &&
+          json.substr(index + 1, 4) == "0000") {
+        return true;
+      }
+      escaped = false;
+      continue;
+    }
+    if (ch == '\\') {
+      escaped = true;
+    } else if (ch == '"') {
+      in_string = false;
+    }
+  }
+  return false;
+}
+
 inline bool valid_kind(std::string_view value) {
   if (value.empty() || value.size() > kPresentationCardKindBytes) return false;
   for (const char ch : value) {
