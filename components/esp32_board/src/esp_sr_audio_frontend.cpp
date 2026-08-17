@@ -199,9 +199,6 @@ void EspSrAudioFrontend::reset() {
 
 bool EspSrAudioFrontend::begin_playback_reference(uint64_t epoch) {
   if (impl_ == nullptr || impl_->data == nullptr || epoch == 0) return false;
-  // A playback reference epoch is also an AFE buffering epoch. Clear local
-  // staging and ESP-SR's internal feed/fetch buffers so pre-TTS audio/output
-  // cannot leak into the first monitored full-duplex chunk.
   impl_->clear_pipeline_state();
   impl_->reference_epoch = epoch;
   impl_->reference_active = true;
@@ -210,17 +207,18 @@ bool EspSrAudioFrontend::begin_playback_reference(uint64_t epoch) {
 
 void EspSrAudioFrontend::end_playback_reference(uint64_t epoch) {
   if (impl_ == nullptr || !impl_->reference_active || epoch != impl_->reference_epoch) return;
-  // Cancel/drain is a hard epoch boundary too: drop queued reference, staged
-  // microphone/output and vendor internal AFE buffers before later capture can
-  // be interpreted as a new turn.
   impl_->clear_pipeline_state();
   impl_->reference_active = false;
   impl_->reference_epoch = 0;
 }
 
-bool EspSrAudioFrontend::push_playback_reference(std::span<const int16_t> pcm_16k) {
-  if (impl_ == nullptr || impl_->data == nullptr || !impl_->reference_active) return false;
-  for (const int16_t sample : pcm_16k) {
+bool EspSrAudioFrontend::push_playback_reference(
+    std::span<const int16_t> accepted_pcm, uint32_t sample_rate_hz) {
+  if (sample_rate_hz != 16'000 || impl_ == nullptr || impl_->data == nullptr ||
+      !impl_->reference_active) {
+    return false;
+  }
+  for (const int16_t sample : accepted_pcm) {
     if (!impl_->references.push(sample)) {
       ++impl_->reference_overruns;
       return false;
