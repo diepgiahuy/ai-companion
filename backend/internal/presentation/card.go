@@ -2,7 +2,8 @@ package presentation
 
 import (
 	"fmt"
-	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 const (
@@ -43,20 +44,46 @@ func (c CardV1) Validate() error {
 	if c.Version != CardVersion {
 		return fmt.Errorf("card version must be %d", CardVersion)
 	}
-	if strings.TrimSpace(c.Kind) == "" || len(c.Kind) > maximumKindBytes {
-		return fmt.Errorf("card kind must be 1..%d bytes", maximumKindBytes)
+	if len(c.Kind) == 0 || len(c.Kind) > maximumKindBytes || !validKind(c.Kind) {
+		return fmt.Errorf("card kind must be a 1..%d byte ASCII token", maximumKindBytes)
 	}
-	if len(c.Title) > maximumTitleBytes {
-		return fmt.Errorf("card title exceeds %d bytes", maximumTitleBytes)
+	if err := validateText("card title", c.Title, maximumTitleBytes); err != nil {
+		return err
 	}
-	if len(c.Primary) > maximumTextBytes {
-		return fmt.Errorf("card primary exceeds %d bytes", maximumTextBytes)
+	if err := validateText("card primary", c.Primary, maximumTextBytes); err != nil {
+		return err
 	}
-	if len(c.Secondary) > maximumTextBytes {
-		return fmt.Errorf("card secondary exceeds %d bytes", maximumTextBytes)
+	if err := validateText("card secondary", c.Secondary, maximumTextBytes); err != nil {
+		return err
 	}
 	if c.Progress < 0 || c.Progress > 100 {
 		return fmt.Errorf("card progress must be 0..100")
+	}
+	return nil
+}
+
+func validKind(kind string) bool {
+	for _, ch := range kind {
+		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+			(ch >= '0' && ch <= '9') || ch == '_' || ch == '-' || ch == '.' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func validateText(name, value string, maximumBytes int) error {
+	if len(value) > maximumBytes {
+		return fmt.Errorf("%s exceeds %d bytes", name, maximumBytes)
+	}
+	if !utf8.ValidString(value) {
+		return fmt.Errorf("%s must be valid UTF-8", name)
+	}
+	for _, ch := range value {
+		if unicode.IsControl(ch) {
+			return fmt.Errorf("%s must not contain control characters", name)
+		}
 	}
 	return nil
 }
