@@ -192,7 +192,7 @@ func RegisterTools(registry *capability.ToolRegistry, router *Router) error {
 	return registry.Register(capability.FunctionTool{
 		ToolName: VolumeSetName,
 		ToolDefinition: &capability.ToolDefinition{
-			Name: devicecapVolumeToolName(),
+			Name: VolumeSetName,
 			Description: "Set the authenticated current device speaker volume from 0 to 100.",
 			Pack: "device", Risk: "write",
 			Parameters: map[string]any{
@@ -229,5 +229,3 @@ func RegisterTools(registry *capability.ToolRegistry, router *Router) error {
 		},
 	})
 }
-
-func devicecapVolumeToolName() string { return VolumeSetName }
