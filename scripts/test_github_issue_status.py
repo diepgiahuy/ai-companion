@@ -24,11 +24,11 @@ class StatusDecisionTests(unittest.TestCase):
         self.assertEqual(reason, "unclaimed backlog")
         self.assertEqual(status.derive_project_status(issue("enhancement"), []), ("Backlog", reason))
 
-    def test_blocked_leaf_with_cleared_blockers_promotes_ready(self) -> None:
+    def test_blocked_leaf_with_cleared_blockers_returns_to_backlog(self) -> None:
         desired, reason = status.derive_execution_label(issue("status:blocked"), [])
-        self.assertEqual(desired, "status:ready")
-        self.assertEqual(reason, "blockers cleared")
-        self.assertEqual(status.derive_project_status(issue("status:blocked"), []), ("Ready", reason))
+        self.assertIsNone(desired)
+        self.assertEqual(reason, "blockers cleared; revalidation required")
+        self.assertEqual(status.derive_project_status(issue("status:blocked"), []), ("Backlog", reason))
 
     def test_open_blocker_forces_blocked(self) -> None:
         desired, reason = status.derive_execution_label(issue("status:ready"), [91])
@@ -42,6 +42,11 @@ class StatusDecisionTests(unittest.TestCase):
         self.assertEqual(desired, "status:in-progress")
         normalized = status.normalized_issue_labels(status.issue_label_names(sample), desired)
         self.assertEqual(set(normalized) & status.STATUS_LABELS, {"status:in-progress"})
+
+    def test_explicit_ready_remains_ready_without_blockers(self) -> None:
+        desired, reason = status.derive_execution_label(issue("status:ready"), [])
+        self.assertEqual(desired, "status:ready")
+        self.assertEqual(reason, "explicit ready")
 
     def test_closed_issue_has_no_execution_label_and_project_done(self) -> None:
         sample = issue("enhancement", "status:in-progress", state="closed")
@@ -72,7 +77,7 @@ class ReconcileMutationTests(unittest.TestCase):
 
         current = {"enhancement", "status:blocked"}
         with patch.object(reconcile, "api", side_effect=fake_api):
-            changed = reconcile.set_status(23, current, "status:ready")
+            changed = reconcile.set_status(23, current, None)
 
         self.assertTrue(changed)
         self.assertEqual(
@@ -81,7 +86,7 @@ class ReconcileMutationTests(unittest.TestCase):
                 (
                     "repos/diepgiahuy/ai-companion/issues/23/labels",
                     "PUT",
-                    {"labels": ["enhancement", "status:ready"]},
+                    {"labels": ["enhancement"]},
                 )
             ],
         )
@@ -96,7 +101,7 @@ class ReconcileMutationTests(unittest.TestCase):
         self.assertFalse(changed)
         api.assert_not_called()
 
-    def test_cleared_blocker_reconcile_converges_in_one_mutation(self) -> None:
+    def test_cleared_blocker_reconcile_converges_to_backlog_in_one_mutation(self) -> None:
         sample = issue("enhancement", "status:blocked")
         calls: list[tuple[str, str, dict | None]] = []
 
@@ -112,7 +117,7 @@ class ReconcileMutationTests(unittest.TestCase):
 
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0][1], "PUT")
-        self.assertEqual(calls[0][2], {"labels": ["enhancement", "status:ready"]})
+        self.assertEqual(calls[0][2], {"labels": ["enhancement"]})
 
 
 if __name__ == "__main__":

@@ -69,8 +69,12 @@ Duplication is often cheaper than the wrong abstraction.
 * Do not create an interface when there is only one implementation unless there is a real boundary, substitution requirement, or testing contract.
 * Optimize for comprehensibility, not pattern compliance.
 
-### 9. Preserve behavior by default
-Unless explicitly requested otherwise, preserve public APIs, schemas, data contracts, and backward compatibility.
+### 9. Preserve contracts, not obsolete internals
+Preserve public/user-visible behavior, persisted data semantics, schemas that still need migration compatibility, security/privacy boundaries, and external contracts that have real consumers.
+
+During active development, internal prototype architecture is replaceable. Private APIs, message wiring, folders, abstractions, selectors, and fallback paths do not receive backward-compatibility protection merely because they already exist. When a reviewed target architecture is better, cut over and delete the inferior internal path after its required behavior/data has been migrated and proven.
+
+Do not keep permanent parallel old/new runtimes, transports, stores, or internal APIs solely to make rollback or speculative compatibility easier. Compatibility must correspond to an actual consumer, persisted-data, migration, recovery, or explicit product requirement.
 
 ### 10. Root cause over symptom patching
 When debugging, trace: `symptom → failing state → source of invalid state → root cause`.
