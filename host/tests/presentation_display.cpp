@@ -74,12 +74,14 @@ int main() {
     assert(display.model().domain == PresentationDomain::alarm);
     assert(sink.state() == UiState::alarm);
 
-    // Returning to an ordinary legacy app state explicitly clears the current
-    // legacy attention domain instead of leaving stale alarm state behind.
+    // Clearing legacy attention and updating the base are one semantic
+    // transition and therefore one renderer write, not a clear-frame + redraw.
+    const uint32_t before = sink.calls();
     display.show(UiState::listening, "LISTENING");
     assert(display.model().surface == PresentationModel::Surface::base);
     assert(sink.state() == UiState::listening);
     assert(sink.text() == "LISTENING");
+    assert(sink.calls() == before + 1);
   }
 
   {
@@ -95,10 +97,12 @@ int main() {
     assert(sink.state() == UiState::voice_mail_playing);
     assert(display.model().domain == PresentationDomain::voice_mail);
 
+    const uint32_t before = sink.calls();
     display.show(UiState::ready, "READY AGAIN");
     assert(display.model().surface == PresentationModel::Surface::base);
     assert(sink.state() == UiState::ready);
     assert(sink.text() == "READY AGAIN");
+    assert(sink.calls() == before + 1);
   }
 
   {
@@ -129,11 +133,14 @@ int main() {
     assert(sink.state() == UiState::error);
     assert(sink.text() == "PAIR ENDED");
 
-    // The next base render retires the informational pairing-result card.
+    // Retiring the transient and updating the next base snapshot is also one
+    // renderer write, preserving the legacy status-until-next-update behavior.
+    const uint32_t before = sink.calls();
     display.show(UiState::idle, "IDLE");
     assert(display.model().surface == PresentationModel::Surface::base);
     assert(sink.state() == UiState::idle);
     assert(sink.text() == "IDLE");
+    assert(sink.calls() == before + 1);
   }
 
   return 0;
