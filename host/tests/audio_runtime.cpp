@@ -45,13 +45,14 @@ struct FakeFrontend final : AudioFrontend {
   bool started{};
   bool active{};
   uint64_t epoch{};
+  size_t starts{};
   size_t begins{};
   size_t ends{};
   size_t resets{};
   std::vector<int16_t> references;
   PlaybackReferenceStats stats{};
 
-  bool start() override { started = true; return true; }
+  bool start() override { started = true; ++starts; return true; }
   void reset() override { ++resets; active = false; epoch = 0; stats.active = false; stats.epoch = 0; }
   bool begin_playback_reference(uint64_t value) override {
     if (value == 0 || active) return false;
@@ -94,6 +95,8 @@ int main() {
 
   assert(runtime.start());
   assert(frontend.started);
+  assert(frontend.starts == 1);
+  assert(frontend.resets == 1);
 
   assert(runtime.start_capture());
   assert(runtime.start_capture());
@@ -150,10 +153,29 @@ int main() {
   assert(frontend.begins == 2);
   runtime.reset();
   assert(frontend.ends == 2);
-  assert(frontend.resets == 1);
+  assert(frontend.resets == 2);
   assert(!runtime.stats().reference_active);
   assert(runtime.stats().reference_epochs == 2);
   runtime.stop_playback();
+
+  // Restart with active capture + monitored playback must cooperatively release
+  // all owned resources before reinitializing the frontend. No active resource
+  // may survive merely because start() was called after a partial failure.
+  assert(runtime.start_capture());
+  assert(runtime.start_playback(24'000));
+  assert(runtime.write_playback(pcm) == 2);
+  assert(runtime.push_playback_reference(reference));
+  const size_t mic_stops_before_restart = microphone.stops;
+  const size_t speaker_stops_before_restart = speaker.stops;
+  assert(runtime.start());
+  assert(microphone.stops == mic_stops_before_restart + 1);
+  assert(speaker.stops == speaker_stops_before_restart + 1);
+  assert(frontend.ends == 3);
+  assert(frontend.resets == 3);
+  assert(frontend.starts == 2);
+  assert(!runtime.stats().capture_active);
+  assert(!runtime.stats().playback_active);
+  assert(!runtime.stats().reference_active);
 
   return 0;
 }
