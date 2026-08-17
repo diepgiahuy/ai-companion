@@ -21,6 +21,8 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 
+struct cJSON;
+
 namespace companion {
 
 enum class PairingBackendEventType : uint8_t {
@@ -115,7 +117,6 @@ private:
   static constexpr size_t kOpusFrameSamples = 960;
   static constexpr size_t kMaximumOpusPacketBytes = 1'275;
   static constexpr size_t kMaximumDecodedSamples = 1'440;
-  static constexpr size_t kConfirmationControlBytes = 2'049;
 
   enum class CommandType : uint8_t {
     hello,
@@ -195,9 +196,6 @@ private:
   UserConfirmationRequest active_confirmation_{};
   bool confirmation_ready_{};
   bool confirmation_active_{};
-  std::array<char, kConfirmationControlBytes> confirmation_text_payload_{};
-  size_t confirmation_text_payload_size_{};
-  int confirmation_receive_opcode_{};
   std::array<char, 8'193> text_payload_{};
   size_t text_payload_size_{};
   int receive_opcode_{};
@@ -246,17 +244,15 @@ private:
                             int32_t event_id, void* event_data);
   static void pairing_event_handler(void* context, esp_event_base_t base,
                                     int32_t event_id, void* event_data);
-  static void confirmation_event_handler(void* context, esp_event_base_t base,
-                                         int32_t event_id, void* event_data);
   static void writer_entry(void* context);
   static void media_entry(void* context);
   void on_event(int32_t event_id, esp_websocket_event_data_t* data);
   void on_pairing_event(int32_t event_id, esp_websocket_event_data_t* data);
-  void on_confirmation_event(int32_t event_id, esp_websocket_event_data_t* data);
   void writer_loop();
   void media_loop();
   void handle_text(std::string_view json);
-  bool handle_confirmation_text(std::string_view json);
+  bool handle_confirmation_call(const cJSON* root, const cJSON* payload);
+  bool handle_confirmation_cancel(const cJSON* root, const cJSON* payload);
   bool handle_pairing_text(std::string_view json);
   void handle_binary(const esp_websocket_event_data_t& data);
   bool enqueue_command(CommandType type, std::string_view turn = {}, ListenMode mode = ListenMode::manual);
@@ -264,6 +260,11 @@ private:
   bool enqueue_protocol_error(std::string_view code, std::string_view message);
   bool enqueue_confirmation_result(const UserConfirmationRequest& request,
                                    bool approved);
+  bool enqueue_unsupported_capability_result(std::string_view correlation_id,
+                                             std::string_view turn_id,
+                                             uint64_t generation_id,
+                                             std::string_view capability_name,
+                                             std::string_view capability_version);
   void clear_user_confirmation();
   bool encode_and_enqueue(std::span<const int16_t, kOpusFrameSamples> pcm,
                           uint64_t media_generation);

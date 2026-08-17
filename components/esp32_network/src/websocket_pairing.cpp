@@ -1,4 +1,5 @@
 #include "companion/websocket_voice_backend.hpp"
+#include "companion/capability_dispatch.hpp"
 
 #include "cJSON.h"
 #include "esp_random.h"
@@ -38,6 +39,16 @@ std::string_view json_string(const cJSON* object, const char* name) {
   return item->valuestring;
 }
 
+bool exact_uint64(const cJSON* value, uint64_t& output) {
+  constexpr double kMaximumExactJSONInteger = 9'007'199'254'740'991.0;
+  if (!cJSON_IsNumber(value) || value->valuedouble < 0 ||
+      value->valuedouble > kMaximumExactJSONInteger) return false;
+  const auto parsed = static_cast<uint64_t>(value->valuedouble);
+  if (value->valuedouble != static_cast<double>(parsed)) return false;
+  output = parsed;
+  return true;
+}
+
 bool valid_pairing_alias(std::string_view value) {
   if (value.size() != 19 || !value.starts_with("CP-")) return false;
   for (const char c : value.substr(3)) {
@@ -71,8 +82,6 @@ bool format_now_rfc3339(std::array<char, 36>& output) {
   return std::strftime(output.data(), output.size(), "%Y-%m-%dT%H:%M:%SZ", &utc) > 0;
 }
 
-// Howard Hinnant's civil-date conversion, expressed here to avoid depending on
-// local timezone state when parsing server RFC3339 timestamps.
 int64_t days_from_civil(int year, unsigned month, unsigned day) {
   year -= month <= 2;
   const int era = (year >= 0 ? year : year - 399) / 400;
@@ -167,10 +176,10 @@ bool hmac_sha256(std::string_view key, std::string_view message,
          output_length == output.size();
 }
 
-bool validate_pairing_envelope(const cJSON* root,
-                               std::string_view expected_session,
-                               const cJSON*& payload,
-                               std::string_view& message_id) {
+bool validate_mux_envelope(const cJSON* root,
+                           std::string_view expected_session,
+                           const cJSON*& payload,
+                           std::string_view& message_id) {
   if (!cJSON_IsObject(root)) return false;
   const cJSON* version = cJSON_GetObjectItemCaseSensitive(root, "version");
   const cJSON* payload_item = cJSON_GetObjectItemCaseSensitive(root, "payload");
@@ -208,19 +217,24 @@ bool WebSocketVoiceBackend::enable_pairing_protocol() {
       pairing_event_queue_buffer_.data(), &pairing_event_queue_storage_);
   if (pairing_event_queue_ == nullptr) return false;
 
-  if (esp_websocket_unregister_events(client_, WEBSOCKET_EVENT_ANY,
-                                      &WebSocketVoiceBackend::event_handler) != ESP_OK) {
-    pairing_event_queue_ = nullptr;
-    return false;
-  }
-  if (esp_websocket_register_events(client_, WEBSOCKET_EVENT_ANY,
-                                    &WebSocketVoiceBackend::pairing_event_handler,
-                                    this) != ESP_OK) {
-    (void)esp_websocket_register_events(client_, WEBSOCKET_EVENT_ANY,
-                                        &WebSocketVoiceBackend::event_handler,
-                                        this);
-    pairing_event_queue_ = nullptr;
-    return false;
+  // Pairing and device capabilities share one WebSocket DATA owner. Only the
+  // first optional control plane replaces the base event handler; later planes
+  // reuse the already-installed mux.
+  if (!confirmation_protocol_enabled_.load()) {
+    if (esp_websocket_unregister_events(client_, WEBSOCKET_EVENT_ANY,
+                                        &WebSocketVoiceBackend::event_handler) != ESP_OK) {
+      pairing_event_queue_ = nullptr;
+      return false;
+    }
+    if (esp_websocket_register_events(client_, WEBSOCKET_EVENT_ANY,
+                                      &WebSocketVoiceBackend::pairing_event_handler,
+                                      this) != ESP_OK) {
+      (void)esp_websocket_register_events(client_, WEBSOCKET_EVENT_ANY,
+                                          &WebSocketVoiceBackend::event_handler,
+                                          this);
+      pairing_event_queue_ = nullptr;
+      return false;
+    }
   }
   pairing_protocol_enabled_.store(true);
   return true;
@@ -318,8 +332,6 @@ bool WebSocketVoiceBackend::poll_pairing_event(PairingBackendEvent& event) {
 bool WebSocketVoiceBackend::enqueue_pairing_event(const PairingBackendEvent& event) {
   if (pairing_event_queue_ == nullptr) return false;
   if (xQueueSend(pairing_event_queue_, &event, 0) == pdPASS) return true;
-  // Pairing queues never drop an older semantic event in favor of a newer one;
-  // overflow is a protocol safety failure and terminates the local attempt.
   xQueueReset(pairing_event_queue_);
   PairingBackendEvent disconnected{};
   disconnected.type = PairingBackendEventType::disconnected;
@@ -360,9 +372,6 @@ bool WebSocketVoiceBackend::send_pairing_control(protocol::ControlType type,
       .occurred_at = occurred_at.data(),
   };
   if (!protocol::encode(envelope, encoded, written)) return false;
-  // esp_websocket_client serializes sends internally. Pairing controls are
-  // sparse and bounded, so reuse the same authenticated client instead of
-  // introducing a second transport/writer lifecycle.
   return send_text({encoded.data(), written});
 }
 
@@ -377,9 +386,19 @@ void WebSocketVoiceBackend::pairing_event_handler(
 void WebSocketVoiceBackend::on_pairing_event(
     int32_t event_id, esp_websocket_event_data_t* data) {
   if (event_id == WEBSOCKET_EVENT_DISCONNECTED) {
-    PairingBackendEvent event{};
-    event.type = PairingBackendEventType::disconnected;
-    (void)enqueue_pairing_event(event);
+    if (pairing_protocol_enabled_.load()) {
+      PairingBackendEvent event{};
+      event.type = PairingBackendEventType::disconnected;
+      (void)enqueue_pairing_event(event);
+    }
+    confirmation_advertised_.store(false);
+    clear_user_confirmation();
+    on_event(event_id, data);
+    return;
+  }
+  if (event_id == WEBSOCKET_EVENT_CONNECTED) {
+    confirmation_advertised_.store(false);
+    clear_user_confirmation();
     on_event(event_id, data);
     return;
   }
@@ -418,11 +437,20 @@ bool WebSocketVoiceBackend::handle_pairing_text(std::string_view json) {
   }
   protocol::ControlType type{};
   const std::string_view type_name = json_string(root, "type");
-  if (!protocol::parse_type(type_name, type) ||
-      (type != protocol::ControlType::pairing_session_created &&
-       type != protocol::ControlType::pairing_succeeded &&
-       type != protocol::ControlType::pairing_rejected &&
-       type != protocol::ControlType::pairing_expired)) {
+  if (!protocol::parse_type(type_name, type)) {
+    cJSON_Delete(root);
+    return false;
+  }
+
+  const bool capability_control =
+      type == protocol::ControlType::capability_call ||
+      type == protocol::ControlType::capability_cancel;
+  const bool pairing_control =
+      type == protocol::ControlType::pairing_session_created ||
+      type == protocol::ControlType::pairing_succeeded ||
+      type == protocol::ControlType::pairing_rejected ||
+      type == protocol::ControlType::pairing_expired;
+  if (!capability_control && !pairing_control) {
     cJSON_Delete(root);
     return false;
   }
@@ -431,12 +459,60 @@ bool WebSocketVoiceBackend::handle_pairing_text(std::string_view json) {
   const std::string_view expected_session = fixed_view(session_snapshot.data(), session_snapshot.size());
   const cJSON* payload = nullptr;
   std::string_view message_id;
-  if (!validate_pairing_envelope(root, expected_session, payload, message_id)) {
-    enqueue_event(BackendEventType::error, "INVALID PAIRING CONTROL");
+  if (!validate_mux_envelope(root, expected_session, payload, message_id)) {
+    enqueue_event(BackendEventType::error,
+                  capability_control ? "INVALID CAPABILITY CONTROL"
+                                     : "INVALID PAIRING CONTROL");
     cJSON_Delete(root);
     return true;
   }
 
+  if (capability_control) {
+    const std::string_view capability_name =
+        type == protocol::ControlType::capability_call ? json_string(payload, "name") : std::string_view{};
+    const std::string_view capability_version =
+        type == protocol::ControlType::capability_call ? json_string(payload, "version") : std::string_view{};
+    const CapabilityDispatch dispatch = select_capability_dispatch(
+        type, capability_name, capability_version,
+        confirmation_protocol_enabled_.load());
+    switch (dispatch) {
+    case CapabilityDispatch::user_confirmation_call:
+      (void)handle_confirmation_call(root, payload);
+      break;
+    case CapabilityDispatch::user_confirmation_cancel:
+      (void)handle_confirmation_cancel(root, payload);
+      break;
+    case CapabilityDispatch::unsupported_call: {
+      const std::string_view correlation = json_string(root, "correlation_id");
+      const std::string_view turn = json_string(root, "turn_id");
+      const cJSON* generation = cJSON_GetObjectItemCaseSensitive(root, "generation_id");
+      uint64_t generation_id = 0;
+      const bool valid = !correlation.empty() && correlation.size() <= 128 &&
+                         !turn.empty() && turn.size() <= 128 && active_turn_matches(turn) &&
+                         exact_uint64(generation, generation_id) && generation_id > 0 &&
+                         !capability_name.empty() && capability_name.size() <= 96 &&
+                         !capability_version.empty() && capability_version.size() <= 32;
+      if (!valid || !enqueue_unsupported_capability_result(
+                        correlation, turn, generation_id,
+                        capability_name, capability_version)) {
+        enqueue_event(BackendEventType::error, "INVALID CAPABILITY CONTROL");
+      }
+      break;
+    }
+    case CapabilityDispatch::ignored_cancel:
+      break;
+    case CapabilityDispatch::not_capability:
+      cJSON_Delete(root);
+      return false;
+    }
+    cJSON_Delete(root);
+    return true;
+  }
+
+  if (!pairing_protocol_enabled_.load()) {
+    cJSON_Delete(root);
+    return false;
+  }
   PairingBackendEvent event{};
   const std::string_view pairing_session_id = json_string(payload, "session_id");
   bool valid = copy_fixed(event.pairing_session_id, pairing_session_id);

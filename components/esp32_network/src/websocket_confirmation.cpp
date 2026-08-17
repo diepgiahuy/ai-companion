@@ -8,7 +8,6 @@
 
 namespace companion {
 namespace {
-constexpr uint8_t kTextOpcode = 0x1;
 constexpr std::string_view kConfirmationName = "device.user_confirmation";
 constexpr std::string_view kConfirmationVersion = "1";
 
@@ -62,6 +61,12 @@ bool exact_uint32(const cJSON* value, uint32_t& output) {
   output = static_cast<uint32_t>(parsed);
   return true;
 }
+
+bool strict_capability_envelope(const cJSON* root) {
+  return has_only_fields(root,
+                         {"version", "type", "message_id", "correlation_id",
+                          "session_id", "turn_id", "generation_id", "payload"});
+}
 } // namespace
 
 std::string_view UserConfirmationRequest::correlation_id_view() const {
@@ -86,57 +91,26 @@ bool UserConfirmationRequest::valid() const {
 bool WebSocketVoiceBackend::enable_confirmation_protocol() {
   if (confirmation_protocol_enabled_.load()) return true;
   if (client_ == nullptr || client_started_.load()) return false;
-  if (esp_websocket_register_events(client_, WEBSOCKET_EVENT_ANY,
-                                    &WebSocketVoiceBackend::confirmation_event_handler,
-                                    this) != ESP_OK) {
-    return false;
+
+  // Pairing and capability controls share exactly one DATA/reassembly owner.
+  // If pairing has not already installed the mux, replace the base handler here
+  // instead of registering an additional confirmation callback.
+  if (!pairing_protocol_enabled_.load()) {
+    if (esp_websocket_unregister_events(client_, WEBSOCKET_EVENT_ANY,
+                                        &WebSocketVoiceBackend::event_handler) != ESP_OK) {
+      return false;
+    }
+    if (esp_websocket_register_events(client_, WEBSOCKET_EVENT_ANY,
+                                      &WebSocketVoiceBackend::pairing_event_handler,
+                                      this) != ESP_OK) {
+      (void)esp_websocket_register_events(client_, WEBSOCKET_EVENT_ANY,
+                                          &WebSocketVoiceBackend::event_handler,
+                                          this);
+      return false;
+    }
   }
   confirmation_protocol_enabled_.store(true);
   return true;
-}
-
-void WebSocketVoiceBackend::confirmation_event_handler(
-    void* context, esp_event_base_t, int32_t event_id, void* event_data) {
-  static_cast<WebSocketVoiceBackend*>(context)->on_confirmation_event(
-      event_id, static_cast<esp_websocket_event_data_t*>(event_data));
-}
-
-void WebSocketVoiceBackend::on_confirmation_event(
-    int32_t event_id, esp_websocket_event_data_t* data) {
-  if (event_id == WEBSOCKET_EVENT_CONNECTED) {
-    confirmation_advertised_.store(false);
-    clear_user_confirmation();
-    confirmation_text_payload_size_ = 0;
-    return;
-  }
-  if (event_id == WEBSOCKET_EVENT_DISCONNECTED) {
-    confirmation_advertised_.store(false);
-    clear_user_confirmation();
-    confirmation_text_payload_size_ = 0;
-    return;
-  }
-  if (event_id != WEBSOCKET_EVENT_DATA || data == nullptr ||
-      data->data_ptr == nullptr || data->data_len < 0) {
-    return;
-  }
-  if (data->payload_offset == 0) confirmation_receive_opcode_ = data->op_code;
-  if (confirmation_receive_opcode_ != kTextOpcode) return;
-
-  const size_t offset = static_cast<size_t>(data->payload_offset);
-  const size_t length = static_cast<size_t>(data->data_len);
-  if (offset + length >= confirmation_text_payload_.size()) {
-    confirmation_text_payload_size_ = 0;
-    return;
-  }
-  std::copy_n(data->data_ptr, length,
-              confirmation_text_payload_.begin() + offset);
-  confirmation_text_payload_size_ = offset + length;
-  if (confirmation_text_payload_size_ == static_cast<size_t>(data->payload_len)) {
-    confirmation_text_payload_[confirmation_text_payload_size_] = '\0';
-    (void)handle_confirmation_text(
-        {confirmation_text_payload_.data(), confirmation_text_payload_size_});
-    confirmation_text_payload_size_ = 0;
-  }
 }
 
 bool WebSocketVoiceBackend::advertise_user_confirmation() {
@@ -242,6 +216,44 @@ bool WebSocketVoiceBackend::enqueue_confirmation_result(
          send_text({encoded.data(), written});
 }
 
+bool WebSocketVoiceBackend::enqueue_unsupported_capability_result(
+    std::string_view correlation_id, std::string_view turn_id,
+    uint64_t generation_id, std::string_view capability_name,
+    std::string_view capability_version) {
+  if (!protocol_connected_.load() || correlation_id.empty() || turn_id.empty() ||
+      generation_id == 0 || capability_name.empty() || capability_version.empty()) {
+    return false;
+  }
+  const auto session_snapshot = session_id_snapshot();
+  const std::string_view session = fixed_view(session_snapshot);
+  if (session.empty()) return false;
+
+  std::array<char, 64> message_id{};
+  const int id_size = std::snprintf(message_id.data(), message_id.size(),
+                                    "firmware-%llu",
+                                    static_cast<unsigned long long>(
+                                        message_sequence_.fetch_add(1) + 1));
+  if (id_size <= 0 || static_cast<size_t>(id_size) >= message_id.size()) return false;
+
+  constexpr std::string_view payload = "{\"ok\":false,\"error\":\"unsupported\"}";
+  std::array<char, 768> encoded{};
+  size_t written = 0;
+  const protocol::Envelope envelope{
+      .type = protocol::ControlType::capability_result,
+      .message_id = message_id.data(),
+      .payload_json = payload,
+      .correlation_id = correlation_id,
+      .session_id = session,
+      .turn_id = turn_id,
+      .generation_id = generation_id,
+      .has_generation_id = true,
+      .idempotency_key = {},
+      .occurred_at = {},
+  };
+  return protocol::encode(envelope, encoded, written) &&
+         send_text({encoded.data(), written});
+}
+
 bool WebSocketVoiceBackend::respond_user_confirmation(
     const UserConfirmationRequest& request, bool approved) {
   if (!user_confirmation_current(request)) return false;
@@ -250,79 +262,51 @@ bool WebSocketVoiceBackend::respond_user_confirmation(
   return sent;
 }
 
-bool WebSocketVoiceBackend::handle_confirmation_text(std::string_view json) {
-  cJSON* root = cJSON_ParseWithLength(json.data(), json.size());
-  if (root == nullptr || !cJSON_IsObject(root)) {
-    if (root != nullptr) cJSON_Delete(root);
-    return false;
-  }
-  const std::string_view type_name = json_string(root, "type");
-  protocol::ControlType type{};
-  if (!protocol::parse_type(type_name, type) ||
-      (type != protocol::ControlType::capability_call &&
-       type != protocol::ControlType::capability_cancel)) {
-    cJSON_Delete(root);
-    return false;
-  }
-  if (!has_only_fields(root, {"version", "type", "message_id", "correlation_id",
-                              "session_id", "turn_id", "generation_id",
-                              "idempotency_key", "occurred_at", "payload"})) {
-    cJSON_Delete(root);
-    return true;
-  }
-
-  const auto session_snapshot = session_id_snapshot();
-  const std::string_view expected_session = fixed_view(session_snapshot);
-  const std::string_view message_id = json_string(root, "message_id");
-  const std::string_view session = json_string(root, "session_id");
+bool WebSocketVoiceBackend::handle_confirmation_cancel(
+    const cJSON* root, const cJSON* payload) {
   const std::string_view correlation = json_string(root, "correlation_id");
   const std::string_view turn = json_string(root, "turn_id");
-  const cJSON* payload = cJSON_GetObjectItemCaseSensitive(root, "payload");
-  const cJSON* version = cJSON_GetObjectItemCaseSensitive(root, "version");
   const cJSON* generation = cJSON_GetObjectItemCaseSensitive(root, "generation_id");
   uint64_t generation_id = 0;
-  const bool base_valid =
-      cJSON_IsNumber(version) && version->valuedouble == 2.0 &&
-      !message_id.empty() && message_id.size() <= 256 &&
-      !expected_session.empty() && session == expected_session &&
-      !correlation.empty() && correlation.size() <= 128 &&
-      !turn.empty() && turn.size() <= 128 && active_turn_matches(turn) &&
-      exact_uint64(generation, generation_id) && generation_id > 0 &&
-      cJSON_IsObject(payload);
-  if (!base_valid) {
-    enqueue_event(BackendEventType::error, "INVALID CONFIRMATION CONTROL");
-    cJSON_Delete(root);
+  const std::string_view reason = json_string(payload, "reason");
+  if (!strict_capability_envelope(root) ||
+      correlation.empty() || correlation.size() > 128 ||
+      turn.empty() || turn.size() > 128 || !active_turn_matches(turn) ||
+      !exact_uint64(generation, generation_id) || generation_id == 0 ||
+      !has_only_fields(payload, {"reason"}) || reason.empty() || reason.size() > 64) {
+    enqueue_event(BackendEventType::error, "INVALID CONFIRMATION CANCEL");
     return true;
   }
-
-  if (type == protocol::ControlType::capability_cancel) {
-    if (!has_only_fields(payload, {"reason"}) ||
-        json_string(payload, "reason").empty()) {
-      enqueue_event(BackendEventType::error, "INVALID CONFIRMATION CANCEL");
-      cJSON_Delete(root);
-      return true;
-    }
-    taskENTER_CRITICAL(&confirmation_lock_);
-    if (confirmation_active_ &&
-        active_confirmation_.correlation_id_view() == correlation &&
-        active_confirmation_.turn_id_view() == turn &&
-        active_confirmation_.generation_id == generation_id) {
-      active_confirmation_ = {};
-      confirmation_ready_ = false;
-      confirmation_active_ = false;
-    }
-    taskEXIT_CRITICAL(&confirmation_lock_);
-    cJSON_Delete(root);
-    return true;
+  taskENTER_CRITICAL(&confirmation_lock_);
+  if (confirmation_active_ &&
+      active_confirmation_.correlation_id_view() == correlation &&
+      active_confirmation_.turn_id_view() == turn &&
+      active_confirmation_.generation_id == generation_id) {
+    active_confirmation_ = {};
+    confirmation_ready_ = false;
+    confirmation_active_ = false;
   }
+  taskEXIT_CRITICAL(&confirmation_lock_);
+  return true;
+}
 
-  if (!has_only_fields(payload, {"name", "version", "arguments", "deadline_ms"}) ||
+bool WebSocketVoiceBackend::handle_confirmation_call(
+    const cJSON* root, const cJSON* payload) {
+  const std::string_view correlation = json_string(root, "correlation_id");
+  const std::string_view turn = json_string(root, "turn_id");
+  const cJSON* generation = cJSON_GetObjectItemCaseSensitive(root, "generation_id");
+  uint64_t generation_id = 0;
+  if (!strict_capability_envelope(root) ||
+      correlation.empty() || correlation.size() > 128 ||
+      turn.empty() || turn.size() > 128 || !active_turn_matches(turn) ||
+      !exact_uint64(generation, generation_id) || generation_id == 0 ||
+      !has_only_fields(payload, {"name", "version", "arguments", "deadline_ms"}) ||
       json_string(payload, "name") != kConfirmationName ||
       json_string(payload, "version") != kConfirmationVersion) {
-    enqueue_event(BackendEventType::error, "UNSUPPORTED CONFIRMATION");
-    cJSON_Delete(root);
+    enqueue_event(BackendEventType::error, "INVALID CONFIRMATION CONTROL");
     return true;
   }
+
   const cJSON* arguments = cJSON_GetObjectItemCaseSensitive(payload, "arguments");
   const cJSON* deadline = cJSON_GetObjectItemCaseSensitive(payload, "deadline_ms");
   uint32_t deadline_ms = 0;
@@ -334,7 +318,6 @@ bool WebSocketVoiceBackend::handle_confirmation_text(std::string_view json) {
       prompt.empty() || prompt.size() > 192 ||
       !exact_uint32(deadline, deadline_ms) || deadline_ms < 50 || deadline_ms > 5'000) {
     enqueue_event(BackendEventType::error, "INVALID CONFIRMATION REQUEST");
-    cJSON_Delete(root);
     return true;
   }
 
@@ -357,7 +340,6 @@ bool WebSocketVoiceBackend::handle_confirmation_text(std::string_view json) {
     enqueue_event(BackendEventType::error,
                   busy ? "CONFIRMATION BUSY" : "INVALID CONFIRMATION REQUEST");
   }
-  cJSON_Delete(root);
   return true;
 }
 
