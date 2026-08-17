@@ -61,6 +61,12 @@ bool exact_uint32(const cJSON* value, uint32_t& output) {
   output = static_cast<uint32_t>(parsed);
   return true;
 }
+
+bool strict_capability_envelope(const cJSON* root) {
+  return has_only_fields(root,
+                         {"version", "type", "message_id", "correlation_id",
+                          "session_id", "turn_id", "generation_id", "payload"});
+}
 } // namespace
 
 std::string_view UserConfirmationRequest::correlation_id_view() const {
@@ -263,7 +269,8 @@ bool WebSocketVoiceBackend::handle_confirmation_cancel(
   const cJSON* generation = cJSON_GetObjectItemCaseSensitive(root, "generation_id");
   uint64_t generation_id = 0;
   const std::string_view reason = json_string(payload, "reason");
-  if (correlation.empty() || correlation.size() > 128 ||
+  if (!strict_capability_envelope(root) ||
+      correlation.empty() || correlation.size() > 128 ||
       turn.empty() || turn.size() > 128 || !active_turn_matches(turn) ||
       !exact_uint64(generation, generation_id) || generation_id == 0 ||
       !has_only_fields(payload, {"reason"}) || reason.empty() || reason.size() > 64) {
@@ -289,7 +296,8 @@ bool WebSocketVoiceBackend::handle_confirmation_call(
   const std::string_view turn = json_string(root, "turn_id");
   const cJSON* generation = cJSON_GetObjectItemCaseSensitive(root, "generation_id");
   uint64_t generation_id = 0;
-  if (correlation.empty() || correlation.size() > 128 ||
+  if (!strict_capability_envelope(root) ||
+      correlation.empty() || correlation.size() > 128 ||
       turn.empty() || turn.size() > 128 || !active_turn_matches(turn) ||
       !exact_uint64(generation, generation_id) || generation_id == 0 ||
       !has_only_fields(payload, {"name", "version", "arguments", "deadline_ms"}) ||
