@@ -19,6 +19,7 @@ class PresentationDisplay final : public Display {
 public:
   explicit PresentationDisplay(Display& sink) : sink_(sink) {
     attention_state_.fill(UiState::ready);
+    attention_scope_.fill(PresentationScope::global);
   }
 
   void show(UiState state, std::string_view text) override {
@@ -82,7 +83,24 @@ public:
   }
 
   void set_context(uint64_t session_epoch, uint64_t generation) {
+    const uint64_t old_session = reducer_.session_epoch();
+    const uint64_t old_generation = reducer_.generation();
     reducer_.set_context(session_epoch, generation);
+
+    const bool session_changed = session_epoch != old_session;
+    const bool generation_changed = generation != old_generation;
+    if (session_changed || generation_changed) {
+      for (size_t index = 0; index < attention_active_.size(); ++index) {
+        if (!attention_active_[index]) continue;
+        const PresentationScope scope = attention_scope_[index];
+        if ((session_changed && (scope == PresentationScope::session ||
+                                 scope == PresentationScope::generation)) ||
+            (!session_changed && generation_changed &&
+             scope == PresentationScope::generation)) {
+          attention_active_[index] = false;
+        }
+      }
+    }
     render_current();
   }
 
@@ -157,7 +175,6 @@ private:
                                bool render) {
     if (domain == PresentationDomain::count) return false;
     const size_t index = domain_index(domain);
-    attention_state_[index] = renderer_state;
     const PresentationEvent event{
         .kind = PresentationEvent::Kind::attention,
         .domain = domain,
@@ -169,6 +186,8 @@ private:
     };
     const bool applied = reducer_.apply(event);
     if (applied) {
+      attention_state_[index] = renderer_state;
+      attention_scope_[index] = scope;
       attention_active_[index] = true;
       if (render) render_current();
     }
@@ -222,6 +241,7 @@ private:
   PresentationReducer reducer_{};
   UiState base_state_{UiState::booting};
   std::array<UiState, static_cast<size_t>(PresentationDomain::count)> attention_state_{};
+  std::array<PresentationScope, static_cast<size_t>(PresentationDomain::count)> attention_scope_{};
   std::array<bool, static_cast<size_t>(PresentationDomain::count)> attention_active_{};
   std::array<uint64_t, static_cast<size_t>(PresentationDomain::count)> next_attention_revision_{};
   uint64_t next_base_revision_{};
