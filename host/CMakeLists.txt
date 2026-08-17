@@ -26,6 +26,11 @@ target_link_libraries(audio_frontend_tests PRIVATE companion_app)
 target_compile_options(audio_frontend_tests PRIVATE -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
 add_test(NAME audio_frontend_tests COMMAND audio_frontend_tests)
 
+add_executable(audio_runtime_tests tests/audio_runtime.cpp)
+target_link_libraries(audio_runtime_tests PRIVATE companion_app)
+target_compile_options(audio_runtime_tests PRIVATE -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
+add_test(NAME audio_runtime_tests COMMAND audio_runtime_tests)
+
 add_executable(audio_frontend_app_tests tests/audio_frontend_app.cpp)
 target_link_libraries(audio_frontend_app_tests PRIVATE companion_app)
 target_compile_options(audio_frontend_app_tests PRIVATE -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
