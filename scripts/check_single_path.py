@@ -61,6 +61,13 @@ FORBIDDEN_PATTERNS = [
     re.compile(r"legacy provider adapter", re.IGNORECASE),
 ]
 
+# The settings cutover is a hard protocol migration. These markers are allowed
+# in historical docs outside SCAN_ROOTS, but never in active source. Keeping the
+# check source-only avoids blocking truthful migration notes while preventing a
+# dead enum/parser/handler from silently surviving the cutover again.
+SOURCE_SUFFIXES = {".c", ".cc", ".cpp", ".h", ".hpp", ".go"}
+FORBIDDEN_WIRE_MARKERS = ["config.update", "config.report"]
+
 
 def iter_files(path: Path):
     if path.is_file():
@@ -98,6 +105,10 @@ for rel in SCAN_ROOTS:
         for pattern in FORBIDDEN_PATTERNS:
             if pattern.search(text):
                 failures.append(f"{display}: forbidden active pattern {pattern.pattern!r}")
+        if path.suffix.lower() in SOURCE_SUFFIXES:
+            for marker in FORBIDDEN_WIRE_MARKERS:
+                if marker in text:
+                    failures.append(f"{display}: forbidden legacy settings wire marker {marker!r}")
 
 # Positive invariants make the gate fail if the canonical path is accidentally
 # removed while legacy markers remain absent.
