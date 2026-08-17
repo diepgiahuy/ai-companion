@@ -41,6 +41,27 @@ type SettingsArgs struct {
 	Settings controlplane.RuntimeConfig `json:"settings"`
 }
 
+// MarshalJSON deliberately projects only fields owned by the physical device.
+// Locale, timezone and voice_key are backend/session concerns and must never be
+// mistaken for firmware-applied state merely because they share RuntimeConfig.
+func (a SettingsArgs) MarshalJSON() ([]byte, error) {
+	device := controlplane.RuntimeConfig{
+		SmartVADEnabled:        a.Settings.SmartVADEnabled,
+		VADThreshold:           a.Settings.VADThreshold,
+		VADSilenceMS:           a.Settings.VADSilenceMS,
+		VADMinSpeechMS:         a.Settings.VADMinSpeechMS,
+		IdleAfterMS:            a.Settings.IdleAfterMS,
+		AlarmVisibleMS:         a.Settings.AlarmVisibleMS,
+		OTAPollIntervalSeconds: a.Settings.OTAPollIntervalSeconds,
+		WakeModel:              a.Settings.WakeModel,
+	}
+	type wireSettingsArgs struct {
+		Version  int64                       `json:"version"`
+		Settings controlplane.RuntimeConfig `json:"settings"`
+	}
+	return json.Marshal(wireSettingsArgs{Version: a.Version, Settings: device})
+}
+
 type SettingsResult struct {
 	Applied  bool                        `json:"applied"`
 	Version  int64                       `json:"version"`
@@ -171,7 +192,7 @@ func RegisterTools(registry *capability.ToolRegistry, router *Router) error {
 	return registry.Register(capability.FunctionTool{
 		ToolName: VolumeSetName,
 		ToolDefinition: &capability.ToolDefinition{
-			Name: VolumeSetName,
+			Name: devicecapVolumeToolName(),
 			Description: "Set the authenticated current device speaker volume from 0 to 100.",
 			Pack: "device", Risk: "write",
 			Parameters: map[string]any{
@@ -208,3 +229,5 @@ func RegisterTools(registry *capability.ToolRegistry, router *Router) error {
 		},
 	})
 }
+
+func devicecapVolumeToolName() string { return VolumeSetName }
