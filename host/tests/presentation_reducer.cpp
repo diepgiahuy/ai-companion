@@ -52,6 +52,16 @@ PresentationEvent clear(PresentationDomain domain, uint64_t revision,
 
 int main() {
   {
+    // Revision 0 is a valid first domain revision. The reducer's synthetic
+    // boot snapshot must not reserve it as an implicit sentinel.
+    PresentationReducer reducer;
+    assert(reducer.apply(base(PresentationActivity::ready, 0, "READY")));
+    assert(reducer.model().text_view() == "READY");
+    assert(reducer.apply(attention(PresentationDomain::card, 0, "CARD-0")));
+    assert(reducer.model().domain == PresentationDomain::card);
+  }
+
+  {
     PresentationReducer reducer;
     assert(reducer.apply(base(PresentationActivity::speaking, 1, "SPEAKING")));
     assert(reducer.apply(attention(PresentationDomain::card, 1, "CARD")));
@@ -74,6 +84,18 @@ int main() {
     assert(reducer.model().domain == PresentationDomain::alarm);
     assert(reducer.apply(clear(PresentationDomain::alarm, 1)));
     assert(reducer.model().surface == PresentationModel::Surface::base);
+  }
+
+  {
+    // Revisions are monotonic only inside one owning domain. Cross-domain ties
+    // use the reducer's fixed authority order, never incomparable revision IDs.
+    PresentationReducer reducer;
+    assert(reducer.apply(attention(PresentationDomain::pairing, 999, "PAIR")));
+    assert(reducer.apply(attention(PresentationDomain::ota, 1, "OTA")));
+    assert(reducer.model().domain == PresentationDomain::ota);
+    assert(reducer.apply(attention(PresentationDomain::confirmation, 500, "CONFIRM")));
+    assert(reducer.apply(attention(PresentationDomain::privacy, 0, "PRIVACY")));
+    assert(reducer.model().domain == PresentationDomain::privacy);
   }
 
   {
