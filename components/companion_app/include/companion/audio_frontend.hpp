@@ -19,16 +19,31 @@ struct AudioFrontendResult {
   AudioFrontendEvent event{AudioFrontendEvent::none};
 };
 
+struct PlaybackReferenceStats {
+  uint64_t epoch{};
+  bool active{};
+  uint64_t pushed_samples{};
+  uint64_t underflow_events{};
+  uint64_t underflow_samples{};
+  uint64_t overruns{};
+};
+
 // Application-facing audio front-end contract. Vendor SDK types must remain in
 // board/audio adapters. The frontend consumes 16 kHz microphone PCM and the
 // time-aligned speaker reference used for echo cancellation, and emits cleaned
-// 16 kHz PCM plus wake/VAD events into the canonical CompanionApp turn flow.
+// 16 kHz PCM plus wake/VAD events into the canonical Companion turn flow.
+//
+// Playback-reference lifetime is explicit: zero reference while no epoch is
+// active is normal idle behavior and must not be reported as an AEC underflow.
 class AudioFrontend {
 public:
   virtual ~AudioFrontend() = default;
   virtual bool start() = 0;
   virtual void reset() = 0;
+  virtual bool begin_playback_reference(uint64_t epoch) = 0;
+  virtual void end_playback_reference(uint64_t epoch) = 0;
   virtual bool push_playback_reference(std::span<const int16_t> pcm_16k) = 0;
+  virtual PlaybackReferenceStats playback_reference_stats() const = 0;
   virtual AudioFrontendResult process_capture(std::span<const int16_t> microphone_16k,
                                               std::span<int16_t> cleaned_16k) = 0;
 };
@@ -63,10 +78,11 @@ public:
     return written;
   }
 
-  void reset() {
-    pending_count_ = 0;
-    dropped_groups_ = 0;
-  }
+  // Reset only streaming phase at an epoch boundary. Lifetime diagnostics are
+  // deliberately retained across playback epochs so HIL/soak evidence cannot
+  // be erased by normal cancel/drain transitions.
+  void reset() { pending_count_ = 0; }
+  void clear_metrics() { dropped_groups_ = 0; }
 
   size_t pending_samples() const { return pending_count_; }
   uint64_t dropped_groups() const { return dropped_groups_; }
