@@ -128,4 +128,37 @@ func TestInvocationOutcomeFinalize(t *testing.T) {
 			t.Fatalf("err=%v", err)
 		}
 	})
+
+	t.Run("unauthorized mutation fails closed without final text", func(t *testing.T) {
+		var tr invocationOutcomeTracker
+		tr.RecordToolCall("call-unauth")
+		tr.RecordTool(ToolOutcome{
+			FunctionCallID: "call-unauth",
+			Name:           ToolExpenseLog,
+			Risk:           "write",
+			OK:             false,
+			Valid:          true,
+		})
+		fallback, err := tr.Finalize(false)
+		if fallback != "" || !errors.Is(err, errToolFinalTextMissing) {
+			t.Fatalf("unauthorized mutation must fail closed without final text, got fallback=%q err=%v", fallback, err)
+		}
+	})
+
+	t.Run("invalid schema mutation fails closed without final text", func(t *testing.T) {
+		var tr invocationOutcomeTracker
+		tr.RecordToolCall("call-schema-err")
+		tr.RecordTool(ToolOutcome{
+			FunctionCallID: "call-schema-err",
+			Name:           ToolExpenseLog,
+			Risk:           "write",
+			OK:             false,
+			Valid:          false,
+		})
+		fallback, err := tr.Finalize(false)
+		if fallback != "" || !errors.Is(err, errToolFinalTextMissing) {
+			t.Fatalf("invalid schema mutation must fail closed without final text, got fallback=%q err=%v", fallback, err)
+		}
+	})
 }
+

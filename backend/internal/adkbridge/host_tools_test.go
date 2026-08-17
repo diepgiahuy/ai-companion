@@ -276,3 +276,90 @@ func TestHostToolExecutorDoesNotPublishPresentationForValidFailure(t *testing.T)
 		t.Fatalf("failed tool result published %d presentation(s)", presentations)
 	}
 }
+
+func TestHostToolExecutorFailsClosedOnUnauthorizedMutation(t *testing.T) {
+	reg := capability.NewToolRegistry()
+	tool := &captureTool{
+		name: ToolExpenseLog,
+		def: &capability.ToolDefinition{
+			Name: ToolExpenseLog,
+			Risk: "write",
+			Parameters: map[string]any{
+				"type":                 "object",
+				"required":             []string{"amount"},
+				"additionalProperties": false,
+				"properties": map[string]any{
+					"amount": map[string]any{"type": "number"},
+				},
+			},
+		},
+	}
+	if err := reg.Register(tool); err != nil {
+		t.Fatal(err)
+	}
+	reg.SetAuthorizer(denyAuthorizer{})
+
+	var gotOutcome ToolOutcome
+	ctx := withToolOutcomeSink(context.Background(), func(o ToolOutcome) { gotOutcome = o })
+	out, err := (HostToolExecutor{Registry: reg}).Execute(ctx, ToolExpenseLog, "call-mut-denied", map[string]any{"amount": 50000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out["ok"] != false {
+		t.Fatalf("expected authorization failure, got %#v", out)
+	}
+	if tool.req.Key != "" {
+		t.Fatalf("handler must not execute on unauthorized mutation")
+	}
+	if gotOutcome.Name != ToolExpenseLog || gotOutcome.Risk != "write" || gotOutcome.OK || !gotOutcome.Valid {
+		t.Fatalf("unexpected tool outcome on unauthorized mutation: %#v", gotOutcome)
+	}
+}
+
+func TestHostToolExecutorStrictSchemaEnforcementOnMutation(t *testing.T) {
+	reg := capability.NewToolRegistry()
+	tool := &captureTool{
+		name: ToolExpenseLog,
+		def: &capability.ToolDefinition{
+			Name: ToolExpenseLog,
+			Risk: "write",
+			Parameters: map[string]any{
+				"type":                 "object",
+				"required":             []string{"amount", "category"},
+				"additionalProperties": false,
+				"properties": map[string]any{
+					"amount":   map[string]any{"type": "number", "minimum": 1},
+					"category": map[string]any{"type": "string"},
+				},
+			},
+		},
+	}
+	if err := reg.Register(tool); err != nil {
+		t.Fatal(err)
+	}
+
+	// Negative amount should fail schema validation
+	out, err := (HostToolExecutor{Registry: reg}).Execute(context.Background(), ToolExpenseLog, "call-neg", map[string]any{"amount": -500, "category": "food"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out["ok"] != false {
+		t.Fatalf("expected schema failure for negative amount, got %#v", out)
+	}
+	if tool.req.Key != "" {
+		t.Fatalf("handler must not execute on schema violation")
+	}
+
+	// Missing required field "category" should fail schema validation
+	outMissing, err := (HostToolExecutor{Registry: reg}).Execute(context.Background(), ToolExpenseLog, "call-miss", map[string]any{"amount": 50000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outMissing["ok"] != false {
+		t.Fatalf("expected schema failure for missing required field, got %#v", outMissing)
+	}
+	if tool.req.Key != "" {
+		t.Fatalf("handler must not execute on missing required fields")
+	}
+}
+

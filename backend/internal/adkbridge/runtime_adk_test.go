@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"iter"
+	"strings"
 	"testing"
 
 	"google.golang.org/adk/v2/model"
@@ -181,3 +182,47 @@ func TestMeteredLLMChecksQuotaBeforeProviderCall(t *testing.T) {
 		t.Fatalf("guard error=%v inner.called=%v", gotErr, inner.called)
 	}
 }
+
+func TestADKRequiresPromptBundleAndVersion(t *testing.T) {
+	reg := capability.NewToolRegistry()
+	registerTestTools(t, reg, "note.create")
+	conversation := conversationctx.New(&testConversationStore{}, nil)
+
+	// Missing instruction
+	if _, err := newWithModel(Config{
+		AppName:       "test",
+		Tools:         reg,
+		Conversation:  conversation,
+		Instruction:   "",
+		PromptVersion: "v1#abc",
+	}, fakeLLM{}); err == nil || !strings.Contains(err.Error(), "ADK instruction must be supplied") {
+		t.Fatalf("expected instruction required error, got %v", err)
+	}
+
+	// Missing prompt version
+	if _, err := newWithModel(Config{
+		AppName:       "test",
+		Tools:         reg,
+		Conversation:  conversation,
+		Instruction:   "valid instruction",
+		PromptVersion: "",
+	}, fakeLLM{}); err == nil || !strings.Contains(err.Error(), "ADK prompt version/fingerprint is required") {
+		t.Fatalf("expected prompt version required error, got %v", err)
+	}
+}
+
+func TestADKRejectsEmptyToolRegistry(t *testing.T) {
+	emptyReg := capability.NewToolRegistry()
+	conversation := conversationctx.New(&testConversationStore{}, nil)
+
+	if _, err := newWithModel(Config{
+		AppName:       "test",
+		Tools:         emptyReg,
+		Conversation:  conversation,
+		Instruction:   "valid instruction",
+		PromptVersion: "v1#abc",
+	}, fakeLLM{}); err == nil || !strings.Contains(err.Error(), "tool registry is empty") {
+		t.Fatalf("expected empty tool registry error, got %v", err)
+	}
+}
+

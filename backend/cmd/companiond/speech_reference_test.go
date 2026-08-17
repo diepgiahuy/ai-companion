@@ -38,6 +38,17 @@ func TestConfigureSpeechComponentsLocalRequiresExplicitFunASR(t *testing.T) {
 
 func TestConfigureSpeechComponentsStreamingRequiresCredentials(t *testing.T) {
 	t.Setenv("COMPANION_SPEECH_PROFILE", "reference-streaming")
-	_, err := configureSpeechComponents(runtimeconfig.Config{AllowMock:false})
-	if err == nil || !strings.Contains(err.Error(), "Xunfei") { t.Fatalf("error=%v", err) }
+	_, err := configureSpeechComponents(runtimeconfig.Config{AllowMock: false})
+	if err == nil || !strings.Contains(err.Error(), "Xunfei") {
+		t.Fatalf("error=%v", err)
+	}
 }
+
+func TestConfigureSpeechComponentsUnsupportedProfile(t *testing.T) {
+	t.Setenv("COMPANION_SPEECH_PROFILE", "invalid-profile-xyz")
+	_, err := configureSpeechComponents(runtimeconfig.Config{AllowMock: false})
+	if err == nil || !strings.Contains(err.Error(), "unsupported COMPANION_SPEECH_PROFILE") {
+		t.Fatalf("expected unsupported profile error, got %v", err)
+	}
+}
+

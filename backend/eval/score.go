@@ -215,7 +215,19 @@ func validateSchema(schema map[string]any, value any) bool {
 	if len(schema) == 0 {
 		return true
 	}
-	if enum, ok := schema["enum"].([]any); ok {
+	switch enum := schema["enum"].(type) {
+	case []any:
+		matched := false
+		for _, candidate := range enum {
+			if valuesEqual(candidate, value) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	case []string:
 		matched := false
 		for _, candidate := range enum {
 			if valuesEqual(candidate, value) {
@@ -235,12 +247,19 @@ func validateSchema(schema map[string]any, value any) bool {
 			return false
 		}
 		properties, _ := schema["properties"].(map[string]any)
-		if required, ok := schema["required"].([]any); ok {
+		switch required := schema["required"].(type) {
+		case []any:
 			for _, raw := range required {
 				name, ok := raw.(string)
 				if !ok {
 					return false
 				}
+				if _, found := object[name]; !found {
+					return false
+				}
+			}
+		case []string:
+			for _, name := range required {
 				if _, found := object[name]; !found {
 					return false
 				}
@@ -251,6 +270,11 @@ func validateSchema(schema map[string]any, value any) bool {
 			if !found {
 				if allowed, ok := schema["additionalProperties"].(bool); ok && !allowed {
 					return false
+				}
+				if childSchema, ok := schema["additionalProperties"].(map[string]any); ok {
+					if !validateSchema(childSchema, child) {
+						return false
+					}
 				}
 				continue
 			}
