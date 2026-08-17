@@ -1,200 +1,133 @@
 # ADR-002: Canonical interaction protocol v2
 
-Status: **Accepted**
+Status: **Accepted, amended by ADR-003 for device-local capabilities**
 
 ## Context
 
-Gestures, voice mail, and proximity-confirmed pairing need a shared wire contract.
-This POC has no production clients, so retaining a flat v1 path would add obsolete
-code and an unnecessary compatibility test matrix.
+Gestures, voice mail, proximity-confirmed pairing, session/turn events, presentation and device-local actions need one authenticated wire envelope. There are no production v1 clients that justify a permanent v1 compatibility path.
 
-This ADR defines the protocol contract only. It does not add persistence, blob
-storage, BLE behavior, display/audio UX, delivery state, or authorization rules.
+This ADR defines the Protocol-v2 envelope/session/media contract and product interaction message families. **ADR-003** is authoritative for the device-local capability plane selected later by #225.
 
 ## Decision
 
-The system uses one canonical WebSocket protocol: `protocol.Envelope` with
-`version: 2`. All JSON control messages, including gesture, voice-mail, pairing,
-session, UI, and configuration messages, use this envelope. There is no
-`InteractionEnvelope`, flat-message path, dual-read, dual-write, feature-gated
-emission, or v1 compatibility behavior.
+The system uses one canonical authenticated WebSocket protocol: `protocol.Envelope` with `version: 2` for JSON controls, plus binary Opus media on the same authenticated device connection.
 
-An Envelope v2 contains the message type, `message_id`, optional correlation and
-session fields, `idempotency_key`, RFC3339 `occurred_at`, and a typed JSON-object
-payload. Interaction messages require non-empty `message_id`, `idempotency_key`,
-and `occurred_at`.
+There is no flat-message v1 path, dual-read/dual-write transport, or permanent protocol fallback. A v1/unsupported client fails before interaction state mutation.
 
-`message_id` and `idempotency_key` have intentionally different responsibilities:
-
-- `message_id` is transport/session identity. The live WebSocket session keeps a
-  bounded replay cache so an equivalent duplicate can reuse the recorded outcome
-  and conflicting reuse of the same ID is rejected while that ID remains cached.
-- `idempotency_key` is domain mutation identity. Any interaction that can be retried
-  after reconnect or process restart must persist this key at the authoritative
-  domain boundary, scoped by authenticated actor, operation/type, and canonical
-  request content. The persistence layer replays the original committed outcome for
-  an equivalent retry and rejects the same key with different canonical content.
-
-**Current implementation boundary in PR #14:** only the first bullet exists. The
-`message_id` replay cache is scoped to one live WebSocket session and is lost on
-reconnect. PR #14 does **not** implement an actor-scoped or durable
-`idempotency_key` store, and therefore does not prove reconnect/restart payload-
-conflict safety. The actor-scoped rule in the second bullet is a requirement for
-stateful domain handlers, not an implementation claim of this protocol migration.
-The README gate for idempotency payload-conflict safety must remain `unproven` until
-a domain implementation persists and tests that contract.
-
-The protocol layer therefore does **not** claim exactly-once delivery. WebSocket
-replay suppression is a bounded optimization; durable at-least-once correctness is
-owned by the stateful feature implementation (#5 for voice mail and #7 for pairing).
-
-Envelope decoding uses these stable errors from `envelope.go`:
-
-| Condition | Code |
-| --- | --- |
-| Version other than 2, including v1 | `unsupported_protocol_version` |
-| Unknown or non-interaction message type | `unknown_message_type` |
-| Malformed envelope, missing interaction metadata, or invalid payload | `invalid_envelope` |
-
-A v1 client fails before any interaction state change. If the connection can send a
-response, it uses the v2 `protocol.error` control message with
-`unsupported_protocol_version`; otherwise the server closes the session. There is
-no fallback or retry using v1.
-
-The media lane is separate from JSON control but remains within protocol v2: raw
-Opus binary WebSocket frames carry audio, while JSON control uses `Envelope v2`.
-Binary frames never carry interaction metadata, authorization claims, or storage
-credentials.
-
-### Envelope fields
+An Envelope v2 contains:
 
 | Field | Requirement |
 | --- | --- |
 | `version` | Required integer; exactly `2`. |
-| `type` | Required member of the canonical taxonomy below. |
-| `message_id` | Required opaque transport/session message ID, 1-128 bytes. |
-| `correlation_id` | Optional request/event correlation ID. |
-| `session_id` | Required after `session.ready`; omitted by the initial hello. |
+| `type` | Required member of the canonical taxonomy. |
+| `message_id` | Required opaque transport/session message identity, bounded by the relevant contract. |
+| `correlation_id` | Optional request/result correlation identity. |
+| `session_id` | Required after `session.ready`; omitted by initial hello. |
 | `turn_id` | Required for turn-scoped controls. |
-| `generation_id` | Optional monotonic turn generation used to discard stale media/control. |
-| `idempotency_key` | Required for state-changing interaction commands; durable semantics are implemented by the authoritative domain store. |
-| `occurred_at` | Required RFC3339 timestamp for interaction events. |
-| `payload` | Required typed JSON object, at most 4 KiB; the envelope is at most 8 KiB. |
+| `generation_id` | Monotonic turn generation where stale-output invalidation is required. |
+| `idempotency_key` | Required for retryable state-changing interaction commands whose domain contract needs durable mutation identity. |
+| `occurred_at` | RFC3339 timestamp where required by the interaction contract. |
+| `payload` | Typed bounded JSON object. |
 
-Root and payload fields are strict. Unknown fields, invalid direction, and malformed
-payloads fail before state mutation.
+Root and typed payload schemas fail closed. Unknown fields, invalid direction, invalid identity/generation and malformed payloads are rejected before state mutation where the specific contract requires strict decoding.
 
-### Session replay cache
+## Replay and idempotency
 
-The current WebSocket implementation remembers at most 256 inbound `message_id`
-records per live session. FIFO eviction is intentional and is **not** a durable or
-actor-scoped idempotency guarantee: after eviction or reconnect, the same transport
-message may reach domain handling again. Stateful feature handlers must therefore
-rely on the persisted `idempotency_key` contract, not on the session cache, for
-correctness.
+`message_id` and `idempotency_key` have different responsibilities:
 
-The cache may replay a deterministic/terminal outcome for an equivalent duplicate.
-A retryable infrastructure failure must not be treated as proof that the domain
-mutation committed; feature implementations must define retryable versus terminal
-outcomes together with durable idempotency records.
+- `message_id` is transport/session identity. The live WebSocket session may use a bounded replay cache to suppress/replay an equivalent duplicate and reject conflicting reuse while the record remains cached.
+- `idempotency_key` is durable domain mutation identity. A stateful mutation that may be retried after reconnect/restart must persist and validate the key at its authoritative domain boundary.
 
-### Core control taxonomy
+The protocol therefore does **not** claim exactly-once delivery. Session replay suppression is a bounded optimization; durable at-least-once correctness belongs to the authoritative feature/domain implementation.
 
-| Type | Direction | Payload |
+## Media lane
+
+Binary Opus frames are media, not JSON capability/tool traffic. They never carry interaction metadata, authorization claims, provider credentials or storage credentials. Session/turn/generation control determines whether media belongs to the current turn.
+
+## Canonical control taxonomy
+
+### Session, turn, model/output and presentation
+
+| Type | Direction | Purpose |
 | --- | --- | --- |
-| `session.hello` | device -> backend | transport and uplink audio parameters |
-| `session.ready` | backend -> device | transport, downlink audio parameters, and an optional resolved config snapshot; if config is present it must be complete and valid |
-| `session.ping` / `session.pong` | either | empty object; pong correlates to ping |
-| `turn.listen` | device -> backend | `state` (`start`/`stop`) and start `mode` |
-| `turn.abort` | device -> backend | bounded `reason` |
-| `turn.state` | backend -> device | state and optional interruption reason |
-| `transcript.final` | backend -> device | final `text` |
-| `tts.lifecycle` | backend -> device | start/sentence/stop state and sentence text where required |
-| `agent.status` | backend -> device | bounded status state |
-| `ui.card` / `ui.state` | backend -> device | typed UI card or emotion/tool state |
-| `alarm.fired` / `alarm.ack` | backend -> device / device -> backend | alarm identity, text/time, or acknowledgement identity |
-| `schedule.updated` | backend -> device | display message and fire time |
-| `config.update` / `config.report` | backend -> device / device -> backend | monotonic version, resolved device snapshot, and apply outcome |
-| `protocol.error` | either | stable error `code` and bounded message |
+| `session.hello` | device -> backend | Establish device transport/uplink audio parameters. |
+| `session.ready` | backend -> device | Confirm authenticated session/downlink parameters and allowed bootstrap state. |
+| `session.ping` / `session.pong` | either | Liveness/correlation. |
+| `turn.listen` | device -> backend | Start/stop a listening turn with bounded mode. |
+| `turn.abort` | device -> backend | Cancel current turn with bounded reason. |
+| `turn.state` | backend -> device | Current turn lifecycle/interruption state. |
+| `transcript.final` | backend -> device | Final bounded transcript text. |
+| `tts.lifecycle` | backend -> device | TTS start/sentence/stop lifecycle. |
+| `agent.status` | backend -> device | Bounded agent/runtime status. |
+| `ui.card` / `ui.state` | backend -> device | Presentation semantics; renderer behavior is owned by the presentation contract, not raw network callbacks. |
+| `alarm.fired` / `alarm.ack` | backend -> device / device -> backend | Alarm event and acknowledgement. |
+| `schedule.updated` | backend -> device | Schedule/reminder presentation event. |
+| `protocol.error` | either | Stable error code plus bounded message. |
+
+### Device capability plane — amended by ADR-003 / #225
+
+Device-local action discovery/invocation uses **Typed Companion Capability RPC** carried by Protocol v2:
+
+| Type | Direction | Purpose |
+| --- | --- | --- |
+| `capability.advertise` | device -> backend | Exact supported capability name/version pairs. |
+| `capability.call` | backend -> device | Correlated bounded invocation of an advertised capability. |
+| `capability.result` | device -> backend | Correlated typed success/error result. |
+| `capability.cancel` | backend -> device | Cancel a current correlated capability operation when supported. |
+
+This is Companion Capability RPC, **not MCP**. MCP remains an optional backend external-integration boundary. Firmware never connects directly to MCP servers, models or providers.
+
+Physical firmware currently advertises only device capabilities it can execute truthfully, including `device.user_confirmation` v1. Unsupported capability names/versions fail closed. Destructive confirmation still requires a fresh local physical press after the prompt; capability traffic does not grant authorization by itself.
+
+### Legacy configuration transition
+
+`config.update` / `config.report` still exist in current code for historical settings delivery, but they are **legacy transitional controls, not the target device capability architecture**.
+
+Issue #197 owns preserving useful desired/reported semantics (requested/applied/rejected/stale/offline/unknown and monotonic ordering) while rebasing settings onto the #225/ADR-003 capability/state architecture. No new Product-v1 feature should bind to `config.update` / `config.report` as a permanent control path. Once the replacement is proven, the legacy configuration transport is deleted instead of kept as a rollback selector.
 
 ## Interaction contracts
 
-All payloads are strictly decoded as typed JSON objects. Unknown fields are
-rejected; a schema change is a new v2 message type or a coordinated breaking change.
-Delivery may be at least once. WebSocket ordering only applies within one connection;
-server resource state and time are authoritative after reconnect. Stateful feature
-handlers deduplicate durable mutations with `idempotency_key` before commit.
-
 ### Gesture
 
-| Type | Payload | Rules |
-| --- | --- | --- |
-| `gesture.notification` | `gesture`, `sender_device_id` | Both identifiers are required. Delivery is best effort; a recipient may use message/idempotency identity to suppress duplicate visual or haptic UX. |
-
-The backend authorizes the sender/recipient relationship. A device ID, gesture, or
-proximity observation is not an authorization grant.
+`gesture.notification` is a bounded best-effort interaction. The backend authenticates/authorizes the relationship; a gesture, device ID or proximity observation is never an authorization grant.
 
 ### Voice mail
 
-| Type | Payload | Rules |
-| --- | --- | --- |
-| `voice_mail.available` | `voice_mail_id`, `from_device_id`, `media_format`, `duration_ms`, `size_bytes`, `checksum_sha256`, `expires_at`, `policy` | Metadata only. Format is `ogg_opus`; checksum is a SHA-256 hex digest; policy is `ephemeral` or `retained`. |
-| `voice_mail.claim` | `voice_mail_id`, `playback_id` | Explicit user-initiated request for a short playback lease. |
-| `voice_mail.claimed` | `voice_mail_id`, `playback_id`, `media_ref`, `lease_expires_at` | `media_ref` is an opaque backend reference, never a bearer token, URL, or storage credential. |
-| `voice_mail.playback_result` | `voice_mail_id`, `playback_id`, `result`, optional `failure_code` | `result` is `succeeded` or `failed`. |
-| `voice_mail.consumed` | `voice_mail_id`, optional `playback_id` | Media is no longer available to the recipient. |
-| `voice_mail.expired` | `voice_mail_id` | Media access is revoked. |
+Canonical voice-mail controls remain:
 
-Voice audio never auto-plays. The backend owns authorization, persistence, cleanup,
-and access checks; the device owns an explicit playback action and UI.
+- `voice_mail.available`
+- `voice_mail.claim`
+- `voice_mail.claimed`
+- `voice_mail.playback_result`
+- `voice_mail.consumed`
+- `voice_mail.expired`
 
-```text
-available --claim--> claimed
-available --consume--> consumed
-available --expire--> expired
-claimed --playback succeeded / ephemeral--> consumed
-claimed --playback succeeded / retained--> available
-claimed --playback failed or lease expired--> available
-claimed --consume--> consumed
-claimed --expire--> expired
-consumed, expired --> terminal
-```
+Voice mail never auto-plays. The backend owns authorization, durable lifecycle/media access and cleanup; the device requires explicit local playback intent. `media_ref` is opaque and never a storage credential/bearer URL. Ephemeral/retained semantics and durable mutation idempotency remain owned by the voice-mail domain implementation.
 
 ### Proximity-confirmed pairing
 
-| Type | Payload | Rules |
-| --- | --- | --- |
-| `pairing.session_create` | `initiator`, `candidate_device_id`, `proximity_evidence_id` | References an opaque local observation; it does not submit RSSI as authorization input. |
-| `pairing.session_created` | `session_id`, `initiator`, `peer`, `expires_at` | Server-created one-time session for distinct participants. |
-| `pairing.confirmation` | `session_id`, `participant`, `confirmation_nonce`, `confirmed_at` | Explicit confirmation by one participant; nonce is never logged as a credential. |
-| `pairing.succeeded` | `session_id`, `relationship_id`, `initiator`, `peer` | Server-authorized relationship after two valid confirmations. |
-| `pairing.rejected` | `session_id`, `reason` | Reason is an enumerated rejection outcome. |
-| `pairing.expired` | `session_id` | The server-enforced confirmation window has elapsed. |
+Canonical pairing controls remain:
 
-The backend authenticates the actor, verifies control of each participant, applies
-rate limits, validates nonce/session expiry, and creates a relationship atomically.
-Proximity evidence alone never creates a relationship.
+- `pairing.session_create`
+- `pairing.session_created`
+- `pairing.confirmation`
+- `pairing.succeeded`
+- `pairing.rejected`
+- `pairing.expired`
 
-```text
-awaiting_confirmation --initiator confirms--> initiator_confirmed
-awaiting_confirmation --peer confirms--> peer_confirmed
-initiator_confirmed --peer confirms--> succeeded
-peer_confirmed --initiator confirms--> succeeded
-awaiting_confirmation, initiator_confirmed, peer_confirmed --reject--> rejected
-awaiting_confirmation, initiator_confirmed, peer_confirmed --expire--> expired
-succeeded, rejected, expired --> terminal
-```
+The backend authenticates each participant, validates one-time session/nonce/expiry state, applies rate limits and creates the relationship atomically. Proximity evidence alone never creates or authorizes a relationship.
+
+## Ownership rules
+
+- One authenticated device transport/session path owns WebSocket control/media framing.
+- Network callbacks do not directly render UI, decode audio, execute arbitrary tools or destroy shared realtime resources.
+- Session/turn generation prevents stale audio/control from resurrecting into a later turn.
+- Device capability handlers are typed/allow-listed and cannot override backend authorization identity.
+- ToolRegistry/backend policy remains separate from device capability execution.
+- Durable product effects are authoritative in domain repositories, not in the LLM or transient WebSocket state.
 
 ## Consequences
 
-Backend, firmware, host simulator, and fixtures move together to Envelope v2. The
-state helpers reject duplicate and terminal transitions. Live-session replay
-suppression remains bounded and session-local; durable feature handlers must
-implement the actor-scoped `idempotency_key` contract before any reconnect-safe
-mutation is considered proven. Rollback is a Git revert of the coordinated change,
-not a protocol fallback.
+Protocol v2 remains the single Companion device envelope/session/media protocol. ADR-003 narrows one question that this earlier ADR did not settle cleanly: device-local capability actions use **Typed Companion Capability RPC** rather than MCP or ad-hoc feature-specific permanent transports.
 
-Issue #5 owns voice-mail persistence, durable mutation idempotency, and media access.
-Issue #6 owns device notification and deliberate playback UX. Issue #7 owns pairing
-persistence, durable mutation idempotency, proximity observation, nonce verification,
-rate limits, and two-device HIL.
+The architecture is intentionally truthful about migration state: legacy settings controls still exist until #197 proves and cuts over their replacement. That temporary implementation fact does not make them the canonical target architecture.
