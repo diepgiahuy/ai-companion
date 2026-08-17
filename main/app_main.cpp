@@ -4,6 +4,7 @@
 #include "companion/esp32_audio.hpp"
 #include "companion/esp_sr_audio_frontend.hpp"
 #include "companion/gpio_button.hpp"
+#include "companion/input_router.hpp"
 #include "companion/nimble_pairing_discovery.hpp"
 #include "companion/ota_manager.hpp"
 #include "companion/pairing_controller.hpp"
@@ -41,7 +42,7 @@ enum class BootGesture {
   factory_reset,
 };
 
-class RuntimeButton final : public companion::Button {
+class RuntimeButton final {
 public:
   explicit RuntimeButton(companion::GpioButton& physical)
       : physical_(physical), gesture_({.debounce_ms = 30,
@@ -53,19 +54,31 @@ public:
     gesture_.suppress_current_press(physical_.is_pressed(), now);
   }
 
-  bool consume_press(uint64_t now) override {
+  companion::InputSample sample(uint64_t now) {
     gesture_.sample(physical_.is_pressed(), now);
-    return gesture_.consume_short();
-  }
-
-  bool consume_pairing_hold(uint64_t now) {
-    gesture_.sample(physical_.is_pressed(), now);
-    return gesture_.consume_hold();
+    return {
+        .short_press = gesture_.consume_short(),
+        .pairing_hold = gesture_.consume_hold(),
+    };
   }
 
 private:
   companion::GpioButton& physical_;
   companion::PressGesture gesture_;
+};
+
+// Temporary #228 migration adapter: CompanionApp still consumes its existing
+// Button seam, but production input now arrives only after InputRouter has
+// converted the physical gesture into a semantic primary action. PLAN 06E can
+// delete this compatibility seam without changing the physical routing again.
+class SemanticButtonAdapter final : public companion::Button {
+public:
+  explicit SemanticButtonAdapter(companion::InputRouter& router) : router_(router) {}
+
+  bool consume_press(uint64_t) override { return router_.consume_primary_action(); }
+
+private:
+  companion::InputRouter& router_;
 };
 
 BootGesture boot_gesture(companion::GpioButton& button,
@@ -256,6 +269,8 @@ extern "C" void app_main() {
   static PresentationDisplay presentation(display);
   static GpioButton physical_button;
   static RuntimeButton button(physical_button);
+  static InputRouter input_router;
+  static SemanticButtonAdapter input_button(input_router);
   static WifiStation wifi;
   static WebSocketVoiceBackend backend;
   static pairing::NimblePairingDiscovery pairing_radio;
@@ -406,7 +421,7 @@ extern "C" void app_main() {
   app_config.smart_vad_enabled = false;
 #endif
 
-  static CompanionApp app(audio_runtime, presentation, button, backend, app_config);
+  static CompanionApp app(audio_runtime, presentation, input_button, backend, app_config);
   app.start(now_ms());
   ESP_LOGI(kTag, "hardware product path using stored provisioning + ESP-SR + secure WebSocket protocol v2");
 
@@ -437,33 +452,49 @@ extern "C" void app_main() {
         (void)backend.respond_user_confirmation(confirmation, false);
         confirmation_pending = false;
         (void)presentation.clear_attention(PresentationDomain::confirmation);
-      } else if (button.consume_press(now)) {
-        (void)backend.respond_user_confirmation(confirmation, true);
-        confirmation_pending = false;
-        (void)presentation.clear_attention(PresentationDomain::confirmation);
       }
     }
 
-    if (!confirmation_pending && pairing_available) {
-      const bool held = button.consume_pairing_hold(now);
-      if (!pairing_controller.active() && held &&
-          (app.state() == UiState::ready || app.state() == UiState::idle)) {
-        if (!pairing_controller.start(now)) {
-          (void)presentation.show_transient(UiState::error, "PAIR START FAIL");
-        }
-      } else if (pairing_controller.active()) {
-        if (held) {
-          pairing_controller.cancel();
-        } else if (button.consume_press(now)) {
-          if (pairing_controller.state() == pairing::State::awaiting_confirmation) {
-            (void)pairing_controller.confirm(now);
-          } else {
-            pairing_controller.cancel();
-          }
-        }
+    const bool pairing_active = pairing_controller.active();
+    const bool pairing_start_allowed =
+        pairing_available && !pairing_active &&
+        (app.state() == UiState::ready || app.state() == UiState::idle);
+    const InputIntent input_intent = InputRouter::route(
+        button.sample(now),
+        InputContext{
+            .confirmation_pending = confirmation_pending,
+            .pairing_available = pairing_available,
+            .pairing_active = pairing_active,
+            .pairing_awaiting_confirmation =
+                pairing_controller.state() == pairing::State::awaiting_confirmation,
+            .pairing_start_allowed = pairing_start_allowed,
+        });
+
+    switch (input_intent) {
+    case InputIntent::confirm_destructive_action:
+      (void)backend.respond_user_confirmation(confirmation, true);
+      confirmation_pending = false;
+      (void)presentation.clear_attention(PresentationDomain::confirmation);
+      break;
+    case InputIntent::begin_pairing:
+      if (!pairing_controller.start(now)) {
+        (void)presentation.show_transient(UiState::error, "PAIR START FAIL");
       }
-      pairing_controller.tick(now);
+      break;
+    case InputIntent::confirm_pairing:
+      (void)pairing_controller.confirm(now);
+      break;
+    case InputIntent::cancel_pairing:
+      pairing_controller.cancel();
+      break;
+    case InputIntent::primary_action:
+      (void)input_router.queue_primary_action(input_intent);
+      break;
+    case InputIntent::none:
+      break;
     }
+
+    if (pairing_available) pairing_controller.tick(now);
 
     app.tick(now);
     ota.set_poll_interval_ms(static_cast<uint64_t>(app.config().ota_poll_interval_s) * 1000);
