@@ -69,6 +69,13 @@ struct FakeDisplay final : Display {
   void show(UiState state, std::string_view text) override {
     events.emplace_back(state, text);
   }
+  bool show_card(UiState state, const PresentationCardV1& card) override {
+    const std::string_view text = card.primary_view().empty()
+                                      ? card.title_view()
+                                      : card.primary_view();
+    events.emplace_back(state, text);
+    return true;
+  }
 };
 
 struct ScheduledInput final {

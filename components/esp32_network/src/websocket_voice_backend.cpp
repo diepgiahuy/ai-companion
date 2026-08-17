@@ -1438,13 +1438,29 @@ void WebSocketVoiceBackend::handle_text(std::string_view json) {
     cJSON_Delete(root);
     return;
   }
+  uint64_t turn_session_epoch = 0;
+  uint64_t turn_media_generation = 0;
   if (turn_scoped ||
       (type == protocol::ControlType::protocol_error && !incoming_turn_id.empty())) {
-    if (!active_turn_matches(incoming_turn_id)) {
+    taskENTER_CRITICAL(&turn_id_lock_);
+    const bool current_turn = (turn_active_.load() || tts_active_.load()) &&
+                              incoming_turn_id == active_turn_id_.data();
+    if (current_turn) {
+      turn_session_epoch = session_epoch_.load();
+      turn_media_generation = media_generation_.load();
+    }
+    taskEXIT_CRITICAL(&turn_id_lock_);
+    if (!current_turn) {
       cJSON_Delete(root);
       return;
     }
   }
+  const auto enqueue_turn_event = [&](BackendEvent& event) {
+    event.scope = BackendEventScope::generation;
+    event.session_epoch = turn_session_epoch;
+    event.generation = turn_media_generation;
+    return xQueueSend(event_queue_, &event, 0) == pdPASS;
+  };
 
   if (type == protocol::ControlType::voice_mail_available) {
     VoiceMailMetadata item{};
@@ -1497,17 +1513,17 @@ void WebSocketVoiceBackend::handle_text(std::string_view json) {
     }
     taskEXIT_CRITICAL(&voice_mail_lock_);
     if (matches && !lease_valid) {
+      clear_voice_mail(true);
       enqueue_voice_mail_event(BackendEventType::voice_mail_failed, item,
                                "VOICE MAIL CLAIM EXPIRED");
-      clear_voice_mail(true);
       cJSON_Delete(root);
       return;
     }
     if (matches && !enqueue_media_job(item, json_string(payload, "playback_id"),
                                       json_string(payload, "media_ref"))) {
+      clear_voice_mail(true);
       enqueue_voice_mail_event(BackendEventType::voice_mail_failed, item,
                                "VOICE MAIL DOWNLOAD BUSY");
-      clear_voice_mail(true);
     }
   } else if (type == protocol::ControlType::voice_mail_consumed) {
     VoiceMailMetadata item{};
@@ -1583,17 +1599,29 @@ void WebSocketVoiceBackend::handle_text(std::string_view json) {
     if (!parse_runtime_config(payload, config) || !enqueue_config_event(config))
       enqueue_event(BackendEventType::error, "INVALID CONFIG");
   } else if (type == protocol::ControlType::transcript_final) {
-    enqueue_event(BackendEventType::transcript, json_string(payload, "text"));
+    BackendEvent event{};
+    event.type = BackendEventType::transcript;
+    event.set_text(json_string(payload, "text"));
+    (void)enqueue_turn_event(event);
   } else if (type == protocol::ControlType::tts_lifecycle) {
     const std::string_view state = json_string(payload, "state");
     if (state == "start") {
-      if (activate_tts_for_matching_turn(incoming_turn_id))
-        enqueue_event(BackendEventType::tts_started);
+      if (activate_tts_for_matching_turn(incoming_turn_id)) {
+        BackendEvent event{};
+        event.type = BackendEventType::tts_started;
+        (void)enqueue_turn_event(event);
+      }
     } else if (state == "sentence_start") {
-      enqueue_event(BackendEventType::tts_sentence, json_string(payload, "text"));
+      BackendEvent event{};
+      event.type = BackendEventType::tts_sentence;
+      event.set_text(json_string(payload, "text"));
+      (void)enqueue_turn_event(event);
     } else if (state == "stop") {
-      if (deactivate_matching_turn(incoming_turn_id))
-        enqueue_event(BackendEventType::tts_finished);
+      if (deactivate_matching_turn(incoming_turn_id)) {
+        BackendEvent event{};
+        event.type = BackendEventType::tts_finished;
+        (void)enqueue_turn_event(event);
+      }
     }
   } else if (type == protocol::ControlType::alarm_fired) {
     const std::string_view alarm_id = json_string(payload, "alarm_id");
@@ -1603,14 +1631,28 @@ void WebSocketVoiceBackend::handle_text(std::string_view json) {
     enqueue_event(BackendEventType::schedule, json_string(payload, "message"));
   } else if (type == protocol::ControlType::ui_card) {
     PresentationCardV1 card{};
-    if (parse_presentation_card(payload, card)) enqueue_card_event(card);
+    if (parse_presentation_card(payload, card)) {
+      BackendEvent event{};
+      event.type = BackendEventType::presentation_card;
+      event.set_card(card);
+      (void)enqueue_turn_event(event);
+    }
   } else if (type == protocol::ControlType::ui_state) {
     PresentationHint hint{};
-    if (parse_presentation_hint(payload, hint)) enqueue_hint_event(hint);
+    if (parse_presentation_hint(payload, hint)) {
+      BackendEvent event{};
+      event.type = BackendEventType::presentation_hint;
+      event.set_hint(hint);
+      (void)enqueue_turn_event(event);
+    }
   } else if (type == protocol::ControlType::agent_status) {
     AgentPresentationStatus status{};
-    if (parse_agent_presentation_status(payload, status))
-      enqueue_agent_status_event(status);
+    if (parse_agent_presentation_status(payload, status)) {
+      BackendEvent event{};
+      event.type = BackendEventType::agent_status;
+      event.set_agent_status(status);
+      (void)enqueue_turn_event(event);
+    }
   } else if (type == protocol::ControlType::turn_state) {
     if (json_string(payload, "state") == "interrupted" &&
         deactivate_matching_turn(incoming_turn_id)) {

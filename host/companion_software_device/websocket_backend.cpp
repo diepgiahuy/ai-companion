@@ -984,43 +984,78 @@ void WebSocketVoiceBackend::handle_text(uint64_t generation, const std::string& 
       return;
     }
 
-    auto current_turn = [&] {
-      std::lock_guard lock(state_mutex_);
-      return active_turn_id_;
-    }();
     const bool turn_scoped = type == protocol::ControlType::turn_state ||
                              type == protocol::ControlType::transcript_final ||
                              type == protocol::ControlType::tts_lifecycle ||
                              type == protocol::ControlType::agent_status ||
                              type == protocol::ControlType::ui_card ||
                              type == protocol::ControlType::ui_state;
-    if (turn_scoped && incoming_turn != current_turn) {
+    uint64_t turn_session_epoch = 0;
+    uint64_t turn_media_generation = 0;
+    if (turn_scoped) {
       std::lock_guard lock(state_mutex_);
-      ++stats_.stale_controls;
-      return;
+      if ((!turn_active_ && !tts_active_) || incoming_turn != active_turn_id_) {
+        ++stats_.stale_controls;
+        return;
+      }
+      turn_session_epoch = connection_generation_.load();
+      turn_media_generation = media_generation_.load();
     }
+    const auto enqueue_turn_event = [&](BackendEvent event) {
+      std::lock_guard lock(state_mutex_);
+      if (events_.size() == kMaximumEvents) events_.pop_front();
+      event.scope = BackendEventScope::generation;
+      event.session_epoch = turn_session_epoch;
+      event.generation = turn_media_generation;
+      events_.push_back(event);
+    };
 
     switch (type) {
-    case protocol::ControlType::transcript_final:
-      enqueue_event(BackendEventType::transcript, json_string(payload, "text"));
+    case protocol::ControlType::transcript_final: {
+      BackendEvent event{};
+      event.type = BackendEventType::transcript;
+      event.set_text(json_string(payload, "text"));
+      enqueue_turn_event(event);
       break;
+    }
     case protocol::ControlType::tts_lifecycle: {
       const std::string state = json_string(payload, "state");
       if (state == "start") {
+        bool current = false;
         {
           std::lock_guard lock(state_mutex_);
-          tts_active_ = true;
+          current = turn_active_ && incoming_turn == active_turn_id_ &&
+                    connection_generation_.load() == turn_session_epoch &&
+                    media_generation_.load() == turn_media_generation;
+          if (current) tts_active_ = true;
         }
-        enqueue_event(BackendEventType::tts_started);
+        if (current) {
+          BackendEvent event{};
+          event.type = BackendEventType::tts_started;
+          enqueue_turn_event(event);
+        }
       } else if (state == "sentence_start") {
-        enqueue_event(BackendEventType::tts_sentence, json_string(payload, "text"));
+        BackendEvent event{};
+        event.type = BackendEventType::tts_sentence;
+        event.set_text(json_string(payload, "text"));
+        enqueue_turn_event(event);
       } else if (state == "stop") {
+        bool current = false;
         {
           std::lock_guard lock(state_mutex_);
-          tts_active_ = false;
-          turn_active_ = false;
+          current = (turn_active_ || tts_active_) && incoming_turn == active_turn_id_ &&
+                    connection_generation_.load() == turn_session_epoch &&
+                    media_generation_.load() == turn_media_generation;
+          if (current) {
+            tts_active_ = false;
+            turn_active_ = false;
+          }
         }
-        enqueue_event(BackendEventType::tts_finished);
+        if (current) {
+          BackendEvent event{};
+          event.type = BackendEventType::tts_finished;
+          enqueue_turn_event(event);
+        }
       }
       break;
     }
@@ -1046,7 +1081,10 @@ void WebSocketVoiceBackend::handle_text(uint64_t generation, const std::string& 
         enqueue_event(BackendEventType::error, "INVALID UI CARD");
         break;
       }
-      enqueue_card_event(card);
+      BackendEvent event{};
+      event.type = BackendEventType::presentation_card;
+      event.set_card(card);
+      enqueue_turn_event(event);
       break;
     }
     case protocol::ControlType::ui_state: {
@@ -1055,7 +1093,10 @@ void WebSocketVoiceBackend::handle_text(uint64_t generation, const std::string& 
         enqueue_event(BackendEventType::error, "INVALID UI STATE");
         break;
       }
-      enqueue_hint_event(hint);
+      BackendEvent event{};
+      event.type = BackendEventType::presentation_hint;
+      event.set_hint(hint);
+      enqueue_turn_event(event);
       break;
     }
     case protocol::ControlType::agent_status: {
@@ -1064,7 +1105,10 @@ void WebSocketVoiceBackend::handle_text(uint64_t generation, const std::string& 
         enqueue_event(BackendEventType::error, "INVALID AGENT STATUS");
         break;
       }
-      enqueue_agent_status_event(status);
+      BackendEvent event{};
+      event.type = BackendEventType::agent_status;
+      event.set_agent_status(status);
+      enqueue_turn_event(event);
       break;
     }
     case protocol::ControlType::config_update: {
