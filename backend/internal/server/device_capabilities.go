@@ -1,10 +1,12 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"time"
@@ -15,9 +17,10 @@ import (
 )
 
 type capabilityPending struct {
-	generation uint64
-	turnID     string
-	result     chan protocol.CapabilityResultPayload
+	generation    uint64
+	turnID        string
+	sessionScoped bool
+	result        chan protocol.CapabilityResultPayload
 }
 
 type sessionCapabilityState struct {
@@ -100,12 +103,21 @@ func (s *session) Call(ctx context.Context, call devicecap.Call) (devicecap.Resu
 		return devicecap.Result{}, fmt.Errorf("device capability turn_id exceeds size limit")
 	}
 
-	s.mu.Lock()
-	generation := s.generation
-	s.mu.Unlock()
-	if generation == 0 {
-		return devicecap.Result{}, fmt.Errorf("device capability requires an active generation")
+	// Settings reconciliation is intentionally session-scoped. It must work
+	// immediately after capability advertisement, before the first conversational
+	// turn creates a media generation. Turn-owned capabilities keep the existing
+	// generation binding so stale results cannot cross a barge-in/cancel boundary.
+	sessionScoped := call.Name == devicecap.SettingsName && turnID == ""
+	var generation uint64
+	if !sessionScoped {
+		s.mu.Lock()
+		generation = s.generation
+		s.mu.Unlock()
+		if generation == 0 {
+			return devicecap.Result{}, fmt.Errorf("turn-scoped device capability requires an active generation")
+		}
 	}
+
 	deadline := call.Deadline
 	if deadline.IsZero() {
 		deadline = time.Now().Add(3 * time.Second)
@@ -127,7 +139,10 @@ func (s *session) Call(ctx context.Context, call devicecap.Call) (devicecap.Resu
 	}
 
 	correlationID := "cap-" + s.nextMessageID()
-	waiter := &capabilityPending{generation: generation, turnID: turnID, result: make(chan protocol.CapabilityResultPayload, 1)}
+	waiter := &capabilityPending{
+		generation: generation, turnID: turnID, sessionScoped: sessionScoped,
+		result: make(chan protocol.CapabilityResultPayload, 1),
+	}
 	state.mu.Lock()
 	if state.closed {
 		state.mu.Unlock()
@@ -269,7 +284,7 @@ func (s *session) handleCapabilityControl(ctx context.Context, data []byte) (boo
 			}
 			delete(state.pending, message.CorrelationID)
 			state.mu.Unlock()
-			if !s.generationCurrent(waiter.generation) {
+			if !waiter.sessionScoped && !s.generationCurrent(waiter.generation) {
 				return fmt.Errorf("stale capability generation")
 			}
 			select {
@@ -283,6 +298,23 @@ func (s *session) handleCapabilityControl(ctx context.Context, data []byte) (boo
 		})
 	}
 	return false, nil
+}
+
+func decodeSettingsResult(raw json.RawMessage) (devicecap.SettingsResult, error) {
+	var result devicecap.SettingsResult
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&result); err != nil {
+		return result, err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return result, fmt.Errorf("multiple settings result values")
+		}
+		return result, err
+	}
+	return result, nil
 }
 
 func (s *session) reconcileSettings(ctx context.Context) {
@@ -325,8 +357,8 @@ func (s *session) reconcileSettings(ctx context.Context) {
 		}
 		return
 	}
-	var result devicecap.SettingsResult
-	if err := json.Unmarshal(res.Value, &result); err != nil {
+	result, err := decodeSettingsResult(res.Value)
+	if err != nil {
 		if s.logger != nil {
 			s.logger.Warn("invalid settings reconciliation result", "device_id", s.deviceID, "error", err)
 		}
@@ -338,15 +370,13 @@ func (s *session) reconcileSettings(ctx context.Context) {
 		}
 		return
 	}
-	reportedConfig := twin.Desired
-	if result.Settings != nil {
-		reportedConfig = *result.Settings
+	if result.Version != twin.DesiredVersion {
+		if s.logger != nil {
+			s.logger.Warn("device acknowledged unexpected settings version", "device_id", s.deviceID, "want", twin.DesiredVersion, "got", result.Version)
+		}
+		return
 	}
-	version := result.Version
-	if version <= 0 {
-		version = twin.DesiredVersion
-	}
-	if err := s.controlPlane.Report(ctx, s.userID, s.deviceID, version, reportedConfig); err != nil {
+	if err := s.controlPlane.Report(ctx, s.userID, s.deviceID, result.Version, twin.Desired); err != nil {
 		if s.logger != nil {
 			s.logger.Warn("failed to report reconciled settings", "device_id", s.deviceID, "error", err)
 		}
