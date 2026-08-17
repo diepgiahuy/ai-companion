@@ -145,6 +145,7 @@ bool parse_presentation_card(const json& payload, PresentationCardV1& output) {
     if (!progress_it->is_number_integer()) return false;
     progress = progress_it->get<int64_t>();
   }
+  if (progress < 0 || progress > 100) return false;
   return output.assign(1, kind->get<std::string>(), title, primary, secondary,
                        static_cast<int>(progress));
 }
