@@ -126,50 +126,14 @@ func TestHelloRejectsUnsupportedAudio(t *testing.T) {
 	}
 }
 
-func testDeviceConfig() RuntimeConfig {
-	smartVAD := true
-	threshold := 500
-	silenceMS := 800
-	minimumSpeechMS := 200
-	idleAfterMS := 30_000
-	alarmVisibleMS := 10_000
-	return RuntimeConfig{
-		SmartVADEnabled: &smartVAD,
-		VADThreshold:    &threshold,
-		VADSilenceMS:    &silenceMS,
-		VADMinSpeechMS:  &minimumSpeechMS,
-		IdleAfterMS:     &idleAfterMS,
-		AlarmVisibleMS:  &alarmVisibleMS,
-	}
-}
-
-func TestDeviceConfigMessagesRequireResolvedSnapshot(t *testing.T) {
-	valid := testDeviceConfig()
-	if err := (ConfigUpdatePayload{ConfigVersion: 0, Config: valid}).Validate(); err != nil {
-		t.Fatalf("valid device snapshot rejected: %v", err)
-	}
-	if err := (ConfigReportPayload{ConfigVersion: 0, Applied: true, Config: valid}).Validate(); err != nil {
-		t.Fatalf("valid device report rejected: %v", err)
-	}
-	if err := (ConfigUpdatePayload{ConfigVersion: 1, Config: RuntimeConfig{}}).Validate(); err == nil {
-		t.Fatal("partial device snapshot was accepted")
-	}
-	invalid := testDeviceConfig()
-	tooLarge := 65_536
-	invalid.VADThreshold = &tooLarge
-	if err := (ConfigUpdatePayload{ConfigVersion: 1, Config: invalid}).Validate(); err == nil {
-		t.Fatal("out-of-range device snapshot was accepted")
-	}
-}
-
-func TestReadyRequiresExactDownlinkAudioAndConfigVersion(t *testing.T) {
+func TestReadyIsHandshakeOnlyAndRequiresExactDownlinkAudio(t *testing.T) {
 	ready := ReadyPayload{Transport: Transport, AudioParams: DownlinkAudioParams()}
 	wire, err := Encode(SessionReadyType, Metadata{MessageID: "server-1", SessionID: "session-1"}, ready)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(wire), `"config_version":0`) {
-		t.Fatalf("ready omitted config_version: %s", wire)
+	if strings.Contains(string(wire), "config") {
+		t.Fatalf("session.ready must not carry settings/config state: %s", wire)
 	}
 	ready.AudioParams.SampleRate = UplinkSampleRate
 	if err := ready.Validate(); err == nil {
@@ -181,7 +145,7 @@ func TestReadyRequiresExactDownlinkAudioAndConfigVersion(t *testing.T) {
 		t.Fatal("20 ms session.ready was accepted")
 	}
 	fractional := Envelope{Payload: json.RawMessage(
-		`{"transport":"websocket","audio_params":{"format":"opus","sample_rate":24000,"channels":1,"frame_duration":60.5},"config_version":0}`,
+		`{"transport":"websocket","audio_params":{"format":"opus","sample_rate":24000,"channels":1,"frame_duration":60.5}}`,
 	)}
 	if _, err := DecodePayload[ReadyPayload](fractional); err == nil {
 		t.Fatal("fractional session.ready audio parameter was accepted")
