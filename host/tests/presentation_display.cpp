@@ -143,5 +143,44 @@ int main() {
     assert(sink.calls() == before + 1);
   }
 
+  {
+    RecordingDisplay sink;
+    PresentationDisplay display(sink);
+    display.show(UiState::ready, "READY");
+    display.set_context(10, 1);
+    assert(display.show_attention(PresentationDomain::card, UiState::ready,
+                                  "TURN CARD", PresentationScope::generation,
+                                  10, 1));
+    assert(display.model().domain == PresentationDomain::card);
+
+    // Advancing generation invalidates both reducer state and adapter
+    // bookkeeping, so the retired card cannot be cleared/resurrected later.
+    display.set_context(10, 2);
+    assert(display.model().surface == PresentationModel::Surface::base);
+    assert(sink.text() == "READY");
+    assert(!display.clear_attention(PresentationDomain::card));
+  }
+
+  {
+    RecordingDisplay sink;
+    PresentationDisplay display(sink);
+    display.show(UiState::ready, "READY");
+    display.set_context(20, 1);
+    assert(display.show_attention(PresentationDomain::pairing, UiState::ready,
+                                  "PAIR CURRENT"));
+    assert(display.show_attention(PresentationDomain::confirmation, UiState::ready,
+                                  "CONFIRM"));
+
+    // A stale scoped update is rejected before it can mutate the adapter's
+    // renderer-state cache. Revealing the existing pairing candidate therefore
+    // keeps its original renderer state/text.
+    assert(!display.show_attention(PresentationDomain::pairing, UiState::error,
+                                   "PAIR STALE", PresentationScope::session,
+                                   19, 0));
+    assert(display.clear_attention(PresentationDomain::confirmation));
+    assert(sink.state() == UiState::ready);
+    assert(sink.text() == "PAIR CURRENT");
+  }
+
   return 0;
 }
