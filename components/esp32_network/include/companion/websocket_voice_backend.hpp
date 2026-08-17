@@ -77,6 +77,7 @@ public:
   bool finish_turn(uint64_t now_ms) override;
   void cancel_turn() override;
   bool poll_event(BackendEvent& event) override;
+  bool report_settings_apply(const SettingsTwin& twin, bool applied) override;
   bool claim_voice_mail(const VoiceMailMetadata& item, uint64_t now_ms) override;
   bool report_voice_mail_playback(const VoiceMailMetadata& item, bool succeeded,
                                   std::string_view failure_code,
@@ -197,6 +198,17 @@ private:
   UserConfirmationRequest active_confirmation_{};
   bool confirmation_ready_{};
   bool confirmation_active_{};
+
+  portMUX_TYPE settings_lock_ = portMUX_INITIALIZER_UNLOCKED;
+  DeviceSettings current_settings_{};
+  std::atomic<uint64_t> current_settings_version_{0};
+  SettingsTwin pending_settings_{};
+  std::array<char, 129> pending_settings_correlation_{};
+  std::array<char, 129> pending_settings_turn_{};
+  uint64_t pending_settings_generation_{};
+  bool pending_settings_has_generation_{};
+  bool settings_pending_{};
+
   std::array<char, 8'193> text_payload_{};
   size_t text_payload_size_{};
   int receive_opcode_{};
@@ -267,7 +279,7 @@ private:
                                uint64_t generation_id,
                                bool has_generation_id,
                                bool ok,
-                               const SettingsTwin* applied_twin,
+                               const SettingsTwin* settings_twin,
                                std::string_view error_code = {});
   bool enqueue_unsupported_capability_result(std::string_view correlation_id,
                                              std::string_view turn_id,
@@ -275,6 +287,7 @@ private:
                                              std::string_view capability_name,
                                              std::string_view capability_version);
   void clear_user_confirmation();
+  void clear_pending_settings();
   bool encode_and_enqueue(std::span<const int16_t, kOpusFrameSamples> pcm,
                           uint64_t media_generation);
   bool configure_decoder(uint32_t sample_rate_hz);
@@ -285,7 +298,6 @@ private:
   bool enqueue_hint_event(const PresentationHint& hint);
   bool enqueue_agent_status_event(const AgentPresentationStatus& status);
   bool enqueue_settings_event(const SettingsTwin& settings);
-  bool enqueue_config_event(const RuntimeConfigPatch& config);
   bool enqueue_voice_mail_event(BackendEventType type,
                                 const VoiceMailMetadata& item,
                                 std::string_view text = {});
