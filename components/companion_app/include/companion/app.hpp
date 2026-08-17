@@ -102,6 +102,8 @@ struct BackendEvent {
   }
 };
 
+// Board-facing capture port. Only AudioRuntime should compose this into the
+// product runtime; CompanionApp must not own physical audio adapters directly.
 class Microphone {
 public:
   virtual ~Microphone() = default;
@@ -110,6 +112,8 @@ public:
   virtual void stop_capture() = 0;
 };
 
+// Board-facing playback port. Accepted-frame semantics are the authoritative
+// source for the AEC reference owned by AudioRuntime.
 class Speaker {
 public:
   virtual ~Speaker() = default;
@@ -117,6 +121,28 @@ public:
   virtual size_t write_playback(std::span<const int16_t> mono_pcm) = 0;
   virtual bool playback_drained() const = 0;
   virtual void stop_playback() = 0;
+};
+
+// Single app-facing audio owner. It hides physical microphone/speaker adapters,
+// optional vendor AFE state, playback-reference epochs and rate conversion from
+// CompanionApp so there is only one audio lifecycle boundary in the product.
+class AudioEngine {
+public:
+  virtual ~AudioEngine() = default;
+  virtual bool start() = 0;
+  virtual void reset() = 0;
+  virtual bool frontend_enabled() const = 0;
+  virtual bool start_capture() = 0;
+  virtual size_t read_capture(std::span<int16_t> destination) = 0;
+  virtual void stop_capture() = 0;
+  virtual bool start_playback(uint32_t sample_rate_hz) = 0;
+  virtual size_t write_playback(std::span<const int16_t> mono_pcm) = 0;
+  virtual bool playback_drained() const = 0;
+  virtual void stop_playback() = 0;
+  virtual bool push_playback_reference(std::span<const int16_t> accepted_pcm,
+                                       uint32_t source_sample_rate_hz) = 0;
+  virtual AudioFrontendResult process_capture(std::span<const int16_t> microphone_16k,
+                                              std::span<int16_t> cleaned_16k) = 0;
 };
 
 class Display {
@@ -172,11 +198,8 @@ struct AppConfig {
 
 class CompanionApp final {
 public:
-  CompanionApp(Microphone& microphone, Speaker& speaker, Display& display,
-               Button& button, VoiceBackend& backend, AppConfig config = {});
-  CompanionApp(Microphone& microphone, Speaker& speaker, Display& display,
-               Button& button, VoiceBackend& backend, AudioFrontend& audio_frontend,
-               AppConfig config = {});
+  CompanionApp(AudioEngine& audio, Display& display, Button& button,
+               VoiceBackend& backend, AppConfig config = {});
 
   bool start(uint64_t now_ms);
   void tick(uint64_t now_ms);
@@ -186,12 +209,10 @@ public:
   uint64_t runtime_config_version() const { return runtime_config_version_; }
 
 private:
-  Microphone& microphone_;
-  Speaker& speaker_;
+  AudioEngine& audio_;
   Display& display_;
   Button& button_;
   VoiceBackend& backend_;
-  AudioFrontend* audio_frontend_{};
   AppConfig config_;
   UiState state_{UiState::booting};
   uint64_t recording_started_ms_{};
@@ -209,7 +230,7 @@ private:
   bool tts_finished_{};
   bool alarm_pending_{};
   bool alarm_tone_active_{};
-  bool microphone_capture_active_{};
+  bool capture_active_{};
   bool voice_mail_stream_finished_{};
   bool voice_mail_result_pending_{};
   static constexpr size_t kVoiceMailQueueCapacity = 4;
@@ -220,8 +241,6 @@ private:
   std::array<int16_t, kAudioFrameSamples> capture_frame_{};
   std::array<int16_t, kAudioFrameSamples> cleaned_capture_frame_{};
   std::array<int16_t, kAudioFrameSamples> playback_frame_{};
-  std::array<int16_t, kAudioFrameSamples> playback_reference_frame_{};
-  PlaybackReference24To16 playback_reference_converter_{};
   size_t playback_count_{};
   size_t playback_offset_{};
 
@@ -248,9 +267,7 @@ private:
   void set_upcoming(std::string_view text);
   void set_pending_alarm(std::string_view text);
   bool frame_has_voice(std::span<const int16_t> pcm) const;
-  bool ensure_frontend_capture();
-  bool push_playback_reference(std::span<const int16_t> accepted_pcm,
-                               uint32_t sample_rate_hz);
+  bool ensure_monitor_capture();
   void handle_frontend_event(AudioFrontendEvent event, uint64_t now_ms);
   void stop_capture_if_owned_by_turn();
   void fail(std::string_view reason);
