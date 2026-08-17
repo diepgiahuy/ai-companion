@@ -18,7 +18,7 @@ func goldenPayloads() []any {
 	peer := PairingParticipant{OwnerUserID: "owner-b", DeviceID: "device-b"}
 	return []any{
 		HelloPayload{Transport: Transport, AudioParams: DefaultAudioParams()},
-		ReadyPayload{Transport: Transport, AudioParams: DownlinkAudioParams(), ConfigVersion: 0},
+		ReadyPayload{Transport: Transport, AudioParams: DownlinkAudioParams()},
 		EmptyPayload{},
 		EmptyPayload{},
 		ListenPayload{State: "start", Mode: "manual"},
