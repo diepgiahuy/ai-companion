@@ -33,9 +33,12 @@ public:
       : microphone_(microphone), speaker_(speaker), frontend_(frontend) {}
 
   bool start() override {
-    end_current_reference();
-    capture_active_ = false;
-    playback_active_ = false;
+    // Startup is a real ownership boundary, not a flag reset: if this object is
+    // ever restarted after a partial failure, drain ownership deterministically
+    // rather than orphaning an active capture/playback resource.
+    stop_capture();
+    stop_playback();
+    frontend_.reset();
     return frontend_.start();
   }
 
