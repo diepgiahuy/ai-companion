@@ -234,7 +234,7 @@ void CompanionApp::process_backend_event(const BackendEvent& event,
     const auto& c = event.config;
     if (c.version < runtime_config_version_) break;
     if (c.version == runtime_config_version_) {
-      backend_.report_config(c, true);
+      if (c.version > 0) backend_.report_config(c, true);
       break;
     }
     const bool valid = c.vad_threshold >= 1 && c.vad_threshold <= 65'535 &&
