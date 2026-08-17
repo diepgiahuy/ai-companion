@@ -50,5 +50,12 @@ int main() {
     assert(converter.dropped_groups() == 1);
   }
 
+  // Epoch/phase reset must not erase soak diagnostics.
+  converter.reset();
+  assert(converter.pending_samples() == 0);
+  assert(converter.dropped_groups() == 1);
+  converter.clear_metrics();
+  assert(converter.dropped_groups() == 0);
+
   return 0;
 }

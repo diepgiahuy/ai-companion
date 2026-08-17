@@ -1,4 +1,5 @@
 #include "companion/app.hpp"
+#include "companion/audio_runtime.hpp"
 #include "companion/claim_client.hpp"
 #include "companion/esp32_audio.hpp"
 #include "companion/esp_sr_audio_frontend.hpp"
@@ -250,6 +251,7 @@ extern "C" void app_main() {
 
   static Esp32Audio audio;
   static EspSrAudioFrontend audio_frontend;
+  static AudioRuntime audio_runtime(audio, audio, audio_frontend);
   static Ssd1306Display display;
   static PresentationDisplay presentation(display);
   static GpioButton physical_button;
@@ -404,8 +406,8 @@ extern "C" void app_main() {
   app_config.smart_vad_enabled = false;
 #endif
 
-  static CompanionApp app(audio, audio, presentation, button, backend,
-                          audio_frontend, app_config);
+  static CompanionApp app(audio_runtime, audio_runtime, presentation, button, backend,
+                          audio_runtime, app_config);
   app.start(now_ms());
   ESP_LOGI(kTag, "hardware product path using stored provisioning + ESP-SR + secure WebSocket protocol v2");
 

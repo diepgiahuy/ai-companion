@@ -52,15 +52,30 @@ struct EspSrAudioFrontend::Impl {
   size_t feed_chunk{};
   size_t fetch_chunk{};
   bool last_vad_speech{};
+  bool reference_active{};
   size_t microphone_count{};
   size_t reference_overruns{};
   size_t output_overruns{};
+  uint64_t reference_epoch{};
+  uint64_t reference_pushed_samples{};
+  uint64_t reference_underflow_events{};
+  uint64_t reference_underflow_samples{};
   std::array<int16_t, kMaxAfeChunkSamples> microphone{};
   std::array<int16_t, kMaxAfeChunkSamples * 2> interleaved{};
   std::array<int16_t, kReferenceCapacity> reference_storage{};
   std::array<int16_t, kOutputCapacity> output_storage{};
   SampleRing references{reference_storage.data(), reference_storage.size()};
   SampleRing output{output_storage.data(), output_storage.size()};
+
+  void clear_pipeline_state() {
+    microphone_count = 0;
+    references.clear();
+    output.clear();
+    last_vad_speech = false;
+    if (handle != nullptr && data != nullptr && handle->reset_buffer != nullptr) {
+      (void)handle->reset_buffer(data);
+    }
+  }
 
   void destroy() {
     if (handle != nullptr && data != nullptr) {
@@ -76,6 +91,8 @@ struct EspSrAudioFrontend::Impl {
     references.clear();
     output.clear();
     last_vad_speech = false;
+    reference_active = false;
+    reference_epoch = 0;
   }
 
   bool append_output(const int16_t* source, size_t count) {
@@ -175,24 +192,54 @@ bool EspSrAudioFrontend::start() {
 
 void EspSrAudioFrontend::reset() {
   if (impl_ == nullptr) return;
-  impl_->microphone_count = 0;
-  impl_->references.clear();
-  impl_->output.clear();
-  impl_->last_vad_speech = false;
-  if (impl_->handle != nullptr && impl_->data != nullptr && impl_->handle->reset_buffer != nullptr) {
-    (void)impl_->handle->reset_buffer(impl_->data);
-  }
+  impl_->clear_pipeline_state();
+  impl_->reference_active = false;
+  impl_->reference_epoch = 0;
+}
+
+bool EspSrAudioFrontend::begin_playback_reference(uint64_t epoch) {
+  if (impl_ == nullptr || impl_->data == nullptr || epoch == 0) return false;
+  // A playback reference epoch is also an AFE buffering epoch. Clear local
+  // staging and ESP-SR's internal feed/fetch buffers so pre-TTS audio/output
+  // cannot leak into the first monitored full-duplex chunk.
+  impl_->clear_pipeline_state();
+  impl_->reference_epoch = epoch;
+  impl_->reference_active = true;
+  return true;
+}
+
+void EspSrAudioFrontend::end_playback_reference(uint64_t epoch) {
+  if (impl_ == nullptr || !impl_->reference_active || epoch != impl_->reference_epoch) return;
+  // Cancel/drain is a hard epoch boundary too: drop queued reference, staged
+  // microphone/output and vendor internal AFE buffers before later capture can
+  // be interpreted as a new turn.
+  impl_->clear_pipeline_state();
+  impl_->reference_active = false;
+  impl_->reference_epoch = 0;
 }
 
 bool EspSrAudioFrontend::push_playback_reference(std::span<const int16_t> pcm_16k) {
-  if (impl_ == nullptr || impl_->data == nullptr) return false;
+  if (impl_ == nullptr || impl_->data == nullptr || !impl_->reference_active) return false;
   for (const int16_t sample : pcm_16k) {
     if (!impl_->references.push(sample)) {
       ++impl_->reference_overruns;
       return false;
     }
+    ++impl_->reference_pushed_samples;
   }
   return true;
+}
+
+PlaybackReferenceStats EspSrAudioFrontend::playback_reference_stats() const {
+  if (impl_ == nullptr) return {};
+  return {
+      .epoch = impl_->reference_epoch,
+      .active = impl_->reference_active,
+      .pushed_samples = impl_->reference_pushed_samples,
+      .underflow_events = impl_->reference_underflow_events,
+      .underflow_samples = impl_->reference_underflow_samples,
+      .overruns = impl_->reference_overruns,
+  };
 }
 
 AudioFrontendResult EspSrAudioFrontend::process_capture(
@@ -209,12 +256,18 @@ AudioFrontendResult EspSrAudioFrontend::process_capture(
     impl_->microphone[impl_->microphone_count++] = microphone_sample;
     if (impl_->microphone_count != impl_->feed_chunk) continue;
 
+    bool reference_underflow = false;
     for (size_t i = 0; i < impl_->feed_chunk; ++i) {
       int16_t reference_sample = 0;
-      (void)impl_->references.pop(reference_sample);
+      if (!impl_->references.pop(reference_sample) && impl_->reference_active) {
+        reference_underflow = true;
+        ++impl_->reference_underflow_samples;
+      }
       impl_->interleaved[2 * i] = impl_->microphone[i];
       impl_->interleaved[2 * i + 1] = reference_sample;
     }
+    if (reference_underflow) ++impl_->reference_underflow_events;
+
     const int fed = impl_->handle->feed(impl_->data, impl_->interleaved.data());
     impl_->microphone_count = 0;
     if (fed < 0) {
