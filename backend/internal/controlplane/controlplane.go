@@ -205,7 +205,8 @@ func Validate(c RuntimeConfig) error {
 	if len(c.VoiceKey) > 128 {
 		return fmt.Errorf("voice_key too long")
 	}
-	if len(c.WakeModel) > 64 {
+	// Firmware stores wake_model in a 64-byte NUL-terminated fixed buffer.
+	if len(c.WakeModel) > 63 {
 		return fmt.Errorf("wake_model too long")
 	}
 	return nil
