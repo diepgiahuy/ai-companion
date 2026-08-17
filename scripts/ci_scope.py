@@ -15,6 +15,7 @@ from typing import Iterable
 @dataclass(frozen=True)
 class Scope:
     host: bool = False
+    software_device_compile: bool = False
     backend: bool = False
     backend_full: bool = False
     codeql: bool = False
@@ -54,6 +55,7 @@ def _is_ci_control(path: str) -> bool:
 def _broad(mode: str, *, promotion: bool) -> Scope:
     return Scope(
         host=True,
+        software_device_compile=True,
         backend=True,
         backend_full=True,
         codeql=True,
@@ -82,6 +84,7 @@ def classify(event: str, paths: Iterable[str] = (), *, unknown_changes: bool = F
         return _broad("pr-ci-control", promotion=False)
 
     host = False
+    software_device_compile = False
     backend = False
     postgres = False
     protocol = False
@@ -95,6 +98,14 @@ def classify(event: str, paths: Iterable[str] = (), *, unknown_changes: bool = F
             or path in {"CMakeLists.txt", "partitions.csv", "scripts/e2e.sh", "scripts/budget_check.py"}
         ):
             host = True
+
+        # The Tier-1 logical device directly compiles CompanionApp. App/API
+        # changes therefore need this cheap compile oracle on the PR itself even
+        # when full PostgreSQL/backend orchestration is intentionally deferred to
+        # promotion. This closes the #233 blind spot without making every
+        # firmware PR run the full Tier-1 scenario suite.
+        if _starts(path, "components/companion_app/", "host/companion_software_device/"):
+            software_device_compile = True
 
         if (
             _starts(path, "backend/", "db/postgres/", "ops/postgres/", "testdata/")
@@ -153,7 +164,14 @@ def classify(event: str, paths: Iterable[str] = (), *, unknown_changes: bool = F
             explicit_tier1 = True
 
     tier1 = explicit_tier1 or (backend_device_boundary and firmware_device_boundary)
-    return Scope(host=host, backend=backend, postgres=postgres, protocol=protocol, tier1=tier1)
+    return Scope(
+        host=host,
+        software_device_compile=software_device_compile,
+        backend=backend,
+        postgres=postgres,
+        protocol=protocol,
+        tier1=tier1,
+    )
 
 
 def _write_lines(path: str, lines: Iterable[str]) -> None:
@@ -193,6 +211,7 @@ def main() -> None:
                 "",
                 f"- mode: {scope.mode}",
                 f"- host tests: {scope.host}",
+                f"- software-device compile: {scope.software_device_compile}",
                 f"- backend quality: {scope.backend} ({'full' if scope.backend_full else 'fast'})",
                 f"- CodeQL Go: {scope.codeql}",
                 f"- PostgreSQL/River: {scope.postgres}",
