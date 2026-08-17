@@ -25,6 +25,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       host: ${{ steps.classify.outputs.host }}
+      software_device_compile: ${{ steps.classify.outputs.software_device_compile }}
       backend: ${{ steps.classify.outputs.backend }}
       backend_full: ${{ steps.classify.outputs.backend_full }}
       codeql: ${{ steps.classify.outputs.codeql }}
@@ -109,13 +110,31 @@ jobs:
 
       - name: Install host dependencies
         if: needs.prepare.result == 'success'
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          SOFTWARE_DEVICE_COMPILE: ${{ needs.prepare.outputs.software_device_compile }}
         run: |
+          set -euo pipefail
+          packages=(ninja-build pkg-config libopus-dev libopusfile-dev)
+          if [[ "$EVENT_NAME" == "pull_request" && "$SOFTWARE_DEVICE_COMPILE" == "true" ]]; then
+            packages+=(libboost-system-dev nlohmann-json3-dev libssl-dev)
+          fi
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ninja-build pkg-config libopus-dev libopusfile-dev
+          sudo apt-get install -y --no-install-recommends "${packages[@]}"
 
       - name: Run host component and integration tests
         if: needs.prepare.result == 'success'
         run: bash scripts/e2e.sh
+
+      - name: Compile Tier-1 software-device nearest oracle
+        if: >-
+          needs.prepare.result == 'success' &&
+          github.event_name == 'pull_request' &&
+          needs.prepare.outputs.software_device_compile == 'true'
+        run: |
+          cmake -S host/companion_software_device -B build-software-device -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-software-device --target companion_software_device
 
   backend-quality:
     name: Go backend quality
@@ -281,6 +300,7 @@ jobs:
           PROTOCOL_RESULT: ${{ needs.protocol-gate.result }}
           TIER1_RESULT: ${{ needs.tier1-gate.result }}
           HOST_REQUIRED: ${{ needs.prepare.outputs.host }}
+          SOFTWARE_DEVICE_COMPILE_REQUIRED: ${{ needs.prepare.outputs.software_device_compile }}
           BACKEND_REQUIRED: ${{ needs.prepare.outputs.backend }}
           CODEQL_REQUIRED: ${{ needs.prepare.outputs.codeql }}
           POSTGRES_REQUIRED: ${{ needs.prepare.outputs.postgres }}
@@ -311,6 +331,7 @@ jobs:
             echo "- mode: $CI_MODE"
             echo "- evidence: $PREPARE_RESULT"
             echo "- host tests: $HOST_RESULT"
+            echo "- software-device compile required: $SOFTWARE_DEVICE_COMPILE_REQUIRED"
             echo "- backend: $BACKEND_RESULT"
             echo "- CodeQL: $CODEQL_RESULT"
             echo "- PostgreSQL/River: $POSTGRES_RESULT"

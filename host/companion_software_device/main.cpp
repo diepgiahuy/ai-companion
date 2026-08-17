@@ -1,6 +1,7 @@
 #include "websocket_backend.hpp"
 
 #include "companion/app.hpp"
+#include "companion/audio_runtime.hpp"
 
 #include <boost/asio/connect.hpp>
 #include <boost/asio/ip/tcp.hpp>
@@ -112,6 +113,7 @@ struct ScriptedButton final : Button {
 struct DeviceFixture {
   FixtureMicrophone microphone;
   RecordingSpeaker speaker;
+  AudioRuntime audio;
   RecordingDisplay display;
   ScriptedButton button;
   WebSocketVoiceBackend backend;
@@ -119,8 +121,9 @@ struct DeviceFixture {
   uint64_t now_ms{};
 
   DeviceFixture(const std::string& url, const std::string& token, const std::string& device)
-      : backend(url, token, device),
-        app(microphone, speaker, display, button, backend,
+      : audio(microphone, speaker),
+        backend(url, token, device),
+        app(audio, display, button, backend,
             AppConfig{.maximum_recording_ms = 8'000,
                       .idle_after_ms = 60'000,
                       .alarm_visible_ms = 10'000,
