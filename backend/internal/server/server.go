@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -436,13 +437,6 @@ func (s *session) run(parent context.Context) error {
 	}
 	audio := protocol.DownlinkAudioParams()
 	response := protocol.ReadyPayload{Transport: protocol.Transport, AudioParams: audio}
-	if s.controlPlane != nil {
-		if twin, e := s.controlPlane.ManifestFor(ctx, controlplane.ResolutionContext{UserID: s.userID, DeviceID: s.deviceID, TenantID: s.tenantID, Plan: s.plan}); e == nil {
-			c := protocolConfig(twin.Desired)
-			response.Config = &c
-			response.ConfigVersion = twin.DesiredVersion
-		}
-	}
 	if err := s.sendJSONMeta(ctx, protocol.SessionReadyType, protocol.Metadata{CorrelationID: hello.MessageID}, response); err != nil {
 		return err
 	}
@@ -523,7 +517,7 @@ func (s *session) writeLoop(ctx context.Context) error {
 		return err
 	}
 	for {
-		// Always drain control first when available so alarms/config/abort are not
+		// Always drain control first when available so alarms/settings/abort are not
 		// trapped behind the ordered TTS media stream.
 		select {
 		case <-ctx.Done():
@@ -1115,12 +1109,6 @@ func (s *session) send(ctx context.Context, message outbound) error {
 	}
 }
 
-func protocolConfig(c controlplane.RuntimeConfig) protocol.RuntimeConfig {
-	return protocol.RuntimeConfig{SmartVADEnabled: c.SmartVADEnabled, VADThreshold: c.VADThreshold, VADSilenceMS: c.VADSilenceMS, VADMinSpeechMS: c.VADMinSpeechMS, IdleAfterMS: c.IdleAfterMS, AlarmVisibleMS: c.AlarmVisibleMS, OTAPollIntervalSeconds: c.OTAPollIntervalSeconds, Locale: c.Locale, Timezone: c.Timezone, VoiceKey: c.VoiceKey, WakeModel: c.WakeModel}
-}
-func controlConfig(c protocol.RuntimeConfig) controlplane.RuntimeConfig {
-	return controlplane.RuntimeConfig{SmartVADEnabled: c.SmartVADEnabled, VADThreshold: c.VADThreshold, VADSilenceMS: c.VADSilenceMS, VADMinSpeechMS: c.VADMinSpeechMS, IdleAfterMS: c.IdleAfterMS, AlarmVisibleMS: c.AlarmVisibleMS, OTAPollIntervalSeconds: c.OTAPollIntervalSeconds, Locale: c.Locale, Timezone: c.Timezone, VoiceKey: c.VoiceKey, WakeModel: c.WakeModel}
-}
 func (s *Server) adminOK(r *http.Request) bool {
 	return s.adminToken != "" && r.Header.Get("Authorization") == "Bearer "+s.adminToken
 }
@@ -1161,15 +1149,17 @@ func (s *Server) dispatchSettingsUpdate(ctx context.Context, userID, deviceID st
 		if s.logger != nil {
 			s.logger.Warn("settings dispatch failed", "device_id", deviceID, "error", err)
 		}
-		twin.Status = controlplane.TwinStatusRejected
+		twin.Status = controlplane.TwinStatusRequested
 		return twin
 	}
 	var result devicecap.SettingsResult
-	if err := json.Unmarshal(res.Value, &result); err != nil {
+	decoder := json.NewDecoder(strings.NewReader(string(res.Value)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&result); err != nil {
 		if s.logger != nil {
 			s.logger.Warn("invalid settings result", "device_id", deviceID, "error", err)
 		}
-		twin.Status = controlplane.TwinStatusRejected
+		twin.Status = controlplane.TwinStatusRequested
 		return twin
 	}
 	if !result.Applied {
@@ -1179,15 +1169,19 @@ func (s *Server) dispatchSettingsUpdate(ctx context.Context, userID, deviceID st
 		twin.Status = controlplane.TwinStatusRejected
 		return twin
 	}
+	if result.Version != twin.DesiredVersion {
+		if s.logger != nil {
+			s.logger.Warn("device acknowledged unexpected settings version", "device_id", deviceID, "want", twin.DesiredVersion, "got", result.Version)
+		}
+		twin.Status = controlplane.TwinStatusRequested
+		return twin
+	}
+	// Device acknowledgement proves the device-owned projection for this exact
+	// revision. Backend-owned locale/timezone/voice fields already apply from the
+	// same authoritative desired revision, so the complete effective revision is
+	// promoted only after the device acknowledgement succeeds.
 	reportedConfig := twin.Desired
-	if result.Settings != nil {
-		reportedConfig = *result.Settings
-	}
-	version := result.Version
-	if version <= 0 {
-		version = twin.DesiredVersion
-	}
-	if err := s.controlPlane.Report(ctx, userID, deviceID, version, reportedConfig); err != nil {
+	if err := s.controlPlane.Report(ctx, userID, deviceID, result.Version, reportedConfig); err != nil {
 		if s.logger != nil {
 			s.logger.Warn("failed to report twin state", "device_id", deviceID, "error", err)
 		}
@@ -1195,7 +1189,7 @@ func (s *Server) dispatchSettingsUpdate(ctx context.Context, userID, deviceID st
 		return twin
 	}
 	twin.Reported = reportedConfig
-	twin.ReportedVersion = version
+	twin.ReportedVersion = result.Version
 	twin.Status = controlplane.TwinStatusApplied
 	return twin
 }
@@ -1218,6 +1212,23 @@ func (s *Server) handleTwinGet(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(t)
 }
+
+func decodeStrictJSON(w http.ResponseWriter, r *http.Request, limit int64, dst any) error {
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, limit))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(dst); err != nil {
+		return err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return fmt.Errorf("multiple JSON values are not allowed")
+		}
+		return err
+	}
+	return nil
+}
+
 func (s *Server) handleTwinPatch(w http.ResponseWriter, r *http.Request) {
 	if !s.adminOK(r) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -1228,7 +1239,7 @@ func (s *Server) handleTwinPatch(w http.ResponseWriter, r *http.Request) {
 		user = "default"
 	}
 	var c controlplane.RuntimeConfig
-	if e := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<10)).Decode(&c); e != nil {
+	if e := decodeStrictJSON(w, r, 32<<10, &c); e != nil {
 		http.Error(w, e.Error(), http.StatusBadRequest)
 		return
 	}
@@ -1274,7 +1285,7 @@ func (s *Server) handleScopedConfigPatch(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var c controlplane.RuntimeConfig
-	if e := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<10)).Decode(&c); e != nil {
+	if e := decodeStrictJSON(w, r, 32<<10, &c); e != nil {
 		http.Error(w, e.Error(), http.StatusBadRequest)
 		return
 	}
