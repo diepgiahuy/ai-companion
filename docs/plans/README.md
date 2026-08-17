@@ -15,7 +15,7 @@ When assigned a specific task, locate the active phase below and load **only** t
 | **Phase 2** | [`PHASE_02_FIRMWARE_RUNTIME_PLAN06.md`](file:///Users/huydiepgia/Documents/GitHub/iot-cp-sw2.2/docs/plans/PHASE_02_FIRMWARE_RUNTIME_PLAN06.md) | `#228` | **COMPLETE** | CardV1 ingress (DONE), InputRouter (DONE), A6 Recovery (DONE), Monolith cleanup & single path (DONE) |
 | **Phase 3** | [`PHASE_03_SETTINGS_WAKE_PLAN07.md`](file:///Users/huydiepgia/Documents/GitHub/iot-cp-sw2.2/docs/plans/PHASE_03_SETTINGS_WAKE_PLAN07.md) | `#197`, `#198` | **COMPLETE** | Desired/reported twin over capability RPC, Wake config; unblocks final #228 A4 |
 | **Phase 4** | [`PHASE_04_SELECTIONS_BENCHMARKS_PLAN08.md`](file:///Users/huydiepgia/Documents/GitHub/iot-cp-sw2.2/docs/plans/PHASE_04_SELECTIONS_BENCHMARKS_PLAN08.md) | `#105`, `#23`, `#201` | **COMPLETE** | Real voice provider hard-cut, model selection, PostgreSQL retrieval audit |
-| **Phase 5** | [`PHASE_05_RELEASE_GATES_HIL_PLAN09_12.md`](file:///Users/huydiepgia/Documents/GitHub/iot-cp-sw2.2/docs/plans/PHASE_05_RELEASE_GATES_HIL_PLAN09_12.md) | `#17`, Release | **OPEN / READY** | Product-v1 gap audit, software promotion, physical HIL, release soak |
+| **Phase 5** | [`PHASE_05_RELEASE_GATES_HIL_PLAN09_12.md`](file:///Users/huydiepgia/Documents/GitHub/iot-cp-sw2.2/docs/plans/PHASE_05_RELEASE_GATES_HIL_PLAN09_12.md) | `#17`, Release | **IN PROGRESS** | Product-v1 software audit (DONE), software promotion (DONE), physical HIL & soak (PENDING RUNNER) |
 
 ## State Update Protocol
 
