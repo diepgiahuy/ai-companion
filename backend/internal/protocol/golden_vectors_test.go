@@ -11,29 +11,11 @@ import (
 	"time"
 )
 
-func goldenDeviceConfig() RuntimeConfig {
-	smartVAD := true
-	threshold := 500
-	silenceMS := 800
-	minimumSpeechMS := 200
-	idleAfterMS := 30_000
-	alarmVisibleMS := 10_000
-	return RuntimeConfig{
-		SmartVADEnabled: &smartVAD,
-		VADThreshold:    &threshold,
-		VADSilenceMS:    &silenceMS,
-		VADMinSpeechMS:  &minimumSpeechMS,
-		IdleAfterMS:     &idleAfterMS,
-		AlarmVisibleMS:  &alarmVisibleMS,
-	}
-}
-
 func goldenPayloads() []any {
 	at := time.Date(2026, time.August, 13, 10, 0, 0, 0, time.UTC)
 	expires := at.Add(time.Hour)
 	initiator := PairingParticipant{OwnerUserID: "owner-a", DeviceID: "device-a"}
 	peer := PairingParticipant{OwnerUserID: "owner-b", DeviceID: "device-b"}
-	config := goldenDeviceConfig()
 	return []any{
 		HelloPayload{Transport: Transport, AudioParams: DefaultAudioParams()},
 		ReadyPayload{Transport: Transport, AudioParams: DownlinkAudioParams(), ConfigVersion: 0},
@@ -50,8 +32,6 @@ func goldenPayloads() []any {
 		AlarmFiredPayload{AlarmID: "alarm-1", Message: "wake", FireAt: at.Format(time.RFC3339)},
 		AlarmAckPayload{AlarmID: "alarm-1"},
 		ScheduleUpdatedPayload{Message: "wake", FireAt: at.Format(time.RFC3339)},
-		ConfigUpdatePayload{ConfigVersion: 1, Config: config},
-		ConfigReportPayload{ConfigVersion: 1, Applied: true, Config: config},
 		ProtocolErrorPayload{Code: "test_error", Message: "test"},
 		GestureNotification{Gesture: "pat", SenderDeviceID: "device-a"},
 		VoiceMailAvailable{VoiceMailID: "voice-1", FromDeviceID: "device-a", MediaFormat: "ogg_opus", DurationMS: 1000, SizeBytes: 2000, ChecksumSHA256: strings.Repeat("a", 64), ExpiresAt: expires, Policy: VoiceMailPolicyEphemeral},
@@ -74,8 +54,7 @@ func TestGoldenEnvelopeVectorsCoverEveryMessageTypeAndTypedPayload(t *testing.T)
 		SessionHelloType, SessionReadyType, SessionPingType, SessionPongType,
 		TurnListenType, TurnAbortType, TurnStateType, TranscriptFinalType,
 		TTSLifecycleType, AgentStatusType, UICardType, UIStateType,
-		AlarmFiredType, AlarmAckType, ScheduleUpdatedType, ConfigUpdateType,
-		ConfigReportType, ProtocolErrorType,
+		AlarmFiredType, AlarmAckType, ScheduleUpdatedType, ProtocolErrorType,
 		GestureNotificationType, VoiceMailAvailableType, VoiceMailClaimType,
 		VoiceMailClaimedType, VoiceMailPlaybackResultType, VoiceMailConsumedType,
 		VoiceMailExpiredType, PairingSessionCreateType, PairingSessionCreatedType,

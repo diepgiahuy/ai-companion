@@ -1,6 +1,6 @@
 # Phase 3: Settings & Wake Configuration Rebase (PLAN 07)
 
-**Status:** HELD (Waiting for #228 Core Runtime Pre-Gate)  
+**Status:** COMPLETE  
 **Primary Owners:** Issue `#197` (PLAN 07A), Issue `#198` (PLAN 07B)  
 **Core Components:** [`backend/internal/controlplane/`](file:///Users/huydiepgia/Documents/GitHub/iot-cp-sw2.2/backend/internal/controlplane), [`backend/internal/pgstore/`](file:///Users/huydiepgia/Documents/GitHub/iot-cp-sw2.2/backend/internal/pgstore), [`components/companion_app/`](file:///Users/huydiepgia/Documents/GitHub/iot-cp-sw2.2/components/companion_app)
 
@@ -28,16 +28,16 @@ Rebase device settings desired/reported twin and wake configuration onto the can
 
 ## 3. Slice Breakdown & Live Status
 
-* [ ] **07A (#197) Desired/Reported Settings Twin:**
+* [x] **07A (#197) Desired/Reported Settings Twin:**
   * Rebase desired/reported device state on PostgreSQL store.
   * Wire settings dispatch over `capability.call`.
   * Add reboot/reconnect reconciliation.
   * Delete `config.update` and `config.report`.
-* [ ] **Final #228 A4/A8 Closure:**
+* [x] **Final #228 A4/A8 Closure:**
   * Confirm `capability.*` is the sole device capability path (A4 PASS).
   * Confirm all legacy settings code is deleted (A8 PASS).
   * Close Issue `#228`.
-* [ ] **07B (#198) Wake Model Configuration:**
+* [x] **07B (#198) Wake Model Configuration:**
   * Discover supported wake models from ESP-SR artifact.
   * Route wake configuration through canonical settings twin.
   * Apply dynamically in `AudioEngine` with fallback.

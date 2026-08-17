@@ -3,6 +3,7 @@
 #include "companion/audio_frontend.hpp"
 #include "companion/input_router.hpp"
 #include "companion/presentation_ingress.hpp"
+#include "companion/settings.hpp"
 
 #include <algorithm>
 #include <array>
@@ -38,17 +39,6 @@ enum class ListenMode : uint8_t {
   auto_vad,
 };
 
-struct RuntimeConfigPatch {
-  uint64_t version{};
-  bool smart_vad_enabled{true};
-  uint32_t vad_threshold{450};
-  uint32_t vad_silence_ms{800};
-  uint32_t vad_min_speech_ms{250};
-  uint32_t idle_after_ms{5'000};
-  uint32_t alarm_visible_ms{10'000};
-  uint32_t ota_poll_interval_s{21'600};
-};
-
 enum class BackendEventType : uint8_t {
   connected,
   disconnected,
@@ -61,7 +51,7 @@ enum class BackendEventType : uint8_t {
   presentation_card,
   presentation_hint,
   agent_status,
-  config,
+  settings,
   voice_mail_available,
   voice_mail_playback_ready,
   voice_mail_playback_finished,
@@ -116,7 +106,7 @@ constexpr BackendEventScope scope_for_event_type(BackendEventType type) {
 
   case BackendEventType::alarm:
   case BackendEventType::schedule:
-  case BackendEventType::config:
+  case BackendEventType::settings:
   case BackendEventType::voice_mail_available:
   case BackendEventType::voice_mail_consumed:
   case BackendEventType::voice_mail_expired:
@@ -130,13 +120,13 @@ constexpr BackendEventScope scope_for_event_type(BackendEventType type) {
 // BackendEventType and union-backed so typed presentation data does not multiply
 // the queue's static DRAM footprint. Every member is trivially copyable.
 union BackendEventPayload {
-  RuntimeConfigPatch config;
+  SettingsTwin settings;
   VoiceMailMetadata voice_mail;
   PresentationCardV1 card;
   PresentationHint hint;
   AgentPresentationStatus agent_status;
 
-  constexpr BackendEventPayload() : config{} {}
+  constexpr BackendEventPayload() : settings{} {}
 };
 
 struct BackendEvent {
@@ -158,8 +148,11 @@ struct BackendEvent {
     return {text.data(), static_cast<size_t>(end - text.begin())};
   }
 
-  void set_config(const RuntimeConfigPatch& value) {
-    new (&payload.config) RuntimeConfigPatch(value);
+  void set_settings(const SettingsTwin& value) {
+    new (&payload.settings) SettingsTwin(value);
+  }
+  void set_config(const SettingsTwin& value) {
+    set_settings(value);
   }
   void set_voice_mail(const VoiceMailMetadata& value) {
     new (&payload.voice_mail) VoiceMailMetadata(value);
@@ -175,7 +168,8 @@ struct BackendEvent {
   }
 };
 
-static_assert(std::is_trivially_copyable_v<RuntimeConfigPatch>);
+static_assert(std::is_trivially_copyable_v<DeviceSettings>);
+static_assert(std::is_trivially_copyable_v<SettingsTwin>);
 static_assert(std::is_trivially_copyable_v<VoiceMailMetadata>);
 static_assert(std::is_trivially_copyable_v<PresentationCardV1>);
 static_assert(std::is_trivially_copyable_v<PresentationHint>);
@@ -226,7 +220,6 @@ public:
   virtual bool finish_turn(uint64_t now_ms) = 0;
   virtual void cancel_turn() = 0;
   virtual bool poll_event(BackendEvent& event) = 0;
-  virtual bool report_config(const RuntimeConfigPatch& config, bool applied) = 0;
   virtual bool claim_voice_mail(const VoiceMailMetadata& item, uint64_t now_ms) = 0;
   virtual bool report_voice_mail_playback(const VoiceMailMetadata& item,
                                           bool succeeded,
@@ -255,6 +248,9 @@ struct AppConfig {
   uint32_t vad_min_speech_ms{250};
   uint32_t voice_mail_operation_timeout_ms{15'000};
   uint32_t ota_poll_interval_s{21'600};
+  uint8_t volume{70};
+  float wake_threshold{0.60F};
+  std::array<char, 64> wake_model{"default"};
 };
 
 class CompanionApp final {
@@ -268,6 +264,8 @@ public:
   const AppConfig& config() const { return config_; }
   uint64_t streamed_samples() const { return streamed_samples_; }
   uint64_t runtime_config_version() const { return runtime_config_version_; }
+  uint64_t settings_version() const { return runtime_config_version_; }
+  bool apply_settings(const SettingsTwin& twin);
 
 private:
   AudioEngine& audio_;

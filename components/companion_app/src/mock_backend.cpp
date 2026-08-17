@@ -85,12 +85,6 @@ void MockVoiceBackend::disconnect() {
   }
 }
 
-bool MockVoiceBackend::report_config(const RuntimeConfigPatch& config, bool applied) {
-  reported_config_version_ = config.version;
-  reported_config_applied_ = applied;
-  return true;
-}
-
 bool MockVoiceBackend::claim_voice_mail(const VoiceMailMetadata& item, uint64_t) {
   if (!connected_ || !item.valid()) return false;
   ++voice_mail_claims_;
@@ -181,18 +175,22 @@ bool MockVoiceBackend::inject_scoped_event(BackendEventType type,
   return push_event(type, text, scope, session_epoch, generation);
 }
 
-bool MockVoiceBackend::inject_config(const RuntimeConfigPatch& config) {
+bool MockVoiceBackend::inject_settings(const SettingsTwin& settings) {
   if (event_count_ == event_capacity_) return false;
   BackendEvent event{};
-  event.type = BackendEventType::config;
+  event.type = BackendEventType::settings;
   event.scope = BackendEventScope::global;
   event.session_epoch = 0;
   event.generation = 0;
-  event.set_config(config);
+  event.set_settings(settings);
   events_[event_tail_] = event;
   event_tail_ = (event_tail_ + 1) % event_capacity_;
   ++event_count_;
   return true;
+}
+
+bool MockVoiceBackend::inject_config(const RuntimeConfigPatch& config) {
+  return inject_settings(config);
 }
 
 bool MockVoiceBackend::inject_voice_mail(const VoiceMailMetadata& item,
@@ -252,7 +250,7 @@ bool MockVoiceBackend::push_event(BackendEventType type, std::string_view text,
   event.scope = (scope == BackendEventScope::global &&
                  type != BackendEventType::alarm &&
                  type != BackendEventType::schedule &&
-                 type != BackendEventType::config &&
+                 type != BackendEventType::settings &&
                  type != BackendEventType::voice_mail_available &&
                  type != BackendEventType::voice_mail_consumed &&
                  type != BackendEventType::voice_mail_expired)

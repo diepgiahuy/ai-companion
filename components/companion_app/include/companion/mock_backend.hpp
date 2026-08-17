@@ -16,7 +16,6 @@ public:
   bool finish_turn(uint64_t now_ms) override;
   void cancel_turn() override;
   bool poll_event(BackendEvent& event) override;
-  bool report_config(const RuntimeConfigPatch& config, bool applied) override;
   bool claim_voice_mail(const VoiceMailMetadata& item, uint64_t now_ms) override;
   bool report_voice_mail_playback(const VoiceMailMetadata& item, bool succeeded,
                                   std::string_view failure_code,
@@ -48,14 +47,13 @@ public:
   bool inject_scoped_event(BackendEventType type, std::string_view text = {},
                            BackendEventScope scope = BackendEventScope::generation,
                            uint64_t session_epoch = 0, uint64_t generation = 0);
+  bool inject_settings(const SettingsTwin& settings);
   bool inject_config(const RuntimeConfigPatch& config);
   bool inject_voice_mail(const VoiceMailMetadata& item,
                          BackendEventType type = BackendEventType::voice_mail_available);
   uint32_t voice_mail_claims() const { return voice_mail_claims_; }
   uint32_t voice_mail_successes() const { return voice_mail_successes_; }
   uint32_t voice_mail_failures() const { return voice_mail_failures_; }
-  uint64_t reported_config_version() const { return reported_config_version_; }
-  bool reported_config_applied() const { return reported_config_applied_; }
 
 private:
   static constexpr uint32_t response_delay_ms_{250};
@@ -69,8 +67,6 @@ private:
   size_t playback_offset_{};
   uint64_t session_epoch_{1};
   uint64_t media_generation_{1};
-  uint64_t reported_config_version_{};
-  bool reported_config_applied_{};
   uint32_t voice_mail_claims_{};
   uint32_t voice_mail_successes_{};
   uint32_t voice_mail_failures_{};

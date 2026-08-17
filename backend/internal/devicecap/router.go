@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"companion-server/internal/capability"
+	"companion-server/internal/controlplane"
 	"companion-server/internal/pipeline"
 )
 
@@ -20,6 +21,8 @@ const (
 	VolumeSetVersion        = "1"
 	UserConfirmationName    = "device.user_confirmation"
 	UserConfirmationVersion = "1"
+	SettingsName            = "device.settings_v1"
+	SettingsVersion         = "1"
 )
 
 var (
@@ -31,6 +34,18 @@ type Descriptor struct {
 	Name    string `json:"name"`
 	Version string `json:"version"`
 	Kind    string `json:"kind"`
+}
+
+type SettingsArgs struct {
+	Version  int64                       `json:"version"`
+	Settings controlplane.RuntimeConfig `json:"settings"`
+}
+
+type SettingsResult struct {
+	Applied  bool                        `json:"applied"`
+	Version  int64                       `json:"version"`
+	Settings *controlplane.RuntimeConfig `json:"settings,omitempty"`
+	Error    string                      `json:"error,omitempty"`
 }
 
 type Call struct {

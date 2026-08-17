@@ -313,6 +313,7 @@ type RuntimeConfig struct {
 	Locale                string `json:"locale,omitempty"`
 	Timezone              string `json:"timezone,omitempty"`
 	VoiceKey              string `json:"voice_key,omitempty"`
+	WakeModel             string `json:"wake_model,omitempty"`
 }
 
 func (c RuntimeConfig) ValidateDeviceSnapshot() error {
@@ -330,8 +331,8 @@ func (c RuntimeConfig) ValidateDeviceSnapshot() error {
 	if c.OTAPollIntervalSeconds != nil && (*c.OTAPollIntervalSeconds < 3600 || *c.OTAPollIntervalSeconds > 604800) {
 		return fmt.Errorf("ota_poll_interval_s contains an out-of-range value")
 	}
-	if len(c.Locale) > 64 || len(c.Timezone) > 64 || len(c.VoiceKey) > 128 {
-		return fmt.Errorf("locale, timezone, or voice_key exceeds its size limit")
+	if len(c.Locale) > 64 || len(c.Timezone) > 64 || len(c.VoiceKey) > 128 || len(c.WakeModel) > 64 {
+		return fmt.Errorf("locale, timezone, voice_key, or wake_model exceeds its size limit")
 	}
 	return nil
 }

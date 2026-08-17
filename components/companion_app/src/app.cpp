@@ -229,25 +229,8 @@ void CompanionApp::process_backend_event(const BackendEvent& event,
   case BackendEventType::agent_status:
     (void)display_.show_agent_status(state_, event.payload.agent_status);
     break;
-  case BackendEventType::config: {
-    const auto& c = event.payload.config;
-    if (c.version <= runtime_config_version_) break;
-    const bool valid = c.vad_threshold >= 1 && c.vad_threshold <= 65'535 &&
-                       c.vad_silence_ms >= 100 && c.vad_silence_ms <= 5'000 &&
-                       c.vad_min_speech_ms >= 50 && c.vad_min_speech_ms <= 5'000 &&
-                       c.idle_after_ms >= 1'000 && c.idle_after_ms <= 3'600'000 &&
-                       c.alarm_visible_ms >= 1'000 && c.alarm_visible_ms <= 3'600'000 &&
-                       c.ota_poll_interval_s >= 3'600 && c.ota_poll_interval_s <= 604'800;
-    if (!valid) { backend_.report_config(c, false); break; }
-    config_.smart_vad_enabled = c.smart_vad_enabled;
-    config_.vad_mean_abs_threshold = static_cast<uint16_t>(c.vad_threshold);
-    config_.vad_silence_ms = c.vad_silence_ms;
-    config_.vad_min_speech_ms = c.vad_min_speech_ms;
-    config_.idle_after_ms = c.idle_after_ms;
-    config_.alarm_visible_ms = c.alarm_visible_ms;
-    config_.ota_poll_interval_s = c.ota_poll_interval_s;
-    runtime_config_version_ = c.version;
-    backend_.report_config(c, true);
+  case BackendEventType::settings: {
+    (void)apply_settings(event.payload.settings);
     break;
   }
   case BackendEventType::voice_mail_available:
@@ -721,6 +704,27 @@ void CompanionApp::fail(std::string_view reason) {
   backend_.cancel_turn();
   state_ = UiState::error;
   display_.show(state_, reason);
+}
+
+bool CompanionApp::apply_settings(const SettingsTwin& twin) {
+  if (twin.version <= runtime_config_version_ || !twin.settings.validate()) {
+    return false;
+  }
+  config_.smart_vad_enabled = twin.settings.smart_vad_enabled;
+  config_.vad_mean_abs_threshold = static_cast<uint16_t>(twin.settings.vad_threshold);
+  config_.vad_silence_ms = twin.settings.vad_silence_ms;
+  config_.vad_min_speech_ms = twin.settings.vad_min_speech_ms;
+  config_.idle_after_ms = twin.settings.idle_after_ms;
+  config_.alarm_visible_ms = twin.settings.alarm_visible_ms;
+  config_.alarm_tone_ms = twin.settings.alarm_tone_ms;
+  config_.alarm_tone_hz = twin.settings.alarm_tone_hz;
+  config_.alarm_tone_amplitude = twin.settings.alarm_tone_amplitude;
+  config_.ota_poll_interval_s = twin.settings.ota_poll_interval_s;
+  config_.volume = twin.settings.volume;
+  config_.wake_threshold = twin.settings.wake_threshold;
+  config_.wake_model = twin.settings.wake_model;
+  runtime_config_version_ = twin.version;
+  return true;
 }
 
 } // namespace companion

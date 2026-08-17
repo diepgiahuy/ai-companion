@@ -13,8 +13,8 @@ When assigned a specific task, locate the active phase below and load **only** t
 | :--- | :--- | :--- | :--- | :--- |
 | **Phase 1** | [`PHASE_01_CI_DEV_SPEEDUP.md`](file:///Users/huydiepgia/Documents/GitHub/iot-cp-sw2.2/docs/plans/PHASE_01_CI_DEV_SPEEDUP.md) | Repo/CI | **COMPLETE** | Fast native PR test oracles, CodeQL deferred to Promotion |
 | **Phase 2** | [`PHASE_02_FIRMWARE_RUNTIME_PLAN06.md`](file:///Users/huydiepgia/Documents/GitHub/iot-cp-sw2.2/docs/plans/PHASE_02_FIRMWARE_RUNTIME_PLAN06.md) | `#228` | **COMPLETE** | CardV1 ingress (DONE), InputRouter (DONE), A6 Recovery (DONE), Monolith cleanup & single path (DONE) |
-| **Phase 3** | [`PHASE_03_SETTINGS_WAKE_PLAN07.md`](file:///Users/huydiepgia/Documents/GitHub/iot-cp-sw2.2/docs/plans/PHASE_03_SETTINGS_WAKE_PLAN07.md) | `#197`, `#198` | **OPEN / READY** | Desired/reported twin over capability RPC, Wake config; unblocks final #228 A4 |
-| **Phase 4** | [`PHASE_04_SELECTIONS_BENCHMARKS_PLAN08.md`](file:///Users/huydiepgia/Documents/GitHub/iot-cp-sw2.2/docs/plans/PHASE_04_SELECTIONS_BENCHMARKS_PLAN08.md) | `#105`, `#23`, `#201` | **OPEN** | Real voice provider hard-cut, model selection, PostgreSQL retrieval audit |
+| **Phase 3** | [`PHASE_03_SETTINGS_WAKE_PLAN07.md`](file:///Users/huydiepgia/Documents/GitHub/iot-cp-sw2.2/docs/plans/PHASE_03_SETTINGS_WAKE_PLAN07.md) | `#197`, `#198` | **COMPLETE** | Desired/reported twin over capability RPC, Wake config; unblocks final #228 A4 |
+| **Phase 4** | [`PHASE_04_SELECTIONS_BENCHMARKS_PLAN08.md`](file:///Users/huydiepgia/Documents/GitHub/iot-cp-sw2.2/docs/plans/PHASE_04_SELECTIONS_BENCHMARKS_PLAN08.md) | `#105`, `#23`, `#201` | **OPEN / READY** | Real voice provider hard-cut, model selection, PostgreSQL retrieval audit |
 | **Phase 5** | [`PHASE_05_RELEASE_GATES_HIL_PLAN09_12.md`](file:///Users/huydiepgia/Documents/GitHub/iot-cp-sw2.2/docs/plans/PHASE_05_RELEASE_GATES_HIL_PLAN09_12.md) | `#17`, Release | **PENDING** | Product-v1 gap audit, software promotion, physical HIL, release soak |
 
 ## State Update Protocol

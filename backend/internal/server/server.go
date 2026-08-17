@@ -18,6 +18,7 @@ import (
 
 	"companion-server/internal/capability"
 	"companion-server/internal/controlplane"
+	"companion-server/internal/devicecap"
 	"companion-server/internal/domain"
 	"companion-server/internal/jobs"
 	"companion-server/internal/observability"
@@ -599,21 +600,6 @@ func (s *session) handleControl(ctx context.Context, data []byte) error {
 			return err
 		}
 		return s.processInbound(message.MessageID, data, func() error { return s.ackReminder(ctx, id) })
-	case protocol.ConfigReportType:
-		if s.controlPlane == nil {
-			return fmt.Errorf("config reporting unavailable")
-		}
-		payload, err := protocol.DecodePayload[protocol.ConfigReportPayload](message)
-		if err != nil {
-			return err
-		}
-		return s.processInbound(message.MessageID, data, func() error {
-			if !payload.Applied {
-				s.logger.Warn("device rejected runtime config", "device_id", s.deviceID, "version", payload.ConfigVersion)
-				return nil
-			}
-			return s.controlPlane.Report(ctx, s.userID, s.deviceID, payload.ConfigVersion, controlConfig(payload.Config))
-		})
 	case protocol.SessionPingType:
 		if _, err := protocol.DecodePayload[protocol.EmptyPayload](message); err != nil {
 			return err
@@ -1130,13 +1116,88 @@ func (s *session) send(ctx context.Context, message outbound) error {
 }
 
 func protocolConfig(c controlplane.RuntimeConfig) protocol.RuntimeConfig {
-	return protocol.RuntimeConfig{SmartVADEnabled: c.SmartVADEnabled, VADThreshold: c.VADThreshold, VADSilenceMS: c.VADSilenceMS, VADMinSpeechMS: c.VADMinSpeechMS, IdleAfterMS: c.IdleAfterMS, AlarmVisibleMS: c.AlarmVisibleMS, OTAPollIntervalSeconds: c.OTAPollIntervalSeconds, Locale: c.Locale, Timezone: c.Timezone, VoiceKey: c.VoiceKey}
+	return protocol.RuntimeConfig{SmartVADEnabled: c.SmartVADEnabled, VADThreshold: c.VADThreshold, VADSilenceMS: c.VADSilenceMS, VADMinSpeechMS: c.VADMinSpeechMS, IdleAfterMS: c.IdleAfterMS, AlarmVisibleMS: c.AlarmVisibleMS, OTAPollIntervalSeconds: c.OTAPollIntervalSeconds, Locale: c.Locale, Timezone: c.Timezone, VoiceKey: c.VoiceKey, WakeModel: c.WakeModel}
 }
 func controlConfig(c protocol.RuntimeConfig) controlplane.RuntimeConfig {
-	return controlplane.RuntimeConfig{SmartVADEnabled: c.SmartVADEnabled, VADThreshold: c.VADThreshold, VADSilenceMS: c.VADSilenceMS, VADMinSpeechMS: c.VADMinSpeechMS, IdleAfterMS: c.IdleAfterMS, AlarmVisibleMS: c.AlarmVisibleMS, OTAPollIntervalSeconds: c.OTAPollIntervalSeconds, Locale: c.Locale, Timezone: c.Timezone, VoiceKey: c.VoiceKey}
+	return controlplane.RuntimeConfig{SmartVADEnabled: c.SmartVADEnabled, VADThreshold: c.VADThreshold, VADSilenceMS: c.VADSilenceMS, VADMinSpeechMS: c.VADMinSpeechMS, IdleAfterMS: c.IdleAfterMS, AlarmVisibleMS: c.AlarmVisibleMS, OTAPollIntervalSeconds: c.OTAPollIntervalSeconds, Locale: c.Locale, Timezone: c.Timezone, VoiceKey: c.VoiceKey, WakeModel: c.WakeModel}
 }
 func (s *Server) adminOK(r *http.Request) bool {
 	return s.adminToken != "" && r.Header.Get("Authorization") == "Bearer "+s.adminToken
+}
+func (s *Server) isDeviceOnline(deviceID string) bool {
+	if s == nil || s.hub == nil {
+		return false
+	}
+	return s.hub.get(deviceID) != nil
+}
+func (s *Server) dispatchSettingsUpdate(ctx context.Context, userID, deviceID string, twin controlplane.Twin) controlplane.Twin {
+	online := s.isDeviceOnline(deviceID)
+	if !online {
+		twin.Status = controlplane.TwinStatusOffline
+		return twin
+	}
+	sess := s.hub.get(deviceID)
+	if sess == nil || !sess.Supports(devicecap.SettingsName, devicecap.SettingsVersion) {
+		twin.Status = controlplane.TwinStatusRequested
+		return twin
+	}
+	args, err := json.Marshal(devicecap.SettingsArgs{
+		Version:  twin.DesiredVersion,
+		Settings: twin.Desired,
+	})
+	if err != nil {
+		twin.Status = controlplane.TwinStatusRequested
+		return twin
+	}
+	callCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	res, err := sess.Call(callCtx, devicecap.Call{
+		Name:      devicecap.SettingsName,
+		Version:   devicecap.SettingsVersion,
+		Arguments: args,
+		Deadline:  time.Now().Add(3 * time.Second),
+	})
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Warn("settings dispatch failed", "device_id", deviceID, "error", err)
+		}
+		twin.Status = controlplane.TwinStatusRejected
+		return twin
+	}
+	var result devicecap.SettingsResult
+	if err := json.Unmarshal(res.Value, &result); err != nil {
+		if s.logger != nil {
+			s.logger.Warn("invalid settings result", "device_id", deviceID, "error", err)
+		}
+		twin.Status = controlplane.TwinStatusRejected
+		return twin
+	}
+	if !result.Applied {
+		if s.logger != nil {
+			s.logger.Warn("device rejected settings", "device_id", deviceID, "version", result.Version, "error", result.Error)
+		}
+		twin.Status = controlplane.TwinStatusRejected
+		return twin
+	}
+	reportedConfig := twin.Desired
+	if result.Settings != nil {
+		reportedConfig = *result.Settings
+	}
+	version := result.Version
+	if version <= 0 {
+		version = twin.DesiredVersion
+	}
+	if err := s.controlPlane.Report(ctx, userID, deviceID, version, reportedConfig); err != nil {
+		if s.logger != nil {
+			s.logger.Warn("failed to report twin state", "device_id", deviceID, "error", err)
+		}
+		twin.Status = controlplane.TwinStatusRequested
+		return twin
+	}
+	twin.Reported = reportedConfig
+	twin.ReportedVersion = version
+	twin.Status = controlplane.TwinStatusApplied
+	return twin
 }
 func (s *Server) handleTwinGet(w http.ResponseWriter, r *http.Request) {
 	if !s.adminOK(r) {
@@ -1147,11 +1208,13 @@ func (s *Server) handleTwinGet(w http.ResponseWriter, r *http.Request) {
 	if user == "" {
 		user = "default"
 	}
-	t, e := s.controlPlane.Manifest(r.Context(), user, r.PathValue("deviceID"))
+	deviceID := r.PathValue("deviceID")
+	t, e := s.controlPlane.Manifest(r.Context(), user, deviceID)
 	if e != nil {
 		http.Error(w, e.Error(), http.StatusBadRequest)
 		return
 	}
+	t.Status = controlplane.DeriveTwinStatus(t, s.isDeviceOnline(deviceID), false)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(t)
 }
@@ -1169,15 +1232,13 @@ func (s *Server) handleTwinPatch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, e.Error(), http.StatusBadRequest)
 		return
 	}
-	t, e := s.controlPlane.SetDesired(r.Context(), user, r.PathValue("deviceID"), c)
+	deviceID := r.PathValue("deviceID")
+	t, e := s.controlPlane.SetDesired(r.Context(), user, deviceID, c)
 	if e != nil {
 		http.Error(w, e.Error(), http.StatusBadRequest)
 		return
 	}
-	if sess := s.hub.get(r.PathValue("deviceID")); sess != nil {
-		pc := protocolConfig(t.Desired)
-		_ = sess.sendJSON(r.Context(), protocol.ConfigUpdateType, protocol.ConfigUpdatePayload{Config: pc, ConfigVersion: t.DesiredVersion})
-	}
+	t = s.dispatchSettingsUpdate(r.Context(), user, deviceID, t)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(t)
 }
@@ -1240,10 +1301,7 @@ func (s *Server) pushResolvedConfig(ctx context.Context, scopeType, scopeID stri
 			continue
 		}
 		if t, e := s.controlPlane.ManifestFor(ctx, controlplane.ResolutionContext{UserID: id.UserID, DeviceID: id.DeviceID, TenantID: id.TenantID, Plan: id.Plan}); e == nil {
-			pc := protocolConfig(t.Desired)
-			for _, sess := range s.hub.targets(id.UserID, id.DeviceID) {
-				_ = sess.sendJSON(ctx, protocol.ConfigUpdateType, protocol.ConfigUpdatePayload{Config: pc, ConfigVersion: t.DesiredVersion})
-			}
+			go s.dispatchSettingsUpdate(context.Background(), id.UserID, id.DeviceID, t)
 		}
 	}
 }

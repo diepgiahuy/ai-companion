@@ -13,8 +13,6 @@
 {"version":2,"type":"alarm.fired","message_id":"golden","payload":{"alarm_id":"alarm-1","message":"wake","fire_at":"2026-08-13T10:00:00Z"}}
 {"version":2,"type":"alarm.ack","message_id":"golden","payload":{"alarm_id":"alarm-1"}}
 {"version":2,"type":"schedule.updated","message_id":"golden","payload":{"message":"wake","fire_at":"2026-08-13T10:00:00Z"}}
-{"version":2,"type":"config.update","message_id":"golden","payload":{"config_version":1,"config":{"smart_vad_enabled":true,"vad_threshold":500,"vad_silence_ms":800,"vad_min_speech_ms":200,"idle_after_ms":30000,"alarm_visible_ms":10000}}}
-{"version":2,"type":"config.report","message_id":"golden","payload":{"config_version":1,"applied":true,"config":{"smart_vad_enabled":true,"vad_threshold":500,"vad_silence_ms":800,"vad_min_speech_ms":200,"idle_after_ms":30000,"alarm_visible_ms":10000}}}
 {"version":2,"type":"protocol.error","message_id":"golden","payload":{"code":"test_error","message":"test"}}
 {"version":2,"type":"gesture.notification","message_id":"golden","payload":{"gesture":"pat","sender_device_id":"device-a"}}
 {"version":2,"type":"voice_mail.available","message_id":"golden","payload":{"voice_mail_id":"voice-1","from_device_id":"device-a","media_format":"ogg_opus","duration_ms":1000,"size_bytes":2000,"checksum_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","expires_at":"2026-08-13T11:00:00Z","policy":"ephemeral"}}

@@ -25,8 +25,6 @@ enum class ControlType : uint8_t {
   alarm_fired,
   alarm_ack,
   schedule_updated,
-  config_update,
-  config_report,
   protocol_error,
   capability_advertise,
   capability_call,

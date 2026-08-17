@@ -63,6 +63,7 @@ func (s *Store) GetTwin(ctx context.Context, userID, deviceID string) (controlpl
 	if generation, err := s.ConfigGeneration(ctx); err == nil && generation > twin.DesiredVersion {
 		twin.DesiredVersion = generation
 	}
+	twin.Status = controlplane.DeriveTwinStatus(twin, false, false)
 	return twin, nil
 }
 
@@ -109,7 +110,7 @@ func (s *Store) Report(ctx context.Context, userID, deviceID string, version int
 		return err
 	}
 	if version < twin.ReportedVersion {
-		return nil
+		return fmt.Errorf("reported config version %d is stale (current %d)", version, twin.ReportedVersion)
 	}
 	if version > twin.DesiredVersion {
 		return fmt.Errorf("reported config version ahead of desired")

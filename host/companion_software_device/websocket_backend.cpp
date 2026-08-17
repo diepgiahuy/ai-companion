@@ -578,26 +578,6 @@ bool WebSocketVoiceBackend::poll_event(BackendEvent& event) {
   return false;
 }
 
-bool WebSocketVoiceBackend::report_config(const RuntimeConfigPatch& config, bool applied) {
-  if (!protocol_connected_.load()) return false;
-  json payload{{"config_version", config.version},
-               {"applied", applied},
-               {"config", {{"smart_vad_enabled", config.smart_vad_enabled},
-                           {"vad_threshold", config.vad_threshold},
-                           {"vad_silence_ms", config.vad_silence_ms},
-                           {"vad_min_speech_ms", config.vad_min_speech_ms},
-                           {"idle_after_ms", config.idle_after_ms},
-                           {"alarm_visible_ms", config.alarm_visible_ms},
-                           {"ota_poll_interval_s", config.ota_poll_interval_s}}}};
-  const bool sent = send_text(encode_control(
-      static_cast<int>(protocol::ControlType::config_report), payload.dump()));
-  if (sent) {
-    std::lock_guard lock(state_mutex_);
-    ++stats_.config_reports;
-  }
-  return sent;
-}
-
 bool WebSocketVoiceBackend::claim_voice_mail(const VoiceMailMetadata& item, uint64_t) {
   finish_media_worker();
   if (!protocol_connected_.load() || !item.valid() || media_worker_running_.load()) {
@@ -1065,15 +1045,6 @@ void WebSocketVoiceBackend::handle_text(uint64_t generation, const std::string& 
         break;
       }
       enqueue_agent_status_event(status);
-      break;
-    }
-    case protocol::ControlType::config_update: {
-      BackendEvent event{};
-      event.type = BackendEventType::config;
-      event.set_config(parse_config(payload));
-      std::lock_guard lock(state_mutex_);
-      if (events_.size() == kMaximumEvents) events_.pop_front();
-      events_.push_back(event);
       break;
     }
     case protocol::ControlType::voice_mail_available: {

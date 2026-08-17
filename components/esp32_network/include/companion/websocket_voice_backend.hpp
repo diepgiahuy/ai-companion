@@ -76,7 +76,6 @@ public:
   bool finish_turn(uint64_t now_ms) override;
   void cancel_turn() override;
   bool poll_event(BackendEvent& event) override;
-  bool report_config(const RuntimeConfigPatch& config, bool applied) override;
   bool claim_voice_mail(const VoiceMailMetadata& item, uint64_t now_ms) override;
   bool report_voice_mail_playback(const VoiceMailMetadata& item, bool succeeded,
                                   std::string_view failure_code,
@@ -92,6 +91,7 @@ public:
   uint64_t session_epoch() const override { return session_epoch_.load(); }
   uint64_t media_generation() const override { return media_generation_.load(); }
 
+  bool advertise_capabilities();
   bool enable_confirmation_protocol();
   bool advertise_user_confirmation();
   bool poll_user_confirmation(UserConfirmationRequest& request);
@@ -127,7 +127,6 @@ private:
     listen_stop,
     abort,
     alarm_ack,
-    config_report,
     protocol_error,
     voice_mail_claim,
     voice_mail_playback_result,
@@ -143,8 +142,6 @@ private:
     std::array<char, 129> playback_id{};
     std::array<char, 129> idempotency_key{};
     std::array<char, 36> occurred_at{};
-    RuntimeConfigPatch config{};
-    bool applied{};
     bool succeeded{};
   };
   struct AudioFrame {
@@ -256,6 +253,7 @@ private:
   void handle_text(std::string_view json);
   bool handle_confirmation_call(const cJSON* root, const cJSON* payload);
   bool handle_confirmation_cancel(const cJSON* root, const cJSON* payload);
+  bool handle_settings_call(const cJSON* root, const cJSON* payload);
   bool handle_pairing_text(std::string_view json);
   void handle_binary(const esp_websocket_event_data_t& data);
   bool enqueue_command(CommandType type, std::string_view turn = {}, ListenMode mode = ListenMode::manual);
@@ -263,6 +261,13 @@ private:
   bool enqueue_protocol_error(std::string_view code, std::string_view message);
   bool enqueue_confirmation_result(const UserConfirmationRequest& request,
                                    bool approved);
+  bool enqueue_settings_result(std::string_view correlation_id,
+                               std::string_view turn_id,
+                               uint64_t generation_id,
+                               bool has_generation_id,
+                               bool ok,
+                               const SettingsTwin* applied_twin,
+                               std::string_view error_code = {});
   bool enqueue_unsupported_capability_result(std::string_view correlation_id,
                                              std::string_view turn_id,
                                              uint64_t generation_id,
@@ -278,6 +283,7 @@ private:
   bool enqueue_card_event(const PresentationCardV1& card);
   bool enqueue_hint_event(const PresentationHint& hint);
   bool enqueue_agent_status_event(const AgentPresentationStatus& status);
+  bool enqueue_settings_event(const SettingsTwin& settings);
   bool enqueue_config_event(const RuntimeConfigPatch& config);
   bool enqueue_voice_mail_event(BackendEventType type,
                                 const VoiceMailMetadata& item,

@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"companion-server/internal/controlplane"
 	"companion-server/internal/devicecap"
 	"companion-server/internal/protocol"
 )
@@ -48,7 +49,7 @@ func allowedDeviceCapability(descriptor protocol.CapabilityDescriptor) bool {
 		return false
 	}
 	switch descriptor.Name {
-	case devicecap.VolumeSetName, devicecap.UserConfirmationName:
+	case devicecap.VolumeSetName, devicecap.UserConfirmationName, devicecap.SettingsName:
 		return true
 	default:
 		return false
@@ -238,6 +239,9 @@ func (s *session) handleCapabilityControl(ctx context.Context, data []byte) (boo
 			}
 			state.advertised = advertised
 			state.mu.Unlock()
+			if s.Supports(devicecap.SettingsName, devicecap.SettingsVersion) {
+				go s.reconcileSettings(context.Background())
+			}
 			return nil
 		})
 	case protocol.CapabilityResultType:
@@ -279,4 +283,72 @@ func (s *session) handleCapabilityControl(ctx context.Context, data []byte) (boo
 		})
 	}
 	return false, nil
+}
+
+func (s *session) reconcileSettings(ctx context.Context) {
+	if s == nil || s.controlPlane == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	twin, err := s.controlPlane.ManifestFor(ctx, controlplane.ResolutionContext{
+		UserID:   s.userID,
+		DeviceID: s.deviceID,
+		TenantID: s.tenantID,
+		Plan:     s.plan,
+	})
+	if err != nil {
+		return
+	}
+	if twin.DesiredVersion <= twin.ReportedVersion {
+		return
+	}
+	if !s.Supports(devicecap.SettingsName, devicecap.SettingsVersion) {
+		return
+	}
+	args, err := json.Marshal(devicecap.SettingsArgs{
+		Version:  twin.DesiredVersion,
+		Settings: twin.Desired,
+	})
+	if err != nil {
+		return
+	}
+	res, err := s.Call(ctx, devicecap.Call{
+		Name:      devicecap.SettingsName,
+		Version:   devicecap.SettingsVersion,
+		Arguments: args,
+		Deadline:  time.Now().Add(3 * time.Second),
+	})
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Warn("settings reconciliation call failed", "device_id", s.deviceID, "error", err)
+		}
+		return
+	}
+	var result devicecap.SettingsResult
+	if err := json.Unmarshal(res.Value, &result); err != nil {
+		if s.logger != nil {
+			s.logger.Warn("invalid settings reconciliation result", "device_id", s.deviceID, "error", err)
+		}
+		return
+	}
+	if !result.Applied {
+		if s.logger != nil {
+			s.logger.Warn("device rejected settings reconciliation", "device_id", s.deviceID, "version", result.Version, "error", result.Error)
+		}
+		return
+	}
+	reportedConfig := twin.Desired
+	if result.Settings != nil {
+		reportedConfig = *result.Settings
+	}
+	version := result.Version
+	if version <= 0 {
+		version = twin.DesiredVersion
+	}
+	if err := s.controlPlane.Report(ctx, s.userID, s.deviceID, version, reportedConfig); err != nil {
+		if s.logger != nil {
+			s.logger.Warn("failed to report reconciled settings", "device_id", s.deviceID, "error", err)
+		}
+	}
 }

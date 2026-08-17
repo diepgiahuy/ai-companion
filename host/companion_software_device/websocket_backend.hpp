@@ -48,7 +48,6 @@ public:
   bool finish_turn(uint64_t now_ms) override;
   void cancel_turn() override;
   bool poll_event(BackendEvent& event) override;
-  bool report_config(const RuntimeConfigPatch& config, bool applied) override;
   bool claim_voice_mail(const VoiceMailMetadata& item, uint64_t now_ms) override;
   bool report_voice_mail_playback(const VoiceMailMetadata& item, bool succeeded,
                                   std::string_view failure_code,
