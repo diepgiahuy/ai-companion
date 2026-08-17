@@ -46,6 +46,17 @@ void card_rejects_overlong_invalid_utf8_and_control_text() {
   assert(!card.assign(1, "expense", unicode_control, {}, {}, 0));
 }
 
+void json_zero_character_scanner_respects_escape_parity() {
+  using presentation_ingress::contains_unsupported_json_nul;
+  assert(contains_unsupported_json_nul(R"({"ui":{"primary":"bad\u0000tail"}})"));
+  assert(!contains_unsupported_json_nul(R"({"ui":{"primary":"literal\\u0000"}})"));
+  assert(!contains_unsupported_json_nul(R"({"ui":{"primary":"safe\u00e9"}})"));
+  std::string raw_nul{"{\"ui\":\"ok", 10};
+  raw_nul.push_back('\0');
+  raw_nul.append("tail\"}");
+  assert(contains_unsupported_json_nul(raw_nul));
+}
+
 void ui_hint_is_typed_and_bounded() {
   PresentationHint hint{};
   assert(hint.assign("idle", {}));
@@ -82,6 +93,7 @@ int main() {
   card_accepts_exact_contract_boundaries();
   card_rejects_version_kind_bounds_and_progress();
   card_rejects_overlong_invalid_utf8_and_control_text();
+  json_zero_character_scanner_respects_escape_parity();
   ui_hint_is_typed_and_bounded();
   agent_status_is_separate_bounded_semantic_data();
   return 0;
