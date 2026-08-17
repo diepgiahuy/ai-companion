@@ -70,24 +70,6 @@ std::optional<ParsedURL> parse_ws_url(const std::string& url) {
   return ParsedURL{authority.substr(0, colon), authority.substr(colon + 1), target};
 }
 
-RuntimeConfigPatch parse_config(const json& payload) {
-  const auto& config = payload.at("config");
-  RuntimeConfigPatch out{};
-  out.version = payload.at("config_version").get<uint64_t>();
-  out.smart_vad_enabled = config.at("smart_vad_enabled").get<bool>();
-  out.vad_threshold = config.at("vad_threshold").get<uint32_t>();
-  out.vad_silence_ms = config.at("vad_silence_ms").get<uint32_t>();
-  out.vad_min_speech_ms = config.at("vad_min_speech_ms").get<uint32_t>();
-  out.idle_after_ms = config.at("idle_after_ms").get<uint32_t>();
-  out.alarm_visible_ms = config.at("alarm_visible_ms").get<uint32_t>();
-  if (config.contains("ota_poll_interval_s") && config.at("ota_poll_interval_s").is_number_integer()) {
-    out.ota_poll_interval_s = config.at("ota_poll_interval_s").get<uint32_t>();
-  } else {
-    out.ota_poll_interval_s = 21'600;
-  }
-  return out;
-}
-
 std::string json_string(const json& object, const char* key) {
   const auto it = object.find(key);
   return it != object.end() && it->is_string() ? it->get<std::string>() : std::string{};
@@ -103,6 +85,98 @@ bool has_only_fields(const json& object,
       return false;
     }
   }
+  return true;
+}
+
+bool exact_uint64(const json& value, uint64_t& output) {
+  if (!value.is_number_integer()) return false;
+  if (value.is_number_unsigned()) {
+    output = value.get<uint64_t>();
+    return output <= 9'007'199'254'740'991ULL;
+  }
+  const int64_t signed_value = value.get<int64_t>();
+  if (signed_value < 0) return false;
+  output = static_cast<uint64_t>(signed_value);
+  return output <= 9'007'199'254'740'991ULL;
+}
+
+bool exact_uint32(const json& value, uint32_t& output) {
+  uint64_t parsed = 0;
+  if (!exact_uint64(value, parsed) || parsed > std::numeric_limits<uint32_t>::max()) {
+    return false;
+  }
+  output = static_cast<uint32_t>(parsed);
+  return true;
+}
+
+bool same_settings(const DeviceSettings& left, const DeviceSettings& right) {
+  return left.smart_vad_enabled == right.smart_vad_enabled &&
+         left.vad_threshold == right.vad_threshold &&
+         left.vad_silence_ms == right.vad_silence_ms &&
+         left.vad_min_speech_ms == right.vad_min_speech_ms &&
+         left.idle_after_ms == right.idle_after_ms &&
+         left.alarm_visible_ms == right.alarm_visible_ms &&
+         left.alarm_tone_ms == right.alarm_tone_ms &&
+         left.alarm_tone_hz == right.alarm_tone_hz &&
+         left.alarm_tone_amplitude == right.alarm_tone_amplitude &&
+         left.ota_poll_interval_s == right.ota_poll_interval_s &&
+         left.volume == right.volume &&
+         left.wake_threshold == right.wake_threshold &&
+         left.wake_model_view() == right.wake_model_view();
+}
+
+bool parse_settings_arguments(const json& arguments,
+                              const DeviceSettings& current,
+                              uint64_t current_version,
+                              SettingsTwin& output,
+                              bool& duplicate) {
+  if (!has_only_fields(arguments, {"version", "settings"})) return false;
+  const auto version_it = arguments.find("version");
+  const auto settings_it = arguments.find("settings");
+  uint64_t version = 0;
+  if (version_it == arguments.end() || !exact_uint64(*version_it, version) || version == 0 ||
+      settings_it == arguments.end() || !settings_it->is_object() ||
+      !has_only_fields(*settings_it,
+                       {"smart_vad_enabled", "vad_threshold", "vad_silence_ms",
+                        "vad_min_speech_ms", "idle_after_ms", "alarm_visible_ms",
+                        "ota_poll_interval_s", "wake_model"})) {
+    return false;
+  }
+  if (version < current_version) return false;
+
+  DeviceSettings parsed = current;
+  const json& settings = *settings_it;
+  if (const auto it = settings.find("smart_vad_enabled"); it != settings.end()) {
+    if (!it->is_boolean()) return false;
+    parsed.smart_vad_enabled = it->get<bool>();
+  }
+  auto parse_u32 = [&](const char* key, uint32_t& destination) {
+    const auto it = settings.find(key);
+    if (it == settings.end()) return true;
+    uint32_t value = 0;
+    if (!exact_uint32(*it, value)) return false;
+    destination = value;
+    return true;
+  };
+  if (!parse_u32("vad_threshold", parsed.vad_threshold) ||
+      !parse_u32("vad_silence_ms", parsed.vad_silence_ms) ||
+      !parse_u32("vad_min_speech_ms", parsed.vad_min_speech_ms) ||
+      !parse_u32("idle_after_ms", parsed.idle_after_ms) ||
+      !parse_u32("alarm_visible_ms", parsed.alarm_visible_ms) ||
+      !parse_u32("ota_poll_interval_s", parsed.ota_poll_interval_s)) {
+    return false;
+  }
+  if (const auto it = settings.find("wake_model"); it != settings.end()) {
+    if (!it->is_string()) return false;
+    const std::string model = it->get<std::string>();
+    if (model.empty() || model.size() >= parsed.wake_model.size()) return false;
+    parsed.set_wake_model(model);
+  }
+  if (!parsed.validate()) return false;
+
+  duplicate = version == current_version;
+  if (duplicate && !same_settings(parsed, current)) return false;
+  output = SettingsTwin{.version = version, .settings = parsed};
   return true;
 }
 
@@ -921,7 +995,8 @@ void WebSocketVoiceBackend::handle_text(uint64_t generation, const std::string& 
     }
     if (type == protocol::ControlType::session_ready) {
       const auto audio = payload.at("audio_params");
-      if (incoming_session.empty() || payload.at("transport") != "websocket" ||
+      if (!has_only_fields(payload, {"transport", "audio_params", "features"}) ||
+          incoming_session.empty() || payload.at("transport") != "websocket" ||
           audio.at("format") != "opus" || audio.at("sample_rate") != 24'000 ||
           audio.at("channels") != 1 || audio.at("frame_duration") != 60) {
         enqueue_event(BackendEventType::error, "INVALID READY");
@@ -932,17 +1007,11 @@ void WebSocketVoiceBackend::handle_text(uint64_t generation, const std::string& 
         session_id_ = incoming_session;
         playback_sample_rate_ = 24'000;
         ++stats_.connections;
-        if (payload.contains("config") && !payload.at("config").is_null()) {
-          BackendEvent config{};
-          config.type = BackendEventType::config;
-          config.set_config(parse_config(payload));
-          if (events_.size() == kMaximumEvents) events_.pop_front();
-          events_.push_back(config);
-        }
       }
       protocol_connected_.store(true);
       json advertise{{"capabilities", json::array({
-          {{"name", "device.volume.set"}, {"version", "1"}, {"kind", "command"}}
+          {{"name", "device.volume.set"}, {"version", "1"}, {"kind", "command"}},
+          {{"name", "device.settings_v1"}, {"version", "1"}, {"kind", "command"}}
       })}};
       if (send_text(encode_control(static_cast<int>(protocol::ControlType::capability_advertise),
                                    advertise.dump()))) {
@@ -1155,28 +1224,74 @@ void WebSocketVoiceBackend::handle_text(uint64_t generation, const std::string& 
       const std::string version = json_string(payload, "version");
       const auto arguments = payload.find("arguments");
       const int deadline_ms = payload.value("deadline_ms", 0);
-      if (correlation_id.empty() || !has_generation || deadline_ms < 50 || deadline_ms > 5000) {
+      if (correlation_id.empty() || deadline_ms < 50 || deadline_ms > 5000) {
         result = {{"ok", false}, {"error", "invalid_argument"}};
-      } else if (name != "device.volume.set" || version != "1") {
-        result = {{"ok", false}, {"error", "unsupported"}};
-      } else if (arguments == payload.end() || !arguments->is_object() ||
-                 !arguments->contains("volume") || !arguments->at("volume").is_number_integer()) {
-        result = {{"ok", false}, {"error", "invalid_argument"}};
-      } else {
-        const int volume = arguments->at("volume").get<int>();
-        if (volume < 0 || volume > 100) {
+      } else if (name == "device.settings_v1" && version == "1") {
+        if (has_generation || !incoming_turn.empty() || arguments == payload.end() ||
+            !arguments->is_object()) {
           result = {{"ok", false}, {"error", "invalid_argument"}};
         } else {
+          DeviceSettings current{};
+          uint64_t current_version = 0;
           {
             std::lock_guard lock(state_mutex_);
-            stats_.capability_volume = volume;
+            current = current_settings_;
+            current_version = settings_version_;
           }
-          result = {{"ok", true}, {"value", {{"volume", volume}, {"applied", true}}}};
+          SettingsTwin applied{};
+          bool duplicate = false;
+          if (!parse_settings_arguments(*arguments, current, current_version,
+                                        applied, duplicate)) {
+            uint64_t attempted_version = 0;
+            const auto version_it = arguments->find("version");
+            if (version_it != arguments->end()) (void)exact_uint64(*version_it, attempted_version);
+            result = {{"ok", true},
+                      {"value", {{"applied", false},
+                                 {"version", attempted_version},
+                                 {"error", "invalid_argument"}}}};
+          } else {
+            if (!duplicate) {
+              std::lock_guard lock(state_mutex_);
+              if (events_.size() == kMaximumEvents) events_.pop_front();
+              BackendEvent event{};
+              event.type = BackendEventType::settings;
+              event.scope = BackendEventScope::global;
+              event.session_epoch = 0;
+              event.generation = 0;
+              event.set_settings(applied);
+              events_.push_back(event);
+              current_settings_ = applied.settings;
+              settings_version_ = applied.version;
+              ++stats_.settings_applies;
+            }
+            result = {{"ok", true},
+                      {"value", {{"applied", true}, {"version", applied.version}}}};
+          }
         }
+      } else if (name == "device.volume.set" && version == "1") {
+        if (!has_generation || arguments == payload.end() || !arguments->is_object() ||
+            !arguments->contains("volume") || !arguments->at("volume").is_number_integer()) {
+          result = {{"ok", false}, {"error", "invalid_argument"}};
+        } else {
+          const int volume = arguments->at("volume").get<int>();
+          if (volume < 0 || volume > 100) {
+            result = {{"ok", false}, {"error", "invalid_argument"}};
+          } else {
+            {
+              std::lock_guard lock(state_mutex_);
+              stats_.capability_volume = volume;
+            }
+            result = {{"ok", true}, {"value", {{"volume", volume}, {"applied", true}}}};
+          }
+        }
+      } else {
+        result = {{"ok", false}, {"error", "unsupported"}};
       }
+      const std::optional<uint64_t> result_generation =
+          has_generation ? std::optional<uint64_t>(incoming_generation) : std::nullopt;
       const bool sent = send_text(encode_control(
           static_cast<int>(protocol::ControlType::capability_result), result.dump(), {},
-          correlation_id, true, incoming_generation));
+          correlation_id, true, result_generation));
       if (sent) {
         std::lock_guard lock(state_mutex_);
         ++stats_.capability_results;
