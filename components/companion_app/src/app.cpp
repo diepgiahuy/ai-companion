@@ -60,25 +60,16 @@ bool VoiceMailMetadata::valid() const {
   return true;
 }
 
-CompanionApp::CompanionApp(Microphone& microphone, Speaker& speaker,
-                           Display& display, Button& button,
+CompanionApp::CompanionApp(AudioEngine& audio, Display& display, Button& button,
                            VoiceBackend& backend, AppConfig config)
-    : microphone_(microphone), speaker_(speaker), display_(display),
-      button_(button), backend_(backend), config_(config) {}
-
-CompanionApp::CompanionApp(Microphone& microphone, Speaker& speaker,
-                           Display& display, Button& button,
-                           VoiceBackend& backend, AudioFrontend& audio_frontend,
-                           AppConfig config)
-    : microphone_(microphone), speaker_(speaker), display_(display),
-      button_(button), backend_(backend), audio_frontend_(&audio_frontend),
+    : audio_(audio), display_(display), button_(button), backend_(backend),
       config_(config) {}
 
 bool CompanionApp::start(uint64_t now_ms) {
   state_ = UiState::connecting;
   display_.show(state_, "CONNECTING");
-  if (audio_frontend_ != nullptr && !audio_frontend_->start()) {
-    fail("AUDIO FRONTEND ERROR");
+  if (!audio_.start()) {
+    fail("AUDIO ERROR");
     return false;
   }
   if (!backend_.start(now_ms)) {
@@ -130,7 +121,7 @@ void CompanionApp::tick(uint64_t now_ms) {
     render_idle(now_ms);
   } else if (state_ == UiState::alarm &&
              now_ms - alarm_started_ms_ >= config_.alarm_visible_ms) {
-    speaker_.stop_playback();
+    audio_.stop_playback();
     alarm_tone_active_ = false;
     enter_ready(now_ms);
   }
@@ -143,14 +134,14 @@ void CompanionApp::tick(uint64_t now_ms) {
     pump_capture(now_ms);
   } else if (state_ == UiState::speaking) {
     pump_playback(now_ms);
-    if (audio_frontend_ != nullptr && state_ == UiState::speaking) {
+    if (audio_.frontend_enabled() && state_ == UiState::speaking) {
       pump_frontend_monitor(now_ms);
     }
   } else if (state_ == UiState::voice_mail_playing) {
     pump_voice_mail(now_ms);
   } else if (state_ == UiState::alarm) {
     pump_alarm_tone();
-  } else if (audio_frontend_ != nullptr &&
+  } else if (audio_.frontend_enabled() &&
              (state_ == UiState::ready || state_ == UiState::idle ||
               state_ == UiState::processing)) {
     pump_frontend_monitor(now_ms);
@@ -197,11 +188,11 @@ void CompanionApp::process_backend_event(const BackendEvent& event,
     playback_count_ = 0;
     playback_offset_ = 0;
     tts_finished_ = false;
-    if (!ensure_frontend_capture()) {
+    if (!ensure_monitor_capture()) {
       fail("MIC ERROR");
       break;
     }
-    if (!speaker_.start_playback(backend_.playback_sample_rate_hz())) {
+    if (!audio_.start_playback(backend_.playback_sample_rate_hz())) {
       fail("SPEAKER ERROR");
       break;
     }
@@ -268,7 +259,7 @@ void CompanionApp::process_backend_event(const BackendEvent& event,
     }
     playback_count_ = playback_offset_ = 0;
     voice_mail_stream_finished_ = false;
-    if (!speaker_.start_playback(backend_.playback_sample_rate_hz())) {
+    if (!audio_.start_playback(backend_.playback_sample_rate_hz())) {
       fail_voice_mail(now_ms, "speaker_start", "VOICE MAIL OUTPUT ERROR");
       break;
     }
@@ -292,7 +283,7 @@ void CompanionApp::process_backend_event(const BackendEvent& event,
     const bool current = current_voice_mail_matches(event.voice_mail);
     if (!remove_voice_mail(event.voice_mail.voice_mail_id_view())) break;
     if (current) {
-      speaker_.stop_playback();
+      audio_.stop_playback();
       playback_count_ = playback_offset_ = 0;
       voice_mail_result_pending_ = false;
       voice_mail_stream_finished_ = false;
@@ -334,7 +325,7 @@ void CompanionApp::pump_voice_mail(uint64_t now_ms) {
   if (playback_offset_ < playback_count_) {
     const auto pending = std::span<const int16_t>(
         playback_frame_.data() + playback_offset_, playback_count_ - playback_offset_);
-    const size_t written = speaker_.write_playback(pending);
+    const size_t written = audio_.write_playback(pending);
     if (written > pending.size()) {
       fail_voice_mail(now_ms, "speaker_write", "VOICE MAIL OUTPUT ERROR");
       return;
@@ -344,8 +335,8 @@ void CompanionApp::pump_voice_mail(uint64_t now_ms) {
   }
   const bool local_empty = playback_offset_ == playback_count_;
   if (!voice_mail_result_pending_ && voice_mail_stream_finished_ && local_empty &&
-      backend_.playback_empty() && speaker_.playback_drained()) {
-    speaker_.stop_playback();
+      backend_.playback_empty() && audio_.playback_drained()) {
+    audio_.stop_playback();
     voice_mail_result_pending_ = true;
     voice_mail_operation_started_ms_ = now_ms;
     state_ = UiState::voice_mail_claiming;
@@ -358,7 +349,7 @@ void CompanionApp::pump_voice_mail(uint64_t now_ms) {
 }
 
 void CompanionApp::pump_capture(uint64_t now_ms) {
-  const size_t samples = microphone_.read_capture(capture_frame_);
+  const size_t samples = audio_.read_capture(capture_frame_);
   if (samples == 0) return;
   if (samples > capture_frame_.size()) {
     fail("MIC FRAME ERROR");
@@ -367,8 +358,8 @@ void CompanionApp::pump_capture(uint64_t now_ms) {
 
   std::span<const int16_t> frame(capture_frame_.data(), samples);
   AudioFrontendEvent frontend_event = AudioFrontendEvent::none;
-  if (audio_frontend_ != nullptr) {
-    const auto result = audio_frontend_->process_capture(
+  if (audio_.frontend_enabled()) {
+    const auto result = audio_.process_capture(
         frame, std::span<int16_t>(cleaned_capture_frame_.data(), cleaned_capture_frame_.size()));
     if (result.samples > cleaned_capture_frame_.size()) {
       fail("AUDIO FRONTEND ERROR");
@@ -389,7 +380,7 @@ void CompanionApp::pump_capture(uint64_t now_ms) {
   }
 
   if (!config_.smart_vad_enabled) return;
-  if (audio_frontend_ != nullptr) {
+  if (audio_.frontend_enabled()) {
     if (frontend_event == AudioFrontendEvent::speech_started) {
       if (!speech_detected_) {
         speech_detected_ = true;
@@ -418,14 +409,14 @@ void CompanionApp::pump_capture(uint64_t now_ms) {
 }
 
 void CompanionApp::pump_frontend_monitor(uint64_t now_ms) {
-  if (audio_frontend_ == nullptr || !ensure_frontend_capture()) return;
-  const size_t samples = microphone_.read_capture(capture_frame_);
+  if (!audio_.frontend_enabled() || !ensure_monitor_capture()) return;
+  const size_t samples = audio_.read_capture(capture_frame_);
   if (samples == 0) return;
   if (samples > capture_frame_.size()) {
     fail("MIC FRAME ERROR");
     return;
   }
-  const auto result = audio_frontend_->process_capture(
+  const auto result = audio_.process_capture(
       std::span<const int16_t>(capture_frame_.data(), samples),
       std::span<int16_t>(cleaned_capture_frame_.data(), cleaned_capture_frame_.size()));
   if (result.samples > cleaned_capture_frame_.size()) {
@@ -447,13 +438,14 @@ void CompanionApp::pump_playback(uint64_t now_ms) {
   if (playback_offset_ < playback_count_) {
     const auto pending = std::span<const int16_t>(playback_frame_.data() + playback_offset_,
                                                   playback_count_ - playback_offset_);
-    const size_t written = speaker_.write_playback(pending);
+    const size_t written = audio_.write_playback(pending);
     if (written > pending.size()) {
       fail("SPEAKER ERROR");
       return;
     }
-    if (written > 0 && !push_playback_reference(pending.first(written),
-                                                 backend_.playback_sample_rate_hz())) {
+    if (written > 0 &&
+        !audio_.push_playback_reference(pending.first(written),
+                                        backend_.playback_sample_rate_hz())) {
       fail("AEC REFERENCE ERROR");
       return;
     }
@@ -461,8 +453,8 @@ void CompanionApp::pump_playback(uint64_t now_ms) {
   }
   const bool local_frame_empty = playback_offset_ == playback_count_;
   if (tts_finished_ && local_frame_empty && backend_.playback_empty() &&
-      speaker_.playback_drained()) {
-    speaker_.stop_playback();
+      audio_.playback_drained()) {
+    audio_.stop_playback();
     if (alarm_pending_) {
       alarm_pending_ = false;
       enter_alarm(now_ms, text_view(pending_alarm_));
@@ -499,46 +491,49 @@ void CompanionApp::pump_alarm_tone() {
   if (playback_offset_ < playback_count_) {
     const auto pending = std::span<const int16_t>(playback_frame_.data() + playback_offset_,
                                                   playback_count_ - playback_offset_);
-    playback_offset_ += speaker_.write_playback(pending);
+    const size_t written = audio_.write_playback(pending);
+    if (written > pending.size()) {
+      fail("SPEAKER ERROR");
+      return;
+    }
+    playback_offset_ += written;
   }
 
   if (alarm_tone_generated_samples_ >= total_samples &&
-      playback_offset_ == playback_count_ && speaker_.playback_drained()) {
-    speaker_.stop_playback();
+      playback_offset_ == playback_count_ && audio_.playback_drained()) {
+    audio_.stop_playback();
     alarm_tone_active_ = false;
   }
 }
 
 void CompanionApp::begin_listening(uint64_t now_ms) {
-  speaker_.stop_playback();
+  audio_.stop_playback();
   alarm_tone_active_ = false;
   streamed_samples_ = 0;
   tts_finished_ = false;
   playback_count_ = playback_offset_ = 0;
   speech_detected_ = false;
   first_voice_ms_ = last_voice_ms_ = now_ms;
-  if (audio_frontend_ != nullptr) {
-    audio_frontend_->reset();
-  }
+  if (audio_.frontend_enabled()) audio_.reset();
   const ListenMode mode = config_.smart_vad_enabled ? ListenMode::auto_vad
                                                      : ListenMode::manual;
   if (!backend_.begin_turn(now_ms, mode)) {
     fail("BACKEND ERROR");
     return;
   }
-  if (audio_frontend_ != nullptr) {
-    if (!ensure_frontend_capture()) {
+  if (audio_.frontend_enabled()) {
+    if (!ensure_monitor_capture()) {
       backend_.cancel_turn();
       fail("MIC ERROR");
       return;
     }
   } else {
-    if (!microphone_.start_capture()) {
+    if (!audio_.start_capture()) {
       backend_.cancel_turn();
       fail("MIC ERROR");
       return;
     }
-    microphone_capture_active_ = true;
+    capture_active_ = true;
   }
   recording_started_ms_ = now_ms;
   state_ = UiState::listening;
@@ -558,7 +553,7 @@ void CompanionApp::finish_listening(uint64_t now_ms) {
 }
 
 void CompanionApp::abort_and_listen(uint64_t now_ms) {
-  speaker_.stop_playback();
+  audio_.stop_playback();
   backend_.cancel_turn();
   begin_listening(now_ms);
 }
@@ -573,7 +568,7 @@ void CompanionApp::enter_ready(uint64_t now_ms, std::string_view message) {
     enter_voice_mail_waiting();
     return;
   }
-  if (!ensure_frontend_capture()) {
+  if (!ensure_monitor_capture()) {
     fail("MIC ERROR");
     return;
   }
@@ -607,7 +602,7 @@ void CompanionApp::begin_voice_mail(uint64_t now_ms) {
 
 void CompanionApp::fail_voice_mail(uint64_t now_ms, std::string_view code,
                                    std::string_view message) {
-  speaker_.stop_playback();
+  audio_.stop_playback();
   playback_count_ = playback_offset_ = 0;
   voice_mail_stream_finished_ = false;
   voice_mail_result_pending_ = false;
@@ -652,16 +647,16 @@ bool CompanionApp::current_voice_mail_matches(const VoiceMailMetadata& item) con
 }
 
 void CompanionApp::enter_alarm(uint64_t now_ms, std::string_view message) {
-  speaker_.stop_playback();
-  if (audio_frontend_ != nullptr && microphone_capture_active_) {
-    microphone_.stop_capture();
-    microphone_capture_active_ = false;
-    audio_frontend_->reset();
+  audio_.stop_playback();
+  if (audio_.frontend_enabled() && capture_active_) {
+    audio_.stop_capture();
+    capture_active_ = false;
+    audio_.reset();
   }
   playback_count_ = playback_offset_ = 0;
   alarm_tone_generated_samples_ = 0;
   alarm_tone_active_ = config_.alarm_tone_ms > 0 &&
-                       speaker_.start_playback(kAudioSampleRateHz);
+                       audio_.start_playback(kAudioSampleRateHz);
   state_ = UiState::alarm;
   alarm_started_ms_ = now_ms;
   display_.show(state_, message.empty() ? "ALARM" : message);
@@ -690,17 +685,11 @@ bool CompanionApp::frame_has_voice(std::span<const int16_t> pcm) const {
   return sum / pcm.size() >= config_.vad_mean_abs_threshold;
 }
 
-bool CompanionApp::ensure_frontend_capture() {
-  if (audio_frontend_ == nullptr || microphone_capture_active_) return true;
-  if (!microphone_.start_capture()) return false;
-  microphone_capture_active_ = true;
+bool CompanionApp::ensure_monitor_capture() {
+  if (!audio_.frontend_enabled() || capture_active_) return true;
+  if (!audio_.start_capture()) return false;
+  capture_active_ = true;
   return true;
-}
-
-bool CompanionApp::push_playback_reference(std::span<const int16_t> accepted_pcm,
-                                           uint32_t sample_rate_hz) {
-  if (audio_frontend_ == nullptr || accepted_pcm.empty()) return true;
-  return audio_frontend_->push_playback_reference(accepted_pcm, sample_rate_hz);
 }
 
 void CompanionApp::handle_frontend_event(AudioFrontendEvent event, uint64_t now_ms) {
@@ -715,19 +704,19 @@ void CompanionApp::handle_frontend_event(AudioFrontendEvent event, uint64_t now_
 }
 
 void CompanionApp::stop_capture_if_owned_by_turn() {
-  if (audio_frontend_ == nullptr && microphone_capture_active_) {
-    microphone_.stop_capture();
-    microphone_capture_active_ = false;
+  if (!audio_.frontend_enabled() && capture_active_) {
+    audio_.stop_capture();
+    capture_active_ = false;
   }
 }
 
 void CompanionApp::fail(std::string_view reason) {
-  if (microphone_capture_active_) {
-    microphone_.stop_capture();
-    microphone_capture_active_ = false;
+  if (capture_active_) {
+    audio_.stop_capture();
+    capture_active_ = false;
   }
-  if (audio_frontend_ != nullptr) audio_frontend_->reset();
-  speaker_.stop_playback();
+  audio_.reset();
+  audio_.stop_playback();
   backend_.cancel_turn();
   state_ = UiState::error;
   display_.show(state_, reason);

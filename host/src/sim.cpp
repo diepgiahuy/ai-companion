@@ -1,4 +1,5 @@
 #include "companion/app.hpp"
+#include "companion/audio_runtime.hpp"
 #include "companion/mock_backend.hpp"
 
 #include <algorithm>
@@ -55,10 +56,11 @@ struct SimButton final : Button {
 int main() {
   SimMicrophone microphone;
   SimSpeaker speaker;
+  AudioRuntime audio(microphone, speaker);
   SimDisplay display;
   SimButton button;
   MockVoiceBackend backend;
-  CompanionApp app(microphone, speaker, display, button, backend);
+  CompanionApp app(audio, display, button, backend);
   uint64_t now = 0;
   app.start(now);
   app.tick(now);

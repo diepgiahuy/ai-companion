@@ -2,6 +2,7 @@
 
 #include "companion/app.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -23,33 +24,40 @@ struct AudioRuntimeStats {
   bool capture_active{};
   bool playback_active{};
   bool reference_active{};
+  bool frontend_enabled{};
   PlaybackReferenceStats frontend_reference{};
 };
 
-// One production owner for physical capture, physical playback and the AFE.
-// CompanionApp still speaks the existing Microphone/Speaker/AudioFrontend ports
-// during the #228 migration, but playback-reference conversion/lifetime is now
-// fully owned here rather than split between CompanionApp and board adapters.
-class AudioRuntime final : public Microphone, public Speaker, public AudioFrontend {
+// The only app-facing audio owner. Physical microphone/speaker adapters and the
+// optional vendor AFE remain private implementation details below this boundary.
+// A no-AFE runtime is supported for host/simulator/manual-VAD paths without
+// reintroducing separate audio ports into CompanionApp.
+class AudioRuntime final : public AudioEngine {
 public:
+  AudioRuntime(Microphone& microphone, Speaker& speaker)
+      : microphone_(microphone), speaker_(speaker) {}
+
   AudioRuntime(Microphone& microphone, Speaker& speaker, AudioFrontend& frontend)
-      : microphone_(microphone), speaker_(speaker), frontend_(frontend) {}
+      : microphone_(microphone), speaker_(speaker), frontend_(&frontend) {}
 
   bool start() override {
     stop_capture();
     stop_playback();
-    frontend_.reset();
     reference_converter_.reset();
     reference_source_rate_hz_ = 0;
-    return frontend_.start();
+    if (frontend_ == nullptr) return true;
+    frontend_->reset();
+    return frontend_->start();
   }
 
   void reset() override {
     end_current_reference();
     reference_converter_.reset();
     reference_source_rate_hz_ = 0;
-    frontend_.reset();
+    if (frontend_ != nullptr) frontend_->reset();
   }
+
+  bool frontend_enabled() const override { return frontend_ != nullptr; }
 
   bool start_capture() override {
     if (capture_active_) return true;
@@ -109,28 +117,9 @@ public:
     ++playback_stops_;
   }
 
-  bool begin_playback_reference(uint64_t epoch) override {
-    if (!playback_active_ || epoch == 0 || epoch != playback_epoch_) return false;
-    if (reference_active_) return reference_epoch_ == epoch;
-    if (!frontend_.begin_playback_reference(epoch)) return false;
-    reference_active_ = true;
-    reference_epoch_ = epoch;
-    ++reference_epochs_;
-    return true;
-  }
-
-  void end_playback_reference(uint64_t epoch) override {
-    if (!reference_active_ || epoch == 0 || epoch != reference_epoch_) return;
-    frontend_.end_playback_reference(epoch);
-    reference_active_ = false;
-    reference_epoch_ = 0;
-    reference_converter_.reset();
-    reference_source_rate_hz_ = 0;
-  }
-
   bool push_playback_reference(std::span<const int16_t> accepted_pcm,
                                uint32_t sample_rate_hz) override {
-    if (accepted_pcm.empty()) return true;
+    if (accepted_pcm.empty() || frontend_ == nullptr) return true;
     if (!playback_active_) return reference_failure();
     if (accepted_pcm.size() > reference_frame_.size()) {
       ++oversized_reference_frames_;
@@ -154,7 +143,7 @@ public:
     }
 
     if (sample_rate_hz == 16'000) {
-      if (!frontend_.push_playback_reference(accepted_pcm, 16'000)) {
+      if (!frontend_->push_playback_reference(accepted_pcm, 16'000)) {
         return reference_failure();
       }
       return true;
@@ -166,20 +155,21 @@ public:
       return reference_failure();
     }
     if (converted == 0) return true; // converter may be carrying 1–2 samples.
-    if (!frontend_.push_playback_reference(
+    if (!frontend_->push_playback_reference(
             std::span<const int16_t>(reference_frame_.data(), converted), 16'000)) {
       return reference_failure();
     }
     return true;
   }
 
-  PlaybackReferenceStats playback_reference_stats() const override {
-    return frontend_.playback_reference_stats();
-  }
-
   AudioFrontendResult process_capture(std::span<const int16_t> microphone_16k,
                                       std::span<int16_t> cleaned_16k) override {
-    return frontend_.process_capture(microphone_16k, cleaned_16k);
+    if (frontend_ != nullptr) {
+      return frontend_->process_capture(microphone_16k, cleaned_16k);
+    }
+    const size_t count = std::min(microphone_16k.size(), cleaned_16k.size());
+    std::copy_n(microphone_16k.begin(), count, cleaned_16k.begin());
+    return {.samples = count, .event = AudioFrontendEvent::none};
   }
 
   AudioRuntimeStats stats() const {
@@ -197,7 +187,9 @@ public:
         .capture_active = capture_active_,
         .playback_active = playback_active_,
         .reference_active = reference_active_,
-        .frontend_reference = frontend_.playback_reference_stats(),
+        .frontend_enabled = frontend_ != nullptr,
+        .frontend_reference = frontend_ == nullptr ? PlaybackReferenceStats{}
+                                                   : frontend_->playback_reference_stats(),
     };
   }
 
@@ -212,19 +204,31 @@ private:
     return false;
   }
 
-  void end_current_reference() {
-    if (reference_active_) {
-      frontend_.end_playback_reference(reference_epoch_);
-      reference_active_ = false;
-      reference_epoch_ = 0;
+  bool begin_playback_reference(uint64_t epoch) {
+    if (frontend_ == nullptr || !playback_active_ || epoch == 0 || epoch != playback_epoch_) {
+      return false;
     }
+    if (reference_active_) return reference_epoch_ == epoch;
+    if (!frontend_->begin_playback_reference(epoch)) return false;
+    reference_active_ = true;
+    reference_epoch_ = epoch;
+    ++reference_epochs_;
+    return true;
+  }
+
+  void end_current_reference() {
+    if (reference_active_ && frontend_ != nullptr) {
+      frontend_->end_playback_reference(reference_epoch_);
+    }
+    reference_active_ = false;
+    reference_epoch_ = 0;
     reference_converter_.reset();
     reference_source_rate_hz_ = 0;
   }
 
   Microphone& microphone_;
   Speaker& speaker_;
-  AudioFrontend& frontend_;
+  AudioFrontend* frontend_{};
   PlaybackReference24To16 reference_converter_{};
   std::array<int16_t, kAudioFrameSamples> reference_frame_{};
   bool capture_active_{};

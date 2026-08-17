@@ -406,8 +406,7 @@ extern "C" void app_main() {
   app_config.smart_vad_enabled = false;
 #endif
 
-  static CompanionApp app(audio_runtime, audio_runtime, presentation, button, backend,
-                          audio_runtime, app_config);
+  static CompanionApp app(audio_runtime, presentation, button, backend, app_config);
   app.start(now_ms());
   ESP_LOGI(kTag, "hardware product path using stored provisioning + ESP-SR + secure WebSocket protocol v2");
 

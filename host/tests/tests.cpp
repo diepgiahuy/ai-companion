@@ -1,4 +1,5 @@
 #include "companion/app.hpp"
+#include "companion/audio_runtime.hpp"
 #include "companion/wire_protocol.hpp"
 #include "companion/mock_backend.hpp"
 
@@ -96,7 +97,6 @@ VoiceMailMetadata voice_mail(std::string_view id = "voice-1") {
   item.policy = VoiceMailMetadata::Policy::ephemeral;
   return item;
 }
-
 
 struct VadMicrophone final : Microphone {
   bool active{};
@@ -221,10 +221,11 @@ void connect(CompanionApp& app) {
 void conversation_happy_path() {
   FakeMicrophone microphone;
   FakeSpeaker speaker;
+  AudioRuntime audio(microphone, speaker);
   FakeDisplay display;
   FakeButton button{{100, 200}};
   MockVoiceBackend backend;
-  CompanionApp app(microphone, speaker, display, button, backend);
+  CompanionApp app(audio, display, button, backend);
 
   connect(app);
   app.tick(100);
@@ -248,11 +249,11 @@ void conversation_happy_path() {
 void timeout_finishes_recording() {
   FakeMicrophone microphone;
   FakeSpeaker speaker;
+  AudioRuntime audio(microphone, speaker);
   FakeDisplay display;
   FakeButton button{{10}};
   MockVoiceBackend backend;
-  CompanionApp app(microphone, speaker, display, button, backend,
-                   AppConfig{100});
+  CompanionApp app(audio, display, button, backend, AppConfig{100});
   connect(app);
   app.tick(10);
   app.tick(30);
@@ -263,10 +264,11 @@ void timeout_finishes_recording() {
 void silence_is_rejected() {
   SilentMicrophone microphone;
   FakeSpeaker speaker;
+  AudioRuntime audio(microphone, speaker);
   FakeDisplay display;
   FakeButton button{{10, 20}};
   MockVoiceBackend backend;
-  CompanionApp app(microphone, speaker, display, button, backend);
+  CompanionApp app(audio, display, button, backend);
   connect(app);
   app.tick(10);
   app.tick(20);
@@ -277,10 +279,11 @@ void silence_is_rejected() {
 void barge_in_cancels_reply_and_starts_capture() {
   FakeMicrophone microphone;
   FakeSpeaker speaker;
+  AudioRuntime audio(microphone, speaker);
   FakeDisplay display;
   FakeButton button{{10, 20, 271}};
   MockVoiceBackend backend;
-  CompanionApp app(microphone, speaker, display, button, backend);
+  CompanionApp app(audio, display, button, backend);
   connect(app);
   app.tick(10);
   app.tick(15);
@@ -294,10 +297,10 @@ void barge_in_cancels_reply_and_starts_capture() {
   assert(backend.playback_empty());
 }
 
-
 void smart_vad_finishes_after_speech_silence() {
   VadMicrophone microphone;
   FakeSpeaker speaker;
+  AudioRuntime audio(microphone, speaker);
   FakeDisplay display;
   FakeButton button{{10}};
   MockVoiceBackend backend;
@@ -306,7 +309,7 @@ void smart_vad_finishes_after_speech_silence() {
   config.vad_mean_abs_threshold = 100;
   config.vad_min_speech_ms = 0;
   config.vad_silence_ms = 100;
-  CompanionApp app(microphone, speaker, display, button, backend, config);
+  CompanionApp app(audio, display, button, backend, config);
   connect(app);
   app.tick(10);
   app.tick(20);
@@ -318,13 +321,14 @@ void smart_vad_finishes_after_speech_silence() {
 void idle_and_alarm_states_are_non_destructive() {
   FakeMicrophone microphone;
   FakeSpeaker speaker;
+  AudioRuntime audio(microphone, speaker);
   FakeDisplay display;
   FakeButton button;
   MockVoiceBackend backend;
   AppConfig config{};
   config.idle_after_ms = 100;
   config.alarm_visible_ms = 100;
-  CompanionApp app(microphone, speaker, display, button, backend, config);
+  CompanionApp app(audio, display, button, backend, config);
   connect(app);
   app.tick(100);
   assert(app.state() == UiState::idle);
@@ -344,10 +348,11 @@ void idle_and_alarm_states_are_non_destructive() {
 void runtime_config_is_versioned_and_last_known_good() {
   SilentMicrophone microphone;
   FakeSpeaker speaker;
+  AudioRuntime audio(microphone, speaker);
   FakeDisplay display;
   FakeButton button;
   MockVoiceBackend backend;
-  CompanionApp app(microphone, speaker, display, button, backend);
+  CompanionApp app(audio, display, button, backend);
   connect(app);
   RuntimeConfigPatch good{};
   good.version = 3;
@@ -398,11 +403,12 @@ void runtime_config_is_versioned_and_last_known_good() {
 void voice_mail_waits_deduplicates_and_completes_only_after_drain() {
   SilentMicrophone microphone;
   FakeSpeaker speaker;
+  AudioRuntime audio(microphone, speaker);
   speaker.drained = false;
   FakeDisplay display;
   FakeButton button{{10}};
   MockVoiceBackend backend;
-  CompanionApp app(microphone, speaker, display, button, backend);
+  CompanionApp app(audio, display, button, backend);
   connect(app);
 
   const auto item = voice_mail();
@@ -433,10 +439,11 @@ void voice_mail_waits_deduplicates_and_completes_only_after_drain() {
 void voice_mail_invalid_cancel_and_expiry_are_safe() {
   SilentMicrophone microphone;
   FakeSpeaker speaker;
+  AudioRuntime audio(microphone, speaker);
   FakeDisplay display;
   FakeButton button{{10, 12}};
   MockVoiceBackend backend;
-  CompanionApp app(microphone, speaker, display, button, backend);
+  CompanionApp app(audio, display, button, backend);
   connect(app);
 
   auto invalid = voice_mail("invalid");
@@ -465,13 +472,14 @@ void voice_mail_invalid_cancel_and_expiry_are_safe() {
 void voice_mail_output_stall_times_out_without_consuming() {
   SilentMicrophone microphone;
   FakeSpeaker speaker;
+  AudioRuntime audio(microphone, speaker);
   speaker.maximum_write = 0;
   FakeDisplay display;
   FakeButton button{{10}};
   MockVoiceBackend backend;
   AppConfig config{};
   config.voice_mail_operation_timeout_ms = 5;
-  CompanionApp app(microphone, speaker, display, button, backend, config);
+  CompanionApp app(audio, display, button, backend, config);
   connect(app);
 
   const auto item = voice_mail("voice-timeout");
@@ -490,10 +498,11 @@ void voice_mail_output_stall_times_out_without_consuming() {
 void retained_voice_mail_returns_to_waiting_after_drain() {
   SilentMicrophone microphone;
   FakeSpeaker speaker;
+  AudioRuntime audio(microphone, speaker);
   FakeDisplay display;
   FakeButton button{{10}};
   MockVoiceBackend backend;
-  CompanionApp app(microphone, speaker, display, button, backend);
+  CompanionApp app(audio, display, button, backend);
   connect(app);
 
   auto item = voice_mail("voice-retained");
