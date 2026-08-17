@@ -151,9 +151,6 @@ struct BackendEvent {
   void set_settings(const SettingsTwin& value) {
     new (&payload.settings) SettingsTwin(value);
   }
-  void set_config(const SettingsTwin& value) {
-    set_settings(value);
-  }
   void set_voice_mail(const VoiceMailMetadata& value) {
     new (&payload.voice_mail) VoiceMailMetadata(value);
   }
@@ -220,6 +217,10 @@ public:
   virtual bool finish_turn(uint64_t now_ms) = 0;
   virtual void cancel_turn() = 0;
   virtual bool poll_event(BackendEvent& event) = 0;
+  // Called only after CompanionApp has actually accepted or rejected a settings
+  // event. Network backends use this to complete the pending capability RPC;
+  // simple test backends may use the default no-op acknowledgement.
+  virtual bool report_settings_apply(const SettingsTwin&, bool) { return true; }
   virtual bool claim_voice_mail(const VoiceMailMetadata& item, uint64_t now_ms) = 0;
   virtual bool report_voice_mail_playback(const VoiceMailMetadata& item,
                                           bool succeeded,
