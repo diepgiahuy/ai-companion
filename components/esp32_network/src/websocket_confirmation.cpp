@@ -84,9 +84,25 @@ bool UserConfirmationRequest::valid() const {
 
 bool WebSocketVoiceBackend::enable_confirmation_protocol() {
   if (confirmation_protocol_enabled_.load()) return true;
-  // The WebSocket receive callback is owned by the normal/pairing dispatch
-  // chain. Enabling a capability must never register a parallel data handler.
   if (client_ == nullptr || client_started_.load()) return false;
+
+  // Pairing and capability controls share exactly one DATA/reassembly owner.
+  // If pairing has not already installed the mux, replace the base handler here
+  // instead of registering an additional confirmation callback.
+  if (!pairing_protocol_enabled_.load()) {
+    if (esp_websocket_unregister_events(client_, WEBSOCKET_EVENT_ANY,
+                                        &WebSocketVoiceBackend::event_handler) != ESP_OK) {
+      return false;
+    }
+    if (esp_websocket_register_events(client_, WEBSOCKET_EVENT_ANY,
+                                      &WebSocketVoiceBackend::pairing_event_handler,
+                                      this) != ESP_OK) {
+      (void)esp_websocket_register_events(client_, WEBSOCKET_EVENT_ANY,
+                                          &WebSocketVoiceBackend::event_handler,
+                                          this);
+      return false;
+    }
+  }
   confirmation_protocol_enabled_.store(true);
   return true;
 }
