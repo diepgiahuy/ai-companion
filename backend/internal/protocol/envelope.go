@@ -91,8 +91,6 @@ const (
 	AlarmFiredType      MessageType = "alarm.fired"
 	AlarmAckType        MessageType = "alarm.ack"
 	ScheduleUpdatedType MessageType = "schedule.updated"
-	ConfigUpdateType    MessageType = "config.update"
-	ConfigReportType    MessageType = "config.report"
 	ProtocolErrorType   MessageType = "protocol.error"
 )
 
@@ -101,8 +99,7 @@ func (t MessageType) Valid() bool {
 	case SessionHelloType, SessionReadyType, SessionPingType, SessionPongType,
 		TurnListenType, TurnAbortType, TurnStateType, TranscriptFinalType,
 		TTSLifecycleType, AgentStatusType, UICardType, UIStateType,
-		AlarmFiredType, AlarmAckType, ScheduleUpdatedType, ConfigUpdateType,
-		ConfigReportType, ProtocolErrorType,
+		AlarmFiredType, AlarmAckType, ScheduleUpdatedType, ProtocolErrorType,
 		CapabilityAdvertiseType, CapabilityCallType, CapabilityResultType, CapabilityCancelType,
 		GestureNotificationType,
 		VoiceMailAvailableType, VoiceMailClaimType, VoiceMailClaimedType,
@@ -302,68 +299,21 @@ func DownlinkAudioParams() AudioParams {
 	}
 }
 
-type RuntimeConfig struct {
-	SmartVADEnabled       *bool  `json:"smart_vad_enabled,omitempty"`
-	VADThreshold          *int   `json:"vad_threshold,omitempty"`
-	VADSilenceMS          *int   `json:"vad_silence_ms,omitempty"`
-	VADMinSpeechMS        *int   `json:"vad_min_speech_ms,omitempty"`
-	IdleAfterMS           *int   `json:"idle_after_ms,omitempty"`
-	AlarmVisibleMS        *int   `json:"alarm_visible_ms,omitempty"`
-	OTAPollIntervalSeconds *int  `json:"ota_poll_interval_s,omitempty"`
-	Locale                string `json:"locale,omitempty"`
-	Timezone              string `json:"timezone,omitempty"`
-	VoiceKey              string `json:"voice_key,omitempty"`
-	WakeModel             string `json:"wake_model,omitempty"`
-}
-
-func (c RuntimeConfig) ValidateDeviceSnapshot() error {
-	if c.SmartVADEnabled == nil || c.VADThreshold == nil || c.VADSilenceMS == nil ||
-		c.VADMinSpeechMS == nil || c.IdleAfterMS == nil || c.AlarmVisibleMS == nil {
-		return fmt.Errorf("device config snapshot requires all VAD, idle, and alarm fields")
-	}
-	if *c.VADThreshold < 1 || *c.VADThreshold > 65535 ||
-		*c.VADSilenceMS < 100 || *c.VADSilenceMS > 5000 ||
-		*c.VADMinSpeechMS < 50 || *c.VADMinSpeechMS > 5000 ||
-		*c.IdleAfterMS < 1000 || *c.IdleAfterMS > 3600000 ||
-		*c.AlarmVisibleMS < 1000 || *c.AlarmVisibleMS > 3600000 {
-		return fmt.Errorf("device config snapshot contains an out-of-range value")
-	}
-	if c.OTAPollIntervalSeconds != nil && (*c.OTAPollIntervalSeconds < 3600 || *c.OTAPollIntervalSeconds > 604800) {
-		return fmt.Errorf("ota_poll_interval_s contains an out-of-range value")
-	}
-	if len(c.Locale) > 64 || len(c.Timezone) > 64 || len(c.VoiceKey) > 128 || len(c.WakeModel) > 64 {
-		return fmt.Errorf("locale, timezone, voice_key, or wake_model exceeds its size limit")
-	}
-	return nil
-}
-
 type Features struct {
 	StreamingTTS  bool `json:"streaming_tts,omitempty"`
 	ButtonBargeIn bool `json:"button_barge_in,omitempty"`
 }
 
 type HelloPayload struct {
-	Transport     string         `json:"transport"`
-	AudioParams   AudioParams    `json:"audio_params"`
-	Features      *Features      `json:"features,omitempty"`
-	Config        *RuntimeConfig `json:"config,omitempty"`
-	ConfigVersion int64          `json:"config_version,omitempty"`
+	Transport   string      `json:"transport"`
+	AudioParams AudioParams `json:"audio_params"`
+	Features    *Features   `json:"features,omitempty"`
 }
 
 type ReadyPayload struct {
-	Transport     string         `json:"transport"`
-	AudioParams   AudioParams    `json:"audio_params"`
-	Features      *Features      `json:"features,omitempty"`
-	Config        *RuntimeConfig `json:"config,omitempty"`
-	ConfigVersion int64          `json:"config_version"`
-}
-
-func validateConfigVersion(version int64) error {
-	const maximumExactJSONInteger int64 = 9_007_199_254_740_991
-	if version < 0 || version > maximumExactJSONInteger {
-		return fmt.Errorf("config_version must be within 0..%d", maximumExactJSONInteger)
-	}
-	return nil
+	Transport   string      `json:"transport"`
+	AudioParams AudioParams `json:"audio_params"`
+	Features    *Features   `json:"features,omitempty"`
 }
 
 func (p ReadyPayload) Validate() error {
@@ -372,12 +322,6 @@ func (p ReadyPayload) Validate() error {
 	}
 	if p.AudioParams != DownlinkAudioParams() {
 		return fmt.Errorf("unsupported audio params: got %+v, want %+v", p.AudioParams, DownlinkAudioParams())
-	}
-	if err := validateConfigVersion(p.ConfigVersion); err != nil {
-		return err
-	}
-	if p.Config != nil {
-		return p.Config.ValidateDeviceSnapshot()
 	}
 	return nil
 }
@@ -469,31 +413,6 @@ func (p ScheduleUpdatedPayload) Validate() error {
 		return fmt.Errorf("fire_at is required")
 	}
 	return nil
-}
-
-type ConfigReportPayload struct {
-	ConfigVersion int64         `json:"config_version"`
-	Applied       bool          `json:"applied"`
-	Config        RuntimeConfig `json:"config"`
-}
-
-func (p ConfigReportPayload) Validate() error {
-	if err := validateConfigVersion(p.ConfigVersion); err != nil {
-		return err
-	}
-	return p.Config.ValidateDeviceSnapshot()
-}
-
-type ConfigUpdatePayload struct {
-	ConfigVersion int64         `json:"config_version"`
-	Config        RuntimeConfig `json:"config"`
-}
-
-func (p ConfigUpdatePayload) Validate() error {
-	if err := validateConfigVersion(p.ConfigVersion); err != nil {
-		return err
-	}
-	return p.Config.ValidateDeviceSnapshot()
 }
 
 type TextPayload struct {
