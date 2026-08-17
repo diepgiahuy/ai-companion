@@ -25,20 +25,21 @@ public:
     PresentationDomain legacy_domain{};
     if (legacy_attention_domain(state, legacy_domain)) {
       if (legacy_attention_active_ && legacy_attention_domain_ != legacy_domain) {
-        clear_attention(legacy_attention_domain_);
+        (void)clear_attention_internal(legacy_attention_domain_, false);
       }
       legacy_attention_active_ = true;
       legacy_attention_domain_ = legacy_domain;
-      (void)show_attention(legacy_domain, state, text);
+      (void)show_attention_internal(legacy_domain, state, text,
+                                    PresentationScope::global, 0, 0, true);
       return;
     }
 
     if (legacy_attention_active_) {
-      clear_attention(legacy_attention_domain_);
+      (void)clear_attention_internal(legacy_attention_domain_, false);
       legacy_attention_active_ = false;
     }
     if (transient_active_) {
-      clear_attention(PresentationDomain::card);
+      (void)clear_attention_internal(PresentationDomain::card, false);
       transient_active_ = false;
     }
 
@@ -58,54 +59,26 @@ public:
                       std::string_view text,
                       PresentationScope scope = PresentationScope::global,
                       uint64_t session_epoch = 0, uint64_t generation = 0) {
-    if (domain == PresentationDomain::count) return false;
-    const size_t index = domain_index(domain);
-    attention_state_[index] = renderer_state;
-    const PresentationEvent event{
-        .kind = PresentationEvent::Kind::attention,
-        .domain = domain,
-        .scope = scope,
-        .session_epoch = session_epoch,
-        .generation = generation,
-        .revision = next_attention_revision_[index]++,
-        .text = text,
-    };
-    const bool applied = reducer_.apply(event);
-    if (applied) {
-      attention_active_[index] = true;
-      render_current();
-    }
-    return applied;
+    return show_attention_internal(domain, renderer_state, text, scope,
+                                   session_epoch, generation, true);
   }
 
   bool clear_attention(PresentationDomain domain,
                        PresentationScope scope = PresentationScope::global,
                        uint64_t session_epoch = 0, uint64_t generation = 0) {
-    if (domain == PresentationDomain::count) return false;
-    const size_t index = domain_index(domain);
-    if (!attention_active_[index]) return false;
-    const PresentationEvent event{
-        .kind = PresentationEvent::Kind::clear_attention,
-        .domain = domain,
-        .scope = scope,
-        .session_epoch = session_epoch,
-        .generation = generation,
-        .revision = next_attention_revision_[index]++,
-    };
-    const bool applied = reducer_.apply(event);
-    if (applied) {
-      attention_active_[index] = false;
-      render_current();
-    }
-    return applied;
+    return clear_attention_internal(domain, true, scope, session_epoch, generation);
   }
 
   // Pairing completion/failure is informational rather than a blocking pairing
   // state. Keep it as a low-priority semantic card until the next base render,
   // which matches the legacy "last status until normal UI updates" behavior.
   bool show_transient(UiState renderer_state, std::string_view text) {
-    transient_active_ = true;
-    return show_attention(PresentationDomain::card, renderer_state, text);
+    const bool applied = show_attention_internal(PresentationDomain::card,
+                                                 renderer_state, text,
+                                                 PresentationScope::global,
+                                                 0, 0, true);
+    if (applied) transient_active_ = true;
+    return applied;
   }
 
   void set_context(uint64_t session_epoch, uint64_t generation) {
@@ -176,6 +149,53 @@ private:
   static std::string_view text_view(const std::array<char, 97>& text) {
     const auto end = std::find(text.begin(), text.end(), '\0');
     return {text.data(), static_cast<size_t>(end - text.begin())};
+  }
+
+  bool show_attention_internal(PresentationDomain domain, UiState renderer_state,
+                               std::string_view text, PresentationScope scope,
+                               uint64_t session_epoch, uint64_t generation,
+                               bool render) {
+    if (domain == PresentationDomain::count) return false;
+    const size_t index = domain_index(domain);
+    attention_state_[index] = renderer_state;
+    const PresentationEvent event{
+        .kind = PresentationEvent::Kind::attention,
+        .domain = domain,
+        .scope = scope,
+        .session_epoch = session_epoch,
+        .generation = generation,
+        .revision = next_attention_revision_[index]++,
+        .text = text,
+    };
+    const bool applied = reducer_.apply(event);
+    if (applied) {
+      attention_active_[index] = true;
+      if (render) render_current();
+    }
+    return applied;
+  }
+
+  bool clear_attention_internal(PresentationDomain domain, bool render,
+                                PresentationScope scope = PresentationScope::global,
+                                uint64_t session_epoch = 0,
+                                uint64_t generation = 0) {
+    if (domain == PresentationDomain::count) return false;
+    const size_t index = domain_index(domain);
+    if (!attention_active_[index]) return false;
+    const PresentationEvent event{
+        .kind = PresentationEvent::Kind::clear_attention,
+        .domain = domain,
+        .scope = scope,
+        .session_epoch = session_epoch,
+        .generation = generation,
+        .revision = next_attention_revision_[index]++,
+    };
+    const bool applied = reducer_.apply(event);
+    if (applied) {
+      attention_active_[index] = false;
+      if (render) render_current();
+    }
+    return applied;
   }
 
   void render_current() {
