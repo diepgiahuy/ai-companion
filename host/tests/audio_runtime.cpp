@@ -4,9 +4,15 @@
 #include <array>
 #include <cassert>
 #include <span>
+#include <type_traits>
 #include <vector>
 
 using namespace companion;
+
+static_assert(std::is_base_of_v<AudioEngine, AudioRuntime>);
+static_assert(!std::is_base_of_v<Microphone, AudioRuntime>);
+static_assert(!std::is_base_of_v<Speaker, AudioRuntime>);
+static_assert(!std::is_base_of_v<AudioFrontend, AudioRuntime>);
 
 namespace {
 struct FakeMicrophone final : Microphone {
@@ -93,22 +99,46 @@ struct FakeFrontend final : AudioFrontend {
 int main() {
   FakeMicrophone microphone;
   PartialSpeaker speaker;
+
+  // No-AFE mode is a first-class AudioEngine, not a reason to expose physical
+  // ports back to CompanionApp. It keeps reference work disabled and can pass
+  // raw capture through when explicitly asked.
+  AudioRuntime basic(microphone, speaker);
+  assert(basic.start());
+  assert(!basic.frontend_enabled());
+  assert(basic.start_capture());
+  std::array<int16_t, 4> raw_capture{};
+  assert(basic.read_capture(raw_capture) == 1);
+  std::array<int16_t, 4> raw_cleaned{};
+  const auto raw_result = basic.process_capture(
+      std::span<const int16_t>(raw_capture.data(), 1), raw_cleaned);
+  assert(raw_result.samples == 1 && raw_cleaned[0] == 123);
+  basic.stop_capture();
+  assert(basic.start_playback(16'000));
+  const std::array<int16_t, 2> output_only{1, 2};
+  assert(basic.write_playback(output_only) == 2);
+  assert(basic.push_playback_reference(output_only, 16'000));
+  assert(basic.stats().reference_epochs == 0);
+  assert(!basic.stats().reference_active);
+  basic.stop_playback();
+
   FakeFrontend frontend;
   AudioRuntime runtime(microphone, speaker, frontend);
 
   assert(runtime.start());
+  assert(runtime.frontend_enabled());
   assert(frontend.started);
   assert(frontend.starts == 1);
   assert(frontend.resets == 1);
 
   assert(runtime.start_capture());
   assert(runtime.start_capture());
-  assert(microphone.starts == 1);
+  assert(microphone.starts == 2);
   std::array<int16_t, 4> capture{};
   assert(runtime.read_capture(capture) == 1);
   runtime.stop_capture();
   runtime.stop_capture();
-  assert(microphone.stops == 1);
+  assert(microphone.stops == 2);
 
   assert(runtime.start_playback(24'000));
   const auto first_epoch = runtime.stats().playback_epoch;
@@ -122,9 +152,6 @@ int main() {
   assert(runtime.stats().accepted_playback_samples == 3);
   assert(frontend.begins == 0);
 
-  // Caller supplies only the physical TX-accepted prefix at its source rate.
-  // Runtime owns the bounded 24k -> 16k conversion and vendor frontend sees
-  // only the AFE-native rate.
   assert(runtime.push_playback_reference(
       std::span<const int16_t>(pcm.data(), accepted), 24'000));
   assert(frontend.begins == 1);
@@ -134,8 +161,6 @@ int main() {
   assert((frontend.references == std::vector<int16_t>{10, 25}));
   assert(runtime.stats().reference_converter_dropped_groups == 0);
 
-  // Source rate is fixed for one reference epoch; silently changing it would
-  // corrupt streaming converter phase/alignment.
   const std::array<int16_t, 2> direct16{7, 8};
   assert(!runtime.push_playback_reference(direct16, 16'000));
   assert(runtime.stats().unsupported_reference_rates == 1);
@@ -148,8 +173,6 @@ int main() {
   assert(!runtime.push_playback_reference(direct16, 16'000));
   assert(runtime.stats().reference_push_failures == 2);
 
-  // Output-only playback uses the same physical owner but no reference call,
-  // so it cannot create an AEC epoch or inflate idle underflow diagnostics.
   speaker.max_accept = 2;
   assert(runtime.start_playback(16'000));
   assert(runtime.stats().playback_epoch != first_epoch);
@@ -161,7 +184,6 @@ int main() {
   assert(runtime.stats().playback_starts == 2);
   assert(runtime.stats().playback_stops == 2);
 
-  // Native 16-kHz reference is forwarded without conversion.
   assert(runtime.start_playback(16'000));
   assert(runtime.write_playback(direct16) == 2);
   assert(runtime.push_playback_reference(direct16, 16'000));
@@ -175,7 +197,6 @@ int main() {
   assert(runtime.stats().reference_epochs == 2);
   runtime.stop_playback();
 
-  // Unsupported source rates fail closed before opening an AEC epoch.
   assert(runtime.start_playback(22'050));
   assert(!runtime.push_playback_reference(direct16, 22'050));
   assert(runtime.stats().unsupported_reference_rates == 2);
@@ -183,8 +204,6 @@ int main() {
   assert(!runtime.stats().reference_active);
   runtime.stop_playback();
 
-  // Restart with active capture + monitored playback cooperatively releases all
-  // owned resources before frontend reinitialization.
   assert(runtime.start_capture());
   assert(runtime.start_playback(24'000));
   speaker.max_accept = 3;
