@@ -56,6 +56,47 @@ public:
     render_current();
   }
 
+  bool show_card(UiState renderer_state, const PresentationCardV1& card) override {
+    const std::string_view text = card.primary_view().empty()
+                                      ? card.title_view()
+                                      : card.primary_view();
+    if (text.empty()) return false;
+    const bool applied = show_attention_internal(PresentationDomain::card,
+                                                 renderer_state, text,
+                                                 PresentationScope::global,
+                                                 0, 0, true);
+    if (applied) transient_active_ = true;
+    return applied;
+  }
+
+  bool show_hint(UiState renderer_state, const PresentationHint& hint) override {
+    if (!hint_compatible(renderer_state, hint.emotion)) return false;
+    switch (hint.emotion) {
+    case PresentationHintEmotion::idle:
+      return update_base_hint(renderer_state, "IDLE");
+    case PresentationHintEmotion::listening:
+      return update_base_hint(renderer_state, "LISTENING");
+    case PresentationHintEmotion::thinking:
+      return update_base_hint(renderer_state, "THINKING");
+    case PresentationHintEmotion::speaking:
+      return update_base_hint(renderer_state, "SPEAKING");
+    case PresentationHintEmotion::tool_executing:
+      return update_base_hint(renderer_state, hint.tool_name_view());
+    case PresentationHintEmotion::interrupted:
+    case PresentationHintEmotion::error:
+      return false;
+    }
+    return false;
+  }
+
+  bool show_agent_status(UiState renderer_state,
+                         const AgentPresentationStatus& status) override {
+    // Agent status is informational. It may refine processing text, but it is
+    // never allowed to change the locally authoritative runtime lifecycle.
+    if (renderer_state != UiState::processing) return false;
+    return update_base_hint(renderer_state, status.state_view());
+  }
+
   bool show_attention(PresentationDomain domain, UiState renderer_state,
                       std::string_view text,
                       PresentationScope scope = PresentationScope::global,
@@ -164,9 +205,42 @@ private:
     return false;
   }
 
+  static constexpr bool hint_compatible(UiState state,
+                                        PresentationHintEmotion emotion) {
+    switch (emotion) {
+    case PresentationHintEmotion::idle:
+      return state == UiState::ready || state == UiState::idle;
+    case PresentationHintEmotion::listening:
+      return state == UiState::listening;
+    case PresentationHintEmotion::thinking:
+    case PresentationHintEmotion::tool_executing:
+      return state == UiState::processing;
+    case PresentationHintEmotion::speaking:
+      return state == UiState::speaking;
+    case PresentationHintEmotion::interrupted:
+    case PresentationHintEmotion::error:
+      return false;
+    }
+    return false;
+  }
+
   static std::string_view text_view(const std::array<char, 97>& text) {
     const auto end = std::find(text.begin(), text.end(), '\0');
     return {text.data(), static_cast<size_t>(end - text.begin())};
+  }
+
+  bool update_base_hint(UiState state, std::string_view text) {
+    if (state != base_state_ || text.empty()) return false;
+    const PresentationEvent event{
+        .kind = PresentationEvent::Kind::base,
+        .activity = activity_for(base_state_),
+        .scope = PresentationScope::global,
+        .revision = next_base_revision_++,
+        .text = text,
+    };
+    const bool applied = reducer_.apply(event);
+    if (applied) render_current();
+    return applied;
   }
 
   bool show_attention_internal(PresentationDomain domain, UiState renderer_state,
