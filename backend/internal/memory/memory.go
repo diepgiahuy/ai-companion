@@ -157,6 +157,9 @@ func (s *Service) Recall(ctx context.Context, user, query string, limit int) ([]
 	for _, m := range candidates {
 		semantic := semanticScores[m.ID]
 		lexical := jaccard(qt, tokenSet(m.Key+" "+m.Value))
+		if semantic <= 0 && lexical <= 0 {
+			continue
+		}
 		age := now.Sub(m.ValidFrom)
 		recency := 1.0 / (1.0 + math.Max(0, age.Hours())/(24*90))
 		score := 0.55*semantic + 0.25*lexical + 0.15*recency + 0.05*clamp(m.Confidence, 0, 1)

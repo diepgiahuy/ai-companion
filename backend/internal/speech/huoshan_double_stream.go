@@ -65,37 +65,118 @@ type HuoshanDoubleStreamTTSProvider struct { config HuoshanDoubleStreamTTSConfig
 func NewHuoshanDoubleStreamTTS(config HuoshanDoubleStreamTTSConfig)(*HuoshanDoubleStreamTTSProvider,error){ normalized,err:=config.normalized(); if err!=nil{return nil,err}; return &HuoshanDoubleStreamTTSProvider{config:normalized},nil }
 
 func (p *HuoshanDoubleStreamTTSProvider) Synthesize(ctx context.Context, request TTSRequest, emit func(AudioEvent) error) error {
-	if p==nil { return errors.New("Huoshan TTS provider is nil") }
-	if emit==nil { return errors.New("Huoshan TTS emit callback is required") }
-	if err:=request.Format.Validate(); err!=nil { return err }
-	if strings.TrimSpace(request.Text)=="" { return errors.New("Huoshan TTS text is required") }
-	connectID,err:=huoshanRandomID(); if err!=nil{return err}; sessionID,err:=huoshanRandomID(); if err!=nil{return err}
-	headers:=http.Header{}; headers.Set("X-Api-App-Key",p.config.AppID); headers.Set("X-Api-Access-Key",p.config.AccessToken); headers.Set("X-Api-Resource-Id",p.config.ResourceID); headers.Set("X-Api-Connect-Id",connectID)
-	options:=&websocket.DialOptions{HTTPHeader:headers}; if p.config.HTTPClient!=nil { options.HTTPClient=p.config.HTTPClient }
-	conn,_,err:=websocket.Dial(ctx,p.config.URL,options); if err!=nil { return fmt.Errorf("dial Huoshan TTS: %w",err) }
-	defer conn.Close(websocket.StatusNormalClosure,"Huoshan synthesis complete")
-	defer func(){ if ctx.Err()==nil{return}; cancelCtx,cancel:=context.WithTimeout(context.Background(),250*time.Millisecond); defer cancel(); _=huoshanWriteEvent(cancelCtx,conn,huoshanEventCancelSession,sessionID,[]byte(`{}`)) }()
-	voice:=p.config.Speaker; if strings.TrimSpace(request.Voice)!="" { voice=strings.TrimSpace(request.Voice) }
-	startPayload,err:=p.payload(huoshanEventStartSession,voice,"",request.Format.SampleRate); if err!=nil{return err}; if err:=huoshanWriteEvent(ctx,conn,huoshanEventStartSession,sessionID,startPayload); err!=nil{return fmt.Errorf("start Huoshan TTS session: %w",err)}
-	taskPayload,err:=p.payload(huoshanEventTaskRequest,voice,request.Text,request.Format.SampleRate); if err!=nil{return err}; if err:=huoshanWriteEvent(ctx,conn,huoshanEventTaskRequest,sessionID,taskPayload); err!=nil{return fmt.Errorf("send Huoshan TTS text: %w",err)}
-	if err:=huoshanWriteEvent(ctx,conn,huoshanEventFinishSession,sessionID,[]byte(`{}`)); err!=nil{return fmt.Errorf("finish Huoshan TTS input: %w",err)}
-	receivedAudio:=false
+	if p == nil {
+		return errors.New("Huoshan TTS provider is nil")
+	}
+	if emit == nil {
+		return errors.New("Huoshan TTS emit callback is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := request.Format.Validate(); err != nil {
+		return err
+	}
+	if strings.TrimSpace(request.Text) == "" {
+		return errors.New("Huoshan TTS text is required")
+	}
+	connectID, err := huoshanRandomID()
+	if err != nil {
+		return err
+	}
+	sessionID, err := huoshanRandomID()
+	if err != nil {
+		return err
+	}
+	headers := http.Header{}
+	headers.Set("X-Api-App-Key", p.config.AppID)
+	headers.Set("X-Api-Access-Key", p.config.AccessToken)
+	headers.Set("X-Api-Resource-Id", p.config.ResourceID)
+	headers.Set("X-Api-Connect-Id", connectID)
+	options := &websocket.DialOptions{HTTPHeader: headers}
+	if p.config.HTTPClient != nil {
+		options.HTTPClient = p.config.HTTPClient
+	}
+	conn, _, err := websocket.Dial(ctx, p.config.URL, options)
+	if err != nil {
+		return fmt.Errorf("dial Huoshan TTS: %w", err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "Huoshan synthesis complete")
+	defer func() {
+		if ctx.Err() == nil {
+			return
+		}
+		cancelCtx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+		defer cancel()
+		_ = huoshanWriteEvent(cancelCtx, conn, huoshanEventCancelSession, sessionID, []byte(`{}`))
+	}()
+	voice := p.config.Speaker
+	if strings.TrimSpace(request.Voice) != "" {
+		voice = strings.TrimSpace(request.Voice)
+	}
+	startPayload, err := p.payload(huoshanEventStartSession, voice, "", request.Format.SampleRate)
+	if err != nil {
+		return err
+	}
+	if err := huoshanWriteEvent(ctx, conn, huoshanEventStartSession, sessionID, startPayload); err != nil {
+		return fmt.Errorf("start Huoshan TTS session: %w", err)
+	}
+	taskPayload, err := p.payload(huoshanEventTaskRequest, voice, request.Text, request.Format.SampleRate)
+	if err != nil {
+		return err
+	}
+	if err := huoshanWriteEvent(ctx, conn, huoshanEventTaskRequest, sessionID, taskPayload); err != nil {
+		return fmt.Errorf("send Huoshan TTS text: %w", err)
+	}
+	if err := huoshanWriteEvent(ctx, conn, huoshanEventFinishSession, sessionID, []byte(`{}`)); err != nil {
+		return fmt.Errorf("finish Huoshan TTS input: %w", err)
+	}
+	receivedAudio := false
 	for {
-		kind,raw,err:=conn.Read(ctx); if err!=nil { if ctx.Err()!=nil{return ctx.Err()}; return fmt.Errorf("read Huoshan TTS response: %w",err) }
-		if kind!=websocket.MessageBinary { return errors.New("Huoshan TTS returned non-binary protocol frame") }
-		response,err:=parseHuoshanResponse(raw); if err!=nil{return err}
-		if response.ErrorCode!=0 || response.MessageType==huoshanErrorInformation { return fmt.Errorf("Huoshan TTS error code=%d: %s",response.ErrorCode,strings.TrimSpace(string(response.Payload))) }
+		kind, raw, err := conn.Read(ctx)
+		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return fmt.Errorf("read Huoshan TTS response: %w", err)
+		}
+		if kind != websocket.MessageBinary {
+			return errors.New("Huoshan TTS returned non-binary protocol frame")
+		}
+		response, err := parseHuoshanResponse(raw)
+		if err != nil {
+			return err
+		}
+		if response.ErrorCode != 0 || response.MessageType == huoshanErrorInformation {
+			return fmt.Errorf("Huoshan TTS error code=%d: %s", response.ErrorCode, strings.TrimSpace(string(response.Payload)))
+		}
 		switch response.Event {
-		case huoshanEventSessionFailed: return fmt.Errorf("Huoshan TTS session failed: %s",strings.TrimSpace(string(response.Payload)))
+		case huoshanEventSessionFailed:
+			return fmt.Errorf("Huoshan TTS session failed: %s", strings.TrimSpace(string(response.Payload)))
 		case huoshanEventTTSResponse:
-			if response.MessageType!=huoshanAudioOnlyResponse { return fmt.Errorf("Huoshan TTS audio event used message type %#x",response.MessageType) }
-			if len(response.Payload)==0 { continue }
-			receivedAudio=true; if err:=emit(AudioEvent{PCM:append([]byte(nil),response.Payload...)}); err!=nil{return err}
+			if response.MessageType != huoshanAudioOnlyResponse {
+				return fmt.Errorf("Huoshan TTS audio event used message type %#x", response.MessageType)
+			}
+			if len(response.Payload) == 0 {
+				continue
+			}
+			if len(response.Payload)%2 != 0 {
+				return fmt.Errorf("Huoshan TTS returned invalid PCM length %d", len(response.Payload))
+			}
+			receivedAudio = true
+			if err := emit(AudioEvent{PCM: append([]byte(nil), response.Payload...)}); err != nil {
+				return err
+			}
 		case huoshanEventSessionFinished:
-			if !receivedAudio { return errors.New("Huoshan TTS session finished without audio") }
-			return emit(AudioEvent{Final:true})
+			if !receivedAudio {
+				return errors.New("Huoshan TTS session finished without audio")
+			}
+			return emit(AudioEvent{Final: true})
 		case huoshanEventSessionCanceled:
-			if ctx.Err()!=nil{return ctx.Err()}; return errors.New("Huoshan TTS session canceled by provider")
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return errors.New("Huoshan TTS session canceled by provider")
 		}
 	}
 }

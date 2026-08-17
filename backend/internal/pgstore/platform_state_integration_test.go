@@ -22,6 +22,11 @@ func TestPostgresMemoryPrivacyAndUsageParity(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
+	for _, table := range []string{"privacy_policies", "conversation_messages", "voice_memos", "memory_vectors", "memories", "llm_usage"} {
+		if _, err := store.pool.Exec(ctx, `DELETE FROM `+table); err != nil {
+			t.Fatal(err)
+		}
+	}
 	prefix := fmt.Sprintf("pg-platform-%d", time.Now().UnixNano())
 	user := prefix + "-user"
 	now := time.Now().UTC().Truncate(time.Second)

@@ -97,6 +97,9 @@ func (a PipelineAdapter) Synthesize(ctx context.Context, text string, emit func(
 	if emit == nil {
 		return errors.New("speech TTS emit callback is required")
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	return a.TTSProvider.Synthesize(ctx, TTSRequest{
 		Text:   text,
 		Voice:  a.Voice,
@@ -110,6 +113,23 @@ func (a PipelineAdapter) Synthesize(ctx context.Context, text string, emit func(
 	})
 }
 
+func (a PipelineAdapter) Close() error {
+	var errs []error
+	if closer, ok := a.ASRProvider.(interface{ Close() error }); ok && closer != nil {
+		if err := closer.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if closer, ok := a.TTSProvider.(interface{ Close() error }); ok && closer != nil && any(a.TTSProvider) != any(a.ASRProvider) {
+		if err := closer.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
 var _ pipeline.ASR = PipelineAdapter{}
 var _ pipeline.StreamingASR = PipelineAdapter{}
 var _ pipeline.TTS = PipelineAdapter{}
+var _ interface{ Close() error } = PipelineAdapter{}
+

@@ -102,35 +102,237 @@ type xunfeiASRStream struct {
 func (s *xunfeiASRStream) finish(err error) { s.once.Do(func(){ s.mu.Lock(); s.err=err; s.mu.Unlock(); close(s.done) }) }
 
 func (s *xunfeiASRStream) Push(ctx context.Context, pcm []byte) error {
-	if len(pcm)==0 { return nil }; if err:=ctx.Err(); err!=nil { return err }
-	s.writeMu.Lock(); defer s.writeMu.Unlock(); if s.closedInput { return errors.New("Xunfei ASR input is already closed") }
-	s.pending=append(s.pending, pcm...)
-	for len(s.pending)>=xunfeiPCMFrameBytes { frame:=append([]byte(nil),s.pending[:xunfeiPCMFrameBytes]...); s.pending=s.pending[xunfeiPCMFrameBytes:]; status:=1; if !s.started { status=0; s.started=true }; if err:=s.writeFrame(ctx,status,frame); err!=nil { return err } }
+	if len(pcm) == 0 {
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if len(pcm)%2 != 0 {
+		return errors.New("Xunfei PCM16 input must contain whole 16-bit samples")
+	}
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return errors.New("Xunfei ASR stream is closed")
+	}
+	s.mu.Unlock()
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	if s.closedInput {
+		return errors.New("Xunfei ASR input is already closed")
+	}
+	s.pending = append(s.pending, pcm...)
+	for len(s.pending) >= xunfeiPCMFrameBytes {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		frame := append([]byte(nil), s.pending[:xunfeiPCMFrameBytes]...)
+		s.pending = s.pending[xunfeiPCMFrameBytes:]
+		status := 1
+		if !s.started {
+			status = 0
+			s.started = true
+		}
+		if err := s.writeFrame(ctx, status, frame); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
 func (s *xunfeiASRStream) CloseInput(ctx context.Context) error {
-	if err:=ctx.Err(); err!=nil { return err }; s.writeMu.Lock(); defer s.writeMu.Unlock(); if s.closedInput { return nil }
-	if len(s.pending)>0 { status:=1; if !s.started { status=0; s.started=true }; if err:=s.writeFrame(ctx,status,append([]byte(nil),s.pending...)); err!=nil { return err }; s.pending=nil }
-	if !s.started { if err:=s.writeFrame(ctx,0,nil); err!=nil { return err }; s.started=true }
-	if err:=s.writeFrame(ctx,2,nil); err!=nil { return err }; s.closedInput=true; return nil
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return errors.New("Xunfei ASR stream is closed")
+	}
+	s.mu.Unlock()
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	if s.closedInput {
+		return nil
+	}
+	if len(s.pending) > 0 {
+		status := 1
+		if !s.started {
+			status = 0
+			s.started = true
+		}
+		if err := s.writeFrame(ctx, status, append([]byte(nil), s.pending...)); err != nil {
+			return err
+		}
+		s.pending = nil
+	}
+	if !s.started {
+		if err := s.writeFrame(ctx, 0, nil); err != nil {
+			return err
+		}
+		s.started = true
+	}
+	if err := s.writeFrame(ctx, 2, nil); err != nil {
+		return err
+	}
+	s.closedInput = true
+	return nil
 }
 
-func (s *xunfeiASRStream) writeFrame(ctx context.Context,status int,audio []byte) error {
-	payload:=map[string]any{"data":map[string]any{"status":status,"format":"audio/L16;rate=16000","encoding":"raw","audio":base64.StdEncoding.EncodeToString(audio)}}
-	if status==0 { business:=map[string]any{"domain":s.config.Domain,"language":s.config.Language,"accent":s.config.Accent,"vinfo":1,"vad_eos":s.config.VADMS,"nunum":1,"ptt":1}; if s.config.DynamicCorrection { business["dwa"]="wpgs" }; payload["common"]=map[string]any{"app_id":s.config.AppID}; payload["business"]=business }
-	raw,err:=json.Marshal(payload); if err!=nil { return err }; if err:=s.conn.Write(ctx,websocket.MessageText,raw); err!=nil { return fmt.Errorf("write Xunfei ASR frame status=%d: %w",status,err) }; return nil
+func (s *xunfeiASRStream) writeFrame(ctx context.Context, status int, audio []byte) error {
+	payload := map[string]any{"data": map[string]any{"status": status, "format": "audio/L16;rate=16000", "encoding": "raw", "audio": base64.StdEncoding.EncodeToString(audio)}}
+	if status == 0 {
+		business := map[string]any{"domain": s.config.Domain, "language": s.config.Language, "accent": s.config.Accent, "vinfo": 1, "vad_eos": s.config.VADMS, "nunum": 1, "ptt": 1}
+		if s.config.DynamicCorrection {
+			business["dwa"] = "wpgs"
+		}
+		payload["common"] = map[string]any{"app_id": s.config.AppID}
+		payload["business"] = business
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	if err := s.conn.Write(ctx, websocket.MessageText, raw); err != nil {
+		return fmt.Errorf("write Xunfei ASR frame status=%d: %w", status, err)
+	}
+	return nil
 }
 
-type xunfeiResponse struct { Code int `json:"code"`; Message string `json:"message"`; SID string `json:"sid"`; Data struct { Status int `json:"status"`; Result struct { SN int `json:"sn"`; PGS string `json:"pgs"`; RG []int `json:"rg"`; WS []struct { CW []struct { W string `json:"w"` } `json:"cw"` } `json:"ws"` } `json:"result"` } `json:"data"` }
+type xunfeiResponse struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+	SID     string `json:"sid"`
+	Data    struct {
+		Status int `json:"status"`
+		Result struct {
+			SN  int    `json:"sn"`
+			PGS string `json:"pgs"`
+			RG  []int  `json:"rg"`
+			WS  []struct {
+				CW []struct {
+					W string `json:"w"`
+				} `json:"cw"`
+			} `json:"ws"`
+		} `json:"result"`
+	} `json:"data"`
+}
 
 func (s *xunfeiASRStream) readLoop(ctx context.Context) {
-	for { kind,raw,err:=s.conn.Read(ctx); if err!=nil { if ctx.Err()!=nil { s.finish(ctx.Err()) } else { s.finish(fmt.Errorf("read Xunfei ASR: %w",err)) }; return }; if kind!=websocket.MessageText { continue }; var response xunfeiResponse; if err:=json.Unmarshal(raw,&response); err!=nil { s.finish(fmt.Errorf("decode Xunfei ASR response: %w",err)); return }; if response.Code!=0 { s.finish(fmt.Errorf("Xunfei ASR code=%d: %s",response.Code,response.Message)); return }; piece:=xunfeiWords(response.Data.Result.WS); result:=response.Data.Result; s.mu.Lock(); if result.PGS=="rpl" && len(result.RG)==2 { for i:=result.RG[0]; i<=result.RG[1]; i++ { delete(s.segments,i) } }; if piece!="" { s.segments[result.SN]=piece }; text:=joinXunfeiSegments(s.segments); if text!="" { s.lastText=text }; finalText:=s.lastText; s.mu.Unlock(); final:=response.Data.Status==2; if text!="" { if err:=s.emit(TranscriptEvent{Text:text,Final:final,Stable:final}); err!=nil { s.finish(err); return } } else if final && finalText!="" { if err:=s.emit(TranscriptEvent{Text:finalText,Final:true,Stable:true}); err!=nil { s.finish(err); return } }; if final { s.finish(nil); return } }
+	for {
+		kind, raw, err := s.conn.Read(ctx)
+		if err != nil {
+			if ctx.Err() != nil {
+				s.finish(ctx.Err())
+			} else {
+				s.finish(fmt.Errorf("read Xunfei ASR: %w", err))
+			}
+			return
+		}
+		if kind != websocket.MessageText {
+			continue
+		}
+		var response xunfeiResponse
+		if err := json.Unmarshal(raw, &response); err != nil {
+			s.finish(fmt.Errorf("decode Xunfei ASR response: %w", err))
+			return
+		}
+		if response.Code != 0 {
+			s.finish(fmt.Errorf("Xunfei ASR code=%d: %s", response.Code, response.Message))
+			return
+		}
+		piece := xunfeiWords(response.Data.Result.WS)
+		result := response.Data.Result
+		s.mu.Lock()
+		if result.PGS == "rpl" && len(result.RG) == 2 {
+			for i := result.RG[0]; i <= result.RG[1]; i++ {
+				delete(s.segments, i)
+			}
+		}
+		if piece != "" {
+			s.segments[result.SN] = piece
+		}
+		text := joinXunfeiSegments(s.segments)
+		if text != "" {
+			s.lastText = text
+		}
+		finalText := s.lastText
+		s.mu.Unlock()
+		final := response.Data.Status == 2
+		if text != "" {
+			if err := s.emit(TranscriptEvent{Text: text, Final: final, Stable: final}); err != nil {
+				s.finish(err)
+				return
+			}
+		} else if final && finalText != "" {
+			if err := s.emit(TranscriptEvent{Text: finalText, Final: true, Stable: true}); err != nil {
+				s.finish(err)
+				return
+			}
+		}
+		if final {
+			s.finish(nil)
+			return
+		}
+	}
 }
 
-func xunfeiWords(ws []struct { CW []struct { W string `json:"w"` } `json:"cw"` }) string { var b strings.Builder; for _,group:=range ws { if len(group.CW)>0 { b.WriteString(group.CW[0].W) } }; return b.String() }
-func joinXunfeiSegments(segments map[int]string) string { if len(segments)==0 { return "" }; max:=0; for sn:=range segments { if sn>max { max=sn } }; var b strings.Builder; for i:=0;i<=max;i++ { b.WriteString(segments[i]) }; return b.String() }
-func (s *xunfeiASRStream) Wait(ctx context.Context)(string,error){ select { case <-ctx.Done(): return "",ctx.Err(); case <-s.done: s.mu.Lock(); defer s.mu.Unlock(); return s.lastText,s.err } }
-func (s *xunfeiASRStream) Close() error { s.mu.Lock(); if s.closed { s.mu.Unlock(); return nil }; s.closed=true; s.mu.Unlock(); s.cancel(); return s.conn.Close(websocket.StatusNormalClosure,"companion Xunfei ASR closed") }
+func xunfeiWords(ws []struct {
+	CW []struct {
+		W string `json:"w"`
+	} `json:"cw"`
+}) string {
+	var b strings.Builder
+	for _, group := range ws {
+		if len(group.CW) > 0 {
+			b.WriteString(group.CW[0].W)
+		}
+	}
+	return b.String()
+}
+
+func joinXunfeiSegments(segments map[int]string) string {
+	if len(segments) == 0 {
+		return ""
+	}
+	max := 0
+	for sn := range segments {
+		if sn > max {
+			max = sn
+		}
+	}
+	var b strings.Builder
+	for i := 0; i <= max; i++ {
+		b.WriteString(segments[i])
+	}
+	return b.String()
+}
+
+func (s *xunfeiASRStream) Wait(ctx context.Context) (string, error) {
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	case <-s.done:
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return s.lastText, s.err
+	}
+}
+
+func (s *xunfeiASRStream) Close() error {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return nil
+	}
+	s.closed = true
+	s.mu.Unlock()
+	s.cancel()
+	err := s.conn.Close(websocket.StatusNormalClosure, "companion Xunfei ASR closed")
+	s.finish(errors.New("Xunfei ASR stream closed"))
+	return err
+}
 
 var _ StreamingASRProvider = (*XunfeiStreamASRProvider)(nil)
+

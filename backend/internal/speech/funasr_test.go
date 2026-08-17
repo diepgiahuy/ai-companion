@@ -188,3 +188,57 @@ func TestFunASRRejectsWrongSampleRateOddPCMAndInvalidConfig(t *testing.T) {
 		t.Fatal("odd PCM16 input should fail")
 	}
 }
+
+func TestFunASRLifecycleAndServerErrors(t *testing.T) {
+	// Server error 500
+	server500 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "internal recognition failure", http.StatusInternalServerError)
+	}))
+	defer server500.Close()
+
+	p500, err := NewFunASR(FunASRConfig{BaseURL: server500.URL, Model: "custom"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s500, err := p500.StartASR(context.Background(), ASRRequest{Format: AudioFormat{SampleRate: 16000, Channels: 1}}, func(TranscriptEvent) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = s500.Push(context.Background(), []byte{1, 0, 2, 0})
+	_ = s500.CloseInput(context.Background())
+	if _, err := s500.Wait(context.Background()); err == nil || !strings.Contains(err.Error(), "status=500") {
+		t.Fatalf("expected status=500 error, got %v", err)
+	}
+
+	// Wait before CloseInput
+	provider, err := NewFunASR(FunASRConfig{BaseURL: "http://127.0.0.1:8000", Model: "custom"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream, err := provider.StartASR(context.Background(), ASRRequest{Format: AudioFormat{SampleRate: 16000, Channels: 1}}, func(TranscriptEvent) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stream.Wait(context.Background()); err == nil || !strings.Contains(err.Error(), "must be closed before waiting") {
+		t.Fatalf("expected error on Wait before CloseInput, got %v", err)
+	}
+
+	// Push after CloseInput
+	_ = stream.CloseInput(context.Background())
+	if err := stream.Push(context.Background(), []byte{1, 0}); err == nil || !strings.Contains(err.Error(), "already closed") {
+		t.Fatalf("expected already closed error on Push, got %v", err)
+	}
+
+	// Operations after Close
+	_ = stream.Close()
+	if err := stream.Push(context.Background(), []byte{1, 0}); err == nil || !strings.Contains(err.Error(), "closed") {
+		t.Fatalf("expected closed error on Push, got %v", err)
+	}
+	if err := stream.CloseInput(context.Background()); err == nil || !strings.Contains(err.Error(), "closed") {
+		t.Fatalf("expected closed error on CloseInput, got %v", err)
+	}
+	if _, err := stream.Wait(context.Background()); err == nil || !strings.Contains(err.Error(), "closed") {
+		t.Fatalf("expected closed error on Wait, got %v", err)
+	}
+}
+
