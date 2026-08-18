@@ -100,9 +100,25 @@ func (r *ToolRegistry) Definition(name string) (ToolDefinition, bool) {
 	return *t.Definition(), true
 }
 
+func toolAvailableInContext(ctx context.Context, t Tool) bool {
+	if t == nil {
+		return false
+	}
+	if guard, ok := t.(ContextAvailability); ok {
+		return guard.Available(ctx)
+	}
+	// Device-pack tools represent hardware/session-dependent behavior. Missing
+	// a context guard is a contract bug, so fail closed instead of exposing the
+	// definition process-wide.
+	if definition := t.Definition(); definition != nil && strings.TrimSpace(definition.Pack) == "device" {
+		return false
+	}
+	return true
+}
+
 // Available reports whether a model-visible registered tool is currently
 // usable in this trusted context. Tools without a definition are not eligible
-// for model exposure. Tools without a dynamic guard are available by default.
+// for model exposure. Device-pack tools require an explicit context guard.
 func (r *ToolRegistry) Available(ctx context.Context, name string) bool {
 	if r == nil {
 		return false
@@ -113,10 +129,7 @@ func (r *ToolRegistry) Available(ctx context.Context, name string) bool {
 	if t == nil || t.Definition() == nil {
 		return false
 	}
-	if guard, ok := t.(ContextAvailability); ok {
-		return guard.Available(ctx)
-	}
-	return true
+	return toolAvailableInContext(ctx, t)
 }
 
 func (r *ToolRegistry) DefinitionsForPacks(packs []string) []ToolDefinition {
@@ -169,7 +182,7 @@ func (r *ToolRegistry) Execute(ctx context.Context, name string, req ToolRequest
 		return Failure(fmt.Errorf("unsupported tool %q", name))
 	}
 	recordedName = t.Name()
-	if guard, ok := t.(ContextAvailability); ok && !guard.Available(ctx) {
+	if !toolAvailableInContext(ctx, t) {
 		return Failure(fmt.Errorf("tool %q unavailable in current context", name))
 	}
 	if d := t.Definition(); d != nil {
