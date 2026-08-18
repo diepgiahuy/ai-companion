@@ -32,18 +32,20 @@ var (
 )
 
 type Config struct {
-	AuthorizationURL string
-	TokenURL         string
-	UserInfoURL      string
-	ClientID         string
-	ClientSecret     string
-	RedirectURL      string
-	Scopes           []string
-	LoginTTL         time.Duration
-	SessionTTL       time.Duration
-	ClaimTTL         time.Duration
-	ClaimCodeStore   ClaimCodeStore
-	HTTPClient       *http.Client
+	AuthorizationURL  string
+	TokenURL          string
+	UserInfoURL       string
+	ClientID          string
+	ClientSecret      string
+	RedirectURL       string
+	Scopes            []string
+	LoginTTL          time.Duration
+	SessionTTL        time.Duration
+	ClaimTTL          time.Duration
+	ClaimCodeStore    ClaimCodeStore
+	ClaimSessionStore ClaimSessionStore
+	PublicBaseURL     string
+	HTTPClient        *http.Client
 }
 
 type Session struct {
@@ -73,6 +75,7 @@ type ClaimAuthorization struct {
 
 type loginTransaction struct {
 	Verifier  string
+	ReturnTo  string
 	ExpiresAt time.Time
 }
 
@@ -82,13 +85,14 @@ type sessionRecord struct {
 }
 
 type Service struct {
-	cfg      Config
-	client   *http.Client
-	now      func() time.Time
-	mu       sync.Mutex
-	logins   map[string]loginTransaction
-	sessions map[string]sessionRecord
-	claims   map[string]ClaimAuthorization
+	cfg          Config
+	client       *http.Client
+	now          func() time.Time
+	sessionStore ClaimSessionStore
+	mu           sync.Mutex
+	logins       map[string]loginTransaction
+	sessions     map[string]sessionRecord
+	claims       map[string]ClaimAuthorization
 }
 
 func New(cfg Config) (*Service, error) {
@@ -131,17 +135,27 @@ func New(cfg Config) (*Service, error) {
 		return http.ErrUseLastResponse
 	}
 
+	sessionStore := cfg.ClaimSessionStore
+	if sessionStore == nil {
+		sessionStore = NewMemoryClaimSessionStore()
+	}
+
 	return &Service{
-		cfg:      cfg,
-		client:   &client,
-		now:      func() time.Time { return time.Now().UTC() },
-		logins:   make(map[string]loginTransaction),
-		sessions: make(map[string]sessionRecord),
-		claims:   make(map[string]ClaimAuthorization),
+		cfg:          cfg,
+		client:       &client,
+		now:          func() time.Time { return time.Now().UTC() },
+		sessionStore: sessionStore,
+		logins:       make(map[string]loginTransaction),
+		sessions:     make(map[string]sessionRecord),
+		claims:       make(map[string]ClaimAuthorization),
 	}, nil
 }
 
 func (s *Service) BeginLogin() (string, error) {
+	return s.BeginLoginWithReturnTo("")
+}
+
+func (s *Service) BeginLoginWithReturnTo(returnTo string) (string, error) {
 	state, err := randomToken(32)
 	if err != nil {
 		return "", err
@@ -156,6 +170,7 @@ func (s *Service) BeginLogin() (string, error) {
 	s.pruneLocked(now)
 	s.logins[state] = loginTransaction{
 		Verifier:  verifier,
+		ReturnTo:  sanitizeReturnTo(returnTo),
 		ExpiresAt: now.Add(s.cfg.LoginTTL),
 	}
 	s.mu.Unlock()
@@ -174,10 +189,15 @@ func (s *Service) BeginLogin() (string, error) {
 }
 
 func (s *Service) CompleteLogin(ctx context.Context, state, code string) (string, string, Session, error) {
+	rawSession, csrf, session, _, err := s.CompleteLoginWithReturn(ctx, state, code)
+	return rawSession, csrf, session, err
+}
+
+func (s *Service) CompleteLoginWithReturn(ctx context.Context, state, code string) (string, string, Session, string, error) {
 	state = strings.TrimSpace(state)
 	code = strings.TrimSpace(code)
 	if state == "" || code == "" {
-		return "", "", Session{}, ErrInvalidState
+		return "", "", Session{}, "", ErrInvalidState
 	}
 
 	now := s.now()
@@ -186,24 +206,24 @@ func (s *Service) CompleteLogin(ctx context.Context, state, code string) (string
 	delete(s.logins, state) // OAuth state is one-time even when provider exchange fails.
 	s.mu.Unlock()
 	if !ok || !txn.ExpiresAt.After(now) {
-		return "", "", Session{}, ErrInvalidState
+		return "", "", Session{}, "", ErrInvalidState
 	}
 
 	accessToken, err := s.exchangeCode(ctx, code, txn.Verifier)
 	if err != nil {
-		return "", "", Session{}, err
+		return "", "", Session{}, "", err
 	}
 	userID, err := s.fetchSubject(ctx, accessToken)
 	if err != nil {
-		return "", "", Session{}, err
+		return "", "", Session{}, "", err
 	}
 	rawSession, err := randomToken(32)
 	if err != nil {
-		return "", "", Session{}, err
+		return "", "", Session{}, "", err
 	}
 	csrf, err := randomToken(32)
 	if err != nil {
-		return "", "", Session{}, err
+		return "", "", Session{}, "", err
 	}
 
 	session := Session{UserID: userID, ExpiresAt: now.Add(s.cfg.SessionTTL)}
@@ -214,7 +234,41 @@ func (s *Service) CompleteLogin(ctx context.Context, state, code string) (string
 		CSRFHash: sha256.Sum256([]byte(csrf)),
 	}
 	s.mu.Unlock()
-	return rawSession, csrf, session, nil
+	return rawSession, csrf, session, txn.ReturnTo, nil
+}
+
+func sanitizeReturnTo(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	// Must start with exactly one '/' and not '//' or '/\'
+	if !strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "//") || strings.HasPrefix(raw, "/\\") {
+		return ""
+	}
+	// Reject control characters or backslashes
+	for i := 0; i < len(raw); i++ {
+		if raw[i] < 0x20 || raw[i] == 0x7f || raw[i] == '\\' {
+			return ""
+		}
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "" || u.Host != "" || u.User != nil {
+		return ""
+	}
+	return raw
+}
+
+func (s *Service) InjectTestSession(rawSession, csrfToken, userID string, expiresAt time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sessions[tokenKey(rawSession)] = sessionRecord{
+		Session: Session{
+			UserID:    userID,
+			ExpiresAt: expiresAt,
+		},
+		CSRFHash: sha256.Sum256([]byte(csrfToken)),
+	}
 }
 
 func (s *Service) Authenticate(rawSession string) (Session, error) {
@@ -288,7 +342,8 @@ func (s *Service) Handler() http.Handler {
 }
 
 func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
-	target, err := s.BeginLogin()
+	returnTo := r.URL.Query().Get("return_to")
+	target, err := s.BeginLoginWithReturnTo(returnTo)
 	if err != nil {
 		http.Error(w, "owner login unavailable", http.StatusServiceUnavailable)
 		return
@@ -297,7 +352,7 @@ func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) handleCallback(w http.ResponseWriter, r *http.Request) {
-	raw, csrf, session, err := s.CompleteLogin(
+	raw, csrf, session, returnTo, err := s.CompleteLoginWithReturn(
 		r.Context(),
 		r.URL.Query().Get("state"),
 		r.URL.Query().Get("code"),
@@ -307,6 +362,10 @@ func (s *Service) handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	setSessionCookies(w, raw, csrf, session.ExpiresAt)
+	if returnTo != "" {
+		http.Redirect(w, r, returnTo, http.StatusFound)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"user_id":    session.UserID,
