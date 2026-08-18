@@ -20,6 +20,7 @@ func capabilityTestSession(t *testing.T) (*session, *devicecap.Router) {
 		id: "session-cap-test", deviceID: "device-a", userID: "user-a", hub: service.hub,
 		controlWrites: make(chan outbound, 16), mediaWrites: make(chan outbound, 4),
 		seenInbound: map[string]inboundRecord{}, generation: 7,
+		active: &turn{id: "turn-cap", generation: 7},
 	}
 	advertise, err := protocol.Encode(protocol.CapabilityAdvertiseType, protocol.Metadata{
 		MessageID: "advertise-1", SessionID: s.id,
@@ -38,6 +39,23 @@ func capabilityTestSession(t *testing.T) (*session, *devicecap.Router) {
 	}
 	t.Cleanup(func() { detachDeviceCapabilities(s) })
 	return s, router
+}
+
+func TestDeviceCapabilityRejectsNonCurrentTurnBeforeSend(t *testing.T) {
+	s, router := capabilityTestSession(t)
+	_, err := router.Call(context.Background(), s.deviceID, devicecap.Call{
+		Name: devicecap.VolumeSetName, Version: devicecap.VolumeSetVersion,
+		Arguments: json.RawMessage(`{"volume":42}`), TurnID: "turn-other", Deadline: time.Now().Add(time.Second),
+	})
+	if err == nil {
+		t.Fatal("non-current turn capability call accepted")
+	}
+	select {
+	case frame := <-s.controlWrites:
+		envelope, decodeErr := protocol.Decode(frame.data)
+		t.Fatalf("non-current turn emitted frame=%+v decodeErr=%v", envelope, decodeErr)
+	case <-time.After(50 * time.Millisecond):
+	}
 }
 
 func TestDeviceCapabilityCallCorrelatesSuccessfulResult(t *testing.T) {
