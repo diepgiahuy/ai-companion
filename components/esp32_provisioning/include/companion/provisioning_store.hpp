@@ -1,7 +1,5 @@
 #pragma once
 
-#include "companion/settings.hpp"
-
 #include <array>
 #include <string_view>
 
@@ -75,9 +73,6 @@ public:
 
   bool mark_ready() const;
   bool clear() const;
-
-  bool load_settings(companion::SettingsTwin& out) const;
-  bool save_settings(const companion::SettingsTwin& in) const;
 };
 
 } // namespace companion::provisioning
