@@ -1,7 +1,7 @@
 idf_component_register(
   SRCS "src/provisioning_store.cpp" "src/secure_storage.cpp" "src/setup_portal.cpp" "src/setup_portal_identity.cpp" "src/claim_client.cpp"
   INCLUDE_DIRS "include"
-  REQUIRES nvs_flash efuse esp_event esp_netif esp_wifi esp_http_server esp_http_client esp-tls esp_system mbedtls
+  REQUIRES companion_app nvs_flash efuse esp_event esp_netif esp_wifi esp_http_server esp_http_client esp-tls esp_system mbedtls
 )
 
 if(CONFIG_COMPANION_REQUIRE_ENCRYPTED_NVS)
