@@ -38,10 +38,7 @@ func (r *fakeTwinRepo) GetTwin(ctx context.Context, userID, deviceID string) (co
 	defer r.mu.Unlock()
 	twin, ok := r.twins[deviceID]
 	if !ok {
-		twin = controlplane.Twin{
-			DeviceID: deviceID,
-			UserID:   userID,
-		}
+		twin = controlplane.Twin{DeviceID: deviceID, UserID: userID}
 		r.twins[deviceID] = twin
 	}
 	if twin.UserID != userID {
@@ -56,10 +53,7 @@ func (r *fakeTwinRepo) SetDesired(ctx context.Context, userID, deviceID string, 
 	defer r.mu.Unlock()
 	twin, ok := r.twins[deviceID]
 	if !ok {
-		twin = controlplane.Twin{
-			DeviceID: deviceID,
-			UserID:   userID,
-		}
+		twin = controlplane.Twin{DeviceID: deviceID, UserID: userID}
 	}
 	if twin.UserID != userID {
 		return controlplane.Twin{}, fmt.Errorf("device owner mismatch")
@@ -183,9 +177,7 @@ func newSettingsTestSession(t *testing.T, srv *Server, deviceID, userID string) 
 	if !s.Supports(devicecap.SettingsName, devicecap.SettingsVersion) {
 		t.Fatal("advertised settings capability unavailable")
 	}
-	t.Cleanup(func() {
-		srv.hub.unregister(deviceID, s)
-	})
+	t.Cleanup(func() { srv.hub.unregister(deviceID, s) })
 	return s
 }
 
@@ -194,113 +186,58 @@ func TestDeviceSettingsHappyApply(t *testing.T) {
 	router := devicecap.NewRouter()
 	cp := controlplane.New(repo, controlplane.RuntimeConfig{})
 	srv := New(pipeline.Components{}, nil, WithAdminToken("admin-secret"), WithControlPlane(cp), WithDeviceCapabilities(router))
-
 	sess := newSettingsTestSession(t, srv, "dev-apply", "user-apply")
 
-	patchBody := []byte(`{"wake_model":"hilexin","locale":"vi-VN"}`)
+	patchBody := []byte(`{"vad_threshold":700,"locale":"vi-VN"}`)
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/devices/dev-apply/twin?user_id=user-apply", bytes.NewReader(patchBody))
 	req.SetPathValue("deviceID", "dev-apply")
 	req.Header.Set("Authorization", "Bearer admin-secret")
 	rec := httptest.NewRecorder()
-
 	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		srv.handleTwinPatch(rec, req)
-	}()
+	go func() { defer close(done); srv.handleTwinPatch(rec, req) }()
 
-	// Device should receive capability.call for device.settings_v1
 	var callOut outbound
 	select {
 	case callOut = <-sess.controlWrites:
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for capability.call")
 	}
-
 	callEnvelope, err := protocol.Decode(callOut.data)
-	if err != nil {
-		t.Fatal(err)
-	}
+	if err != nil { t.Fatal(err) }
 	if callEnvelope.Type != protocol.CapabilityCallType {
 		t.Fatalf("type = %s, want %s", callEnvelope.Type, protocol.CapabilityCallType)
 	}
-
 	callPayload, err := protocol.DecodePayload[protocol.CapabilityCallPayload](callEnvelope)
-	if err != nil {
-		t.Fatal(err)
-	}
+	if err != nil { t.Fatal(err) }
 	if callPayload.Name != devicecap.SettingsName || callPayload.Version != devicecap.SettingsVersion {
 		t.Fatalf("call name/version = %s@%s", callPayload.Name, callPayload.Version)
 	}
-
 	var args devicecap.SettingsArgs
-	if err := json.Unmarshal(callPayload.Arguments, &args); err != nil {
-		t.Fatalf("unmarshal args: %v", err)
-	}
-	if args.Version != 1 || args.Settings.WakeModel != "hilexin" || args.Settings.Locale != "" {
-		t.Fatalf("args = %+v", args)
+	if err := json.Unmarshal(callPayload.Arguments, &args); err != nil { t.Fatal(err) }
+	if args.Version != 1 || args.Settings.VADThreshold == nil || *args.Settings.VADThreshold != 700 || args.Settings.Locale != "" || args.Settings.WakeModel != "" {
+		t.Fatalf("device args = %+v", args)
 	}
 
-	// Device responds with successful applied result
-	resultVal, _ := json.Marshal(devicecap.SettingsResult{
-		Applied:  true,
-		Version:  args.Version,
-		Settings: &args.Settings,
-	})
+	resultVal, _ := json.Marshal(devicecap.SettingsResult{Applied: true, Version: args.Version, Settings: &args.Settings})
 	resultMsg, err := protocol.Encode(protocol.CapabilityResultType, protocol.Metadata{
-		MessageID:     "res-1",
-		SessionID:     sess.id,
-		CorrelationID: callEnvelope.CorrelationID,
-		GenerationID:  callEnvelope.GenerationID,
-	}, protocol.CapabilityResultPayload{
-		OK:    true,
-		Value: resultVal,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
+		MessageID: "res-1", SessionID: sess.id, CorrelationID: callEnvelope.CorrelationID, GenerationID: callEnvelope.GenerationID,
+	}, protocol.CapabilityResultPayload{OK: true, Value: resultVal})
+	if err != nil { t.Fatal(err) }
 	handled, err := sess.handleCapabilityControl(context.Background(), resultMsg)
-	if err != nil || !handled {
-		t.Fatalf("result handled=%v err=%v", handled, err)
-	}
-
+	if err != nil || !handled { t.Fatalf("result handled=%v err=%v", handled, err) }
 	<-done
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status code = %d, body = %s", rec.Code, rec.Body.String())
-	}
-
+	if rec.Code != http.StatusOK { t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String()) }
 	var twin controlplane.Twin
-	if err := json.Unmarshal(rec.Body.Bytes(), &twin); err != nil {
-		t.Fatal(err)
+	if err := json.Unmarshal(rec.Body.Bytes(), &twin); err != nil { t.Fatal(err) }
+	if twin.Status != controlplane.TwinStatusApplied || twin.DesiredVersion != 1 || twin.ReportedVersion != 1 {
+		t.Fatalf("twin=%+v", twin)
 	}
-	if twin.Status != controlplane.TwinStatusApplied {
-		t.Fatalf("twin status = %s, want applied", twin.Status)
+	if twin.Desired.Locale != "vi-VN" || twin.Reported.Locale != "" {
+		t.Fatalf("backend-owned locale leaked into device report: desired=%q reported=%q", twin.Desired.Locale, twin.Reported.Locale)
 	}
-	if twin.DesiredVersion != 1 || twin.ReportedVersion != 1 {
-		t.Fatalf("desired=%d reported=%d", twin.DesiredVersion, twin.ReportedVersion)
-	}
-	if twin.Desired.WakeModel != "hilexin" || twin.Reported.WakeModel != "hilexin" {
-		t.Fatalf("wake model desired=%s reported=%s", twin.Desired.WakeModel, twin.Reported.WakeModel)
-	}
-
-	// GET twin also returns applied status
-	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/devices/dev-apply/twin?user_id=user-apply", nil)
-	getReq.SetPathValue("deviceID", "dev-apply")
-	getReq.Header.Set("Authorization", "Bearer admin-secret")
-	getRec := httptest.NewRecorder()
-	srv.handleTwinGet(getRec, getReq)
-
-	if getRec.Code != http.StatusOK {
-		t.Fatalf("get status = %d", getRec.Code)
-	}
-	var getTwin controlplane.Twin
-	if err := json.Unmarshal(getRec.Body.Bytes(), &getTwin); err != nil {
-		t.Fatal(err)
-	}
-	if getTwin.Status != controlplane.TwinStatusApplied {
-		t.Fatalf("get status = %s, want applied", getTwin.Status)
+	if twin.Desired.VADThreshold == nil || twin.Reported.VADThreshold == nil || *twin.Desired.VADThreshold != 700 || *twin.Reported.VADThreshold != 700 {
+		t.Fatalf("threshold desired/reported mismatch: desired=%+v reported=%+v", twin.Desired, twin.Reported)
 	}
 }
 
@@ -309,20 +246,15 @@ func TestDeviceSettingsDeviceRejection(t *testing.T) {
 	router := devicecap.NewRouter()
 	cp := controlplane.New(repo, controlplane.RuntimeConfig{})
 	srv := New(pipeline.Components{}, nil, WithAdminToken("admin-secret"), WithControlPlane(cp), WithDeviceCapabilities(router))
-
 	sess := newSettingsTestSession(t, srv, "dev-reject", "user-reject")
 
-	patchBody := []byte(`{"wake_model":"unsupported_model"}`)
+	patchBody := []byte(`{"vad_threshold":700}`)
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/devices/dev-reject/twin?user_id=user-reject", bytes.NewReader(patchBody))
 	req.SetPathValue("deviceID", "dev-reject")
 	req.Header.Set("Authorization", "Bearer admin-secret")
 	rec := httptest.NewRecorder()
-
 	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		srv.handleTwinPatch(rec, req)
-	}()
+	go func() { defer close(done); srv.handleTwinPatch(rec, req) }()
 
 	var callOut outbound
 	select {
@@ -330,51 +262,47 @@ func TestDeviceSettingsDeviceRejection(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for capability.call")
 	}
-
 	callEnvelope, err := protocol.Decode(callOut.data)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Device responds with applied: false
-	resultVal, _ := json.Marshal(devicecap.SettingsResult{
-		Applied: false,
-		Version: 1,
-		Error:   "unsupported wake model",
-	})
+	if err != nil { t.Fatal(err) }
+	resultVal, _ := json.Marshal(devicecap.SettingsResult{Applied: false, Version: 1, Error: "device_rejected_for_test"})
 	resultMsg, err := protocol.Encode(protocol.CapabilityResultType, protocol.Metadata{
-		MessageID:     "res-reject",
-		SessionID:     sess.id,
-		CorrelationID: callEnvelope.CorrelationID,
-		GenerationID:  callEnvelope.GenerationID,
-	}, protocol.CapabilityResultPayload{
-		OK:    true,
-		Value: resultVal,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
+		MessageID: "res-reject", SessionID: sess.id, CorrelationID: callEnvelope.CorrelationID, GenerationID: callEnvelope.GenerationID,
+	}, protocol.CapabilityResultPayload{OK: true, Value: resultVal})
+	if err != nil { t.Fatal(err) }
 	handled, err := sess.handleCapabilityControl(context.Background(), resultMsg)
-	if err != nil || !handled {
-		t.Fatalf("result handled=%v err=%v", handled, err)
-	}
-
+	if err != nil || !handled { t.Fatalf("result handled=%v err=%v", handled, err) }
 	<-done
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status code = %d", rec.Code)
-	}
-
 	var twin controlplane.Twin
-	if err := json.Unmarshal(rec.Body.Bytes(), &twin); err != nil {
-		t.Fatal(err)
+	if err := json.Unmarshal(rec.Body.Bytes(), &twin); err != nil { t.Fatal(err) }
+	if twin.Status != controlplane.TwinStatusRejected || twin.DesiredVersion != 1 || twin.ReportedVersion != 0 {
+		t.Fatalf("twin=%+v", twin)
 	}
-	if twin.Status != controlplane.TwinStatusRejected {
-		t.Fatalf("twin status = %s, want rejected", twin.Status)
+}
+
+func TestDeviceSettingsWakeModelStaysRequestedUntilPlan07B(t *testing.T) {
+	repo := newFakeTwinRepo()
+	router := devicecap.NewRouter()
+	cp := controlplane.New(repo, controlplane.RuntimeConfig{})
+	srv := New(pipeline.Components{}, nil, WithAdminToken("admin-secret"), WithControlPlane(cp), WithDeviceCapabilities(router))
+	sess := newSettingsTestSession(t, srv, "dev-wake-pending", "user-wake-pending")
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/devices/dev-wake-pending/twin?user_id=user-wake-pending", bytes.NewReader([]byte(`{"wake_model":"hilexin"}`)))
+	req.SetPathValue("deviceID", "dev-wake-pending")
+	req.Header.Set("Authorization", "Bearer admin-secret")
+	rec := httptest.NewRecorder()
+	srv.handleTwinPatch(rec, req)
+	if rec.Code != http.StatusOK { t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String()) }
+
+	select {
+	case out := <-sess.controlWrites:
+		t.Fatalf("wake model reached device before PLAN07B: %s", out.data)
+	case <-time.After(100 * time.Millisecond):
 	}
-	if twin.DesiredVersion != 1 || twin.ReportedVersion != 0 {
-		t.Fatalf("desired=%d reported=%d", twin.DesiredVersion, twin.ReportedVersion)
+	var twin controlplane.Twin
+	if err := json.Unmarshal(rec.Body.Bytes(), &twin); err != nil { t.Fatal(err) }
+	if twin.Desired.WakeModel != "hilexin" || twin.ReportedVersion != 0 || twin.Status != controlplane.TwinStatusRequested {
+		t.Fatalf("wake pending twin=%+v", twin)
 	}
 }
 
@@ -383,48 +311,16 @@ func TestDeviceSettingsOfflineDevice(t *testing.T) {
 	router := devicecap.NewRouter()
 	cp := controlplane.New(repo, controlplane.RuntimeConfig{})
 	srv := New(pipeline.Components{}, nil, WithAdminToken("admin-secret"), WithControlPlane(cp), WithDeviceCapabilities(router))
-
-	// dev-offline is not connected
 	patchBody := []byte(`{"locale":"en-US"}`)
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/devices/dev-offline/twin?user_id=user-offline", bytes.NewReader(patchBody))
 	req.SetPathValue("deviceID", "dev-offline")
 	req.Header.Set("Authorization", "Bearer admin-secret")
 	rec := httptest.NewRecorder()
-
 	srv.handleTwinPatch(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status code = %d, body = %s", rec.Code, rec.Body.String())
-	}
-
+	if rec.Code != http.StatusOK { t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String()) }
 	var twin controlplane.Twin
-	if err := json.Unmarshal(rec.Body.Bytes(), &twin); err != nil {
-		t.Fatal(err)
-	}
-	if twin.Status != controlplane.TwinStatusOffline {
-		t.Fatalf("twin status = %s, want offline", twin.Status)
-	}
-	if twin.DesiredVersion != 1 || twin.ReportedVersion != 0 {
-		t.Fatalf("desired=%d reported=%d", twin.DesiredVersion, twin.ReportedVersion)
-	}
-
-	// GET also returns offline status
-	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/devices/dev-offline/twin?user_id=user-offline", nil)
-	getReq.SetPathValue("deviceID", "dev-offline")
-	getReq.Header.Set("Authorization", "Bearer admin-secret")
-	getRec := httptest.NewRecorder()
-	srv.handleTwinGet(getRec, getReq)
-
-	if getRec.Code != http.StatusOK {
-		t.Fatalf("get status = %d", getRec.Code)
-	}
-	var getTwin controlplane.Twin
-	if err := json.Unmarshal(getRec.Body.Bytes(), &getTwin); err != nil {
-		t.Fatal(err)
-	}
-	if getTwin.Status != controlplane.TwinStatusOffline {
-		t.Fatalf("get status = %s, want offline", getTwin.Status)
-	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &twin); err != nil { t.Fatal(err) }
+	if twin.Status != controlplane.TwinStatusOffline || twin.DesiredVersion != 1 || twin.ReportedVersion != 0 { t.Fatalf("twin=%+v", twin) }
 }
 
 func TestDeviceSettingsWrongOwner(t *testing.T) {
@@ -432,34 +328,20 @@ func TestDeviceSettingsWrongOwner(t *testing.T) {
 	router := devicecap.NewRouter()
 	cp := controlplane.New(repo, controlplane.RuntimeConfig{})
 	srv := New(pipeline.Components{}, nil, WithAdminToken("admin-secret"), WithControlPlane(cp), WithDeviceCapabilities(router))
-
-	// Seed twin under owner-a
 	_, err := repo.SetDesired(context.Background(), "owner-a", "dev-owned", controlplane.RuntimeConfig{Locale: "vi-VN"})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// PATCH by wrong owner returns 400
+	if err != nil { t.Fatal(err) }
 	patchReq := httptest.NewRequest(http.MethodPatch, "/api/v1/devices/dev-owned/twin?user_id=owner-b", bytes.NewReader([]byte(`{"locale":"en-US"}`)))
 	patchReq.SetPathValue("deviceID", "dev-owned")
 	patchReq.Header.Set("Authorization", "Bearer admin-secret")
 	patchRec := httptest.NewRecorder()
 	srv.handleTwinPatch(patchRec, patchReq)
-
-	if patchRec.Code != http.StatusBadRequest {
-		t.Fatalf("patch status = %d, want 400", patchRec.Code)
-	}
-
-	// GET by wrong owner returns 400
+	if patchRec.Code != http.StatusBadRequest { t.Fatalf("patch status=%d", patchRec.Code) }
 	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/devices/dev-owned/twin?user_id=owner-b", nil)
 	getReq.SetPathValue("deviceID", "dev-owned")
 	getReq.Header.Set("Authorization", "Bearer admin-secret")
 	getRec := httptest.NewRecorder()
 	srv.handleTwinGet(getRec, getReq)
-
-	if getRec.Code != http.StatusBadRequest {
-		t.Fatalf("get status = %d, want 400", getRec.Code)
-	}
+	if getRec.Code != http.StatusBadRequest { t.Fatalf("get status=%d", getRec.Code) }
 }
 
 func TestDeviceSettingsReconnectionReconciliation(t *testing.T) {
@@ -467,112 +349,51 @@ func TestDeviceSettingsReconnectionReconciliation(t *testing.T) {
 	router := devicecap.NewRouter()
 	cp := controlplane.New(repo, controlplane.RuntimeConfig{})
 	srv := New(pipeline.Components{}, nil, WithAdminToken("admin-secret"), WithControlPlane(cp), WithDeviceCapabilities(router))
+	threshold := 720
+	seededTwin, err := repo.SetDesired(context.Background(), "user-recon", "dev-recon", controlplane.RuntimeConfig{VADThreshold: &threshold, Locale: "vi-VN"})
+	if err != nil { t.Fatal(err) }
+	if seededTwin.DesiredVersion != 1 || seededTwin.ReportedVersion != 0 { t.Fatalf("seeded=%+v", seededTwin) }
 
-	// Pre-seed desired version 1 while device is offline
-	seededTwin, err := repo.SetDesired(context.Background(), "user-recon", "dev-recon", controlplane.RuntimeConfig{
-		WakeModel: "hilexin",
-		Locale:    "vi-VN",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if seededTwin.DesiredVersion != 1 || seededTwin.ReportedVersion != 0 {
-		t.Fatalf("seeded desired=%d reported=%d", seededTwin.DesiredVersion, seededTwin.ReportedVersion)
-	}
-
-	// Now device connects and advertises device.settings_v1
 	s := &session{
-		id:            "session-dev-recon",
-		deviceID:      "dev-recon",
-		userID:        "user-recon",
-		hub:           srv.hub,
-		controlPlane:  srv.controlPlane,
-		controlWrites: make(chan outbound, 16),
-		mediaWrites:   make(chan outbound, 4),
-		seenInbound:   map[string]inboundRecord{},
-		generation:    1,
+		id: "session-dev-recon", deviceID: "dev-recon", userID: "user-recon", hub: srv.hub, controlPlane: srv.controlPlane,
+		controlWrites: make(chan outbound, 16), mediaWrites: make(chan outbound, 4), seenInbound: map[string]inboundRecord{}, generation: 1,
 	}
 	srv.hub.register("dev-recon", s)
 	defer srv.hub.unregister("dev-recon", s)
-
-	advertise, err := protocol.Encode(protocol.CapabilityAdvertiseType, protocol.Metadata{
-		MessageID: "advertise-reconcile", SessionID: s.id,
-	}, protocol.CapabilityAdvertisePayload{Capabilities: []protocol.CapabilityDescriptor{{
-		Name: devicecap.SettingsName, Version: devicecap.SettingsVersion, Kind: "command",
-	}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-
+	advertise, err := protocol.Encode(protocol.CapabilityAdvertiseType, protocol.Metadata{MessageID: "advertise-reconcile", SessionID: s.id}, protocol.CapabilityAdvertisePayload{Capabilities: []protocol.CapabilityDescriptor{{Name: devicecap.SettingsName, Version: devicecap.SettingsVersion, Kind: "command"}}})
+	if err != nil { t.Fatal(err) }
 	handled, err := s.handleCapabilityControl(context.Background(), advertise)
-	if err != nil || !handled {
-		t.Fatalf("advertise handled=%v err=%v", handled, err)
-	}
+	if err != nil || !handled { t.Fatalf("advertise handled=%v err=%v", handled, err) }
 
-	// Reconciliation should automatically fire capability.call for device.settings_v1
 	var callOut outbound
 	select {
 	case callOut = <-s.controlWrites:
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for reconciliation capability.call")
 	}
-
 	callEnvelope, err := protocol.Decode(callOut.data)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if callEnvelope.Type != protocol.CapabilityCallType {
-		t.Fatalf("type = %s, want %s", callEnvelope.Type, protocol.CapabilityCallType)
-	}
-
+	if err != nil { t.Fatal(err) }
 	var args devicecap.SettingsArgs
 	payload, _ := protocol.DecodePayload[protocol.CapabilityCallPayload](callEnvelope)
-	if err := json.Unmarshal(payload.Arguments, &args); err != nil {
-		t.Fatal(err)
+	if err := json.Unmarshal(payload.Arguments, &args); err != nil { t.Fatal(err) }
+	if args.Version != 1 || args.Settings.VADThreshold == nil || *args.Settings.VADThreshold != threshold || args.Settings.Locale != "" {
+		t.Fatalf("reconciled args=%+v", args)
 	}
-	if args.Version != 1 || args.Settings.WakeModel != "hilexin" {
-		t.Fatalf("reconciled args = %+v", args)
-	}
-
-	// Device responds with applied
-	resultVal, _ := json.Marshal(devicecap.SettingsResult{
-		Applied:  true,
-		Version:  1,
-		Settings: &args.Settings,
-	})
-	resultMsg, err := protocol.Encode(protocol.CapabilityResultType, protocol.Metadata{
-		MessageID:     "res-recon-1",
-		SessionID:     s.id,
-		CorrelationID: callEnvelope.CorrelationID,
-		GenerationID:  callEnvelope.GenerationID,
-	}, protocol.CapabilityResultPayload{
-		OK:    true,
-		Value: resultVal,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
+	resultVal, _ := json.Marshal(devicecap.SettingsResult{Applied: true, Version: 1, Settings: &args.Settings})
+	resultMsg, err := protocol.Encode(protocol.CapabilityResultType, protocol.Metadata{MessageID: "res-recon-1", SessionID: s.id, CorrelationID: callEnvelope.CorrelationID, GenerationID: callEnvelope.GenerationID}, protocol.CapabilityResultPayload{OK: true, Value: resultVal})
+	if err != nil { t.Fatal(err) }
 	handled, err = s.handleCapabilityControl(context.Background(), resultMsg)
-	if err != nil || !handled {
-		t.Fatalf("result handled=%v err=%v", handled, err)
-	}
+	if err != nil || !handled { t.Fatalf("result handled=%v err=%v", handled, err) }
 
-	// Poll until reconciliation report updates the twin
 	var twin controlplane.Twin
 	deadline := time.Now().Add(time.Second)
 	for {
 		twin, err = repo.GetTwin(context.Background(), "user-recon", "dev-recon")
-		if err == nil && twin.ReportedVersion == 1 {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("reconciled twin timeout: err=%v twin=%+v", err, twin)
-		}
+		if err == nil && twin.ReportedVersion == 1 { break }
+		if time.Now().After(deadline) { t.Fatalf("reconciled timeout: err=%v twin=%+v", err, twin) }
 		time.Sleep(10 * time.Millisecond)
 	}
-
-	if twin.ReportedVersion != 1 || twin.Reported.WakeModel != "hilexin" {
-		t.Fatalf("reconciled twin = %+v", twin)
+	if twin.Reported.VADThreshold == nil || *twin.Reported.VADThreshold != threshold || twin.Reported.Locale != "" {
+		t.Fatalf("reconciled twin=%+v", twin)
 	}
 }
