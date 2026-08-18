@@ -3,6 +3,7 @@ package ownerauth
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"errors"
 	"strings"
@@ -34,7 +35,6 @@ type ClaimSessionRecord struct {
 	BootstrapID        string             `json:"bootstrap_id"`
 	DeviceCodeHash     string             `json:"device_code_hash"`
 	UserCodeHash       string             `json:"user_code_hash"`
-	UserCodePlain      string             `json:"user_code_plain"`
 	OwnerUserID        string             `json:"owner_user_id,omitempty"`
 	Status             ClaimSessionStatus `json:"status"`
 	ClaimAuthorization string             `json:"claim_authorization,omitempty"`
@@ -72,6 +72,7 @@ type ClaimSessionStore interface {
 	ApproveSession(ctx context.Context, sessionID, ownerUserID string, now time.Time) error
 	DenySession(ctx context.Context, sessionID string, now time.Time) error
 	PollSession(ctx context.Context, deviceCodeHash string, minInterval time.Duration, now time.Time, mintAuthFn func(bootstrapID, deviceID, ownerUserID string) (string, time.Time, error)) (PollOutcome, error)
+	AuthorizeClaim(ctx context.Context, rawAuthorization, bootstrapID, deviceID string, now time.Time) (string, error)
 }
 
 func HashSecret(raw string) string {
@@ -191,8 +192,8 @@ func (m *MemoryClaimSessionStore) PollSession(
 	}
 	session := m.sessions[sessionID]
 
-	if !session.ExpiresAt.After(now) {
-		if session.Status == ClaimSessionPending {
+	if session.Status != ClaimSessionConsumed && !session.ExpiresAt.After(now) {
+		if session.Status == ClaimSessionPending || session.Status == ClaimSessionApproved {
 			session.Status = ClaimSessionExpired
 			m.sessions[sessionID] = session
 		}
@@ -233,7 +234,7 @@ func (m *MemoryClaimSessionStore) PollSession(
 			ExpiresAt:          exp,
 		}, nil
 	case ClaimSessionConsumed:
-		if session.ClaimAuthExpiresAt != nil && session.ClaimAuthExpiresAt.After(now) {
+		if session.ClaimAuthExpiresAt != nil && session.ClaimAuthExpiresAt.After(now) && session.ClaimAuthorization != "" {
 			m.sessions[sessionID] = session
 			return PollOutcome{
 				Status:             PollOutcomeApproved,
@@ -250,4 +251,29 @@ func (m *MemoryClaimSessionStore) PollSession(
 		m.sessions[sessionID] = session
 		return PollOutcome{Status: PollOutcomeExpired}, nil
 	}
+}
+
+func (m *MemoryClaimSessionStore) AuthorizeClaim(_ context.Context, rawAuthorization, bootstrapID, deviceID string, now time.Time) (string, error) {
+	rawAuthorization = strings.TrimSpace(rawAuthorization)
+	bootstrapID = strings.TrimSpace(bootstrapID)
+	deviceID = strings.TrimSpace(deviceID)
+	if rawAuthorization == "" || bootstrapID == "" || deviceID == "" {
+		return "", ErrInvalidClaim
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, session := range m.sessions {
+		if session.Status != ClaimSessionConsumed || session.ClaimAuthExpiresAt == nil || !session.ClaimAuthExpiresAt.After(now) {
+			continue
+		}
+		if subtle.ConstantTimeCompare([]byte(session.ClaimAuthorization), []byte(rawAuthorization)) != 1 {
+			continue
+		}
+		if session.BootstrapID != bootstrapID || session.DeviceID != deviceID || strings.TrimSpace(session.OwnerUserID) == "" {
+			return "", ErrInvalidClaim
+		}
+		return session.OwnerUserID, nil
+	}
+	return "", ErrInvalidClaim
 }
