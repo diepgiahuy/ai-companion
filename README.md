@@ -30,7 +30,7 @@ Go realtime runtime
         ▼
 ToolRegistry + policy
   ├─ native/domain tools
-  ├─ authenticated device capabilities
+  ├─ server-owned device tool contracts
   └─ optional backend-side external MCP
         │
         ▼
@@ -54,10 +54,11 @@ The product is intentionally a **modular monolith + firmware**, not a microservi
 ### Agent, tools and integrations
 
 - Google ADK is the sole product agent runtime.
-- ToolRegistry/policy is the model-facing authorization/schema boundary.
+- `ToolRegistry` is the server-owned model-tool definition, argument-validation, authorization, observability and execution boundary.
 - Durable native tools cover expenses, budgets, notes, journal, reminders/timers, voice memos, memory, conversation and related platform behavior.
 - External MCP is backend-side only. The official MCP Go SDK path and policy boundary are implemented; firmware does not run MCP.
-- Authenticated device capabilities use Protocol v2 rather than MCP-on-device. `device.volume.set` is the currently proven software-device example; future hardware capabilities require their own bounded implementation/evidence.
+- Device-local commands use **Typed Companion Capability RPC** over Protocol v2, not MCP-on-device. The device advertises only supported capability identity; the backend remains authoritative for accepted contracts, model visibility, schema and policy.
+- The durable capability architecture is owned by [`docs/ADR-003-DEVICE-CAPABILITY-PLANE.md`](docs/ADR-003-DEVICE-CAPABILITY-PLANE.md). Do not infer a second device protocol or device-owned model authority from reference projects.
 
 ### Data and jobs
 
@@ -86,6 +87,8 @@ The product is intentionally a **modular monolith + firmware**, not a microservi
 ### Control plane
 
 - Device twins maintain separate desired/reported state and versions.
+- Runtime settings apply/report traffic uses `device.settings_v1@1` over the canonical capability plane; the legacy Product-v1 `config.update` / `config.report` transport is not active.
+- PostgreSQL remains authoritative for desired/reported ordering and reconciliation. A sent settings command is not proof that the device applied it.
 - Scoped configuration, feature metadata, entitlements, privacy policy, enrolled credentials and signed firmware manifests are implemented backend/control-plane boundaries.
 - Signed OTA metadata/control-plane support does **not** imply the device-side A/B apply/health/rollback lifecycle is complete.
 
@@ -106,7 +109,7 @@ Tier 3 — trusted physical HIL for RF/audio/display/power/OTA/peripheral claims
 Current evidence deliberately keeps these concerns separate:
 
 - PostgreSQL/Atlas/River software/data-plane behavior has hosted evidence.
-- Protocol/session/ToolRegistry/device-capability orchestration has deterministic/Tier-1 evidence.
+- Protocol/session/ToolRegistry/device-capability orchestration has deterministic/Tier-1 evidence for the implemented paths; generic capability hardening must earn its own exact-head evidence when it lands.
 - Reference ASR/TTS/realtime/model adapters exist, but Production-v1 real VN/EN provider/model selection still requires measured evidence.
 - ESP-SR software integration exists, while enclosure AEC/wake/false-interruption/resource behavior remains physical qualification work.
 - Hardware/display selection remains purchase/physical-benchmark gated.
@@ -169,6 +172,8 @@ AI-assisted engineering follows [`ai_development_workflow.md`](ai_development_wo
 
 - **Live requirements / work state:** GitHub Issues and PRs. Durable docs do not mirror open-branch queues.
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — implementation architecture and runtime boundaries.
+- [`docs/ADR-003-DEVICE-CAPABILITY-PLANE.md`](docs/ADR-003-DEVICE-CAPABILITY-PLANE.md) — sole Product-v1 device-capability architecture contract.
+- [`docs/architecture/AI_COMPANION_RESET_EXECUTION_PLANS_V2_CANONICAL_2026-08-17.md`](docs/architecture/AI_COMPANION_RESET_EXECUTION_PLANS_V2_CANONICAL_2026-08-17.md) — canonical architecture-reset/release execution ledger; refresh GitHub state before mutation.
 - [`docs/COMMERCIAL_ARCHITECTURE.md`](docs/COMMERCIAL_ARCHITECTURE.md) — durable commercial/evolution architecture.
 - [`docs/TEST_EVIDENCE_LADDER.md`](docs/TEST_EVIDENCE_LADDER.md) — evidence classes and promotion limits.
 - [`evidence/status.json`](evidence/status.json) — machine-readable promoted evidence claims.
@@ -178,7 +183,7 @@ AI-assisted engineering follows [`ai_development_workflow.md`](ai_development_wo
 - [`ai_development_workflow.md`](ai_development_workflow.md) — implementation/review/delegation workflow.
 - [`.agents/rules/github_issue_generation.md`](.agents/rules/github_issue_generation.md) — ready-issue specification contract.
 
-Historical audit/readiness/execution-plan files are retained only as historical context and must not be used as live backlog or current-state truth.
+Historical implementation details remain recoverable from Git history, issues, PRs and commits. Retired phase/status snapshots are not live backlog or architecture truth and should not be recreated as parallel sources of truth.
 
 ## Checkpoints and rollback
 
