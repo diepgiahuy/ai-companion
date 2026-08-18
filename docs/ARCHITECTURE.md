@@ -63,13 +63,14 @@ Do not restate the capability contract here. ADR-003 owns:
 - `capability.*` semantics;
 - session capability discovery;
 - backend contract/policy authority;
-- device registry hardening;
-- model visibility and ADK scoping;
-- result validation;
+- bounded device registry;
+- model visibility and ADK `DeviceToolset` scoping;
+- input/result validation;
+- command-only Product-v1 capability kind;
 - Xiaozhi reference analysis;
-- deferred `read` and manifest paging decisions.
+- deferred manifest paging decisions.
 
-The old `config.update` / `config.report` product path is removed. Desired/reported settings now use `device.settings_v1` over the canonical capability plane while PostgreSQL remains authoritative for requested/applied/rejected/stale/offline/unknown state.
+The old `config.update` / `config.report` product path is removed. Desired/reported settings use `device.settings_v1` over the canonical capability plane while PostgreSQL remains authoritative for requested/applied/rejected/stale/offline/unknown state.
 
 MCP remains backend-only and optional. Firmware does not connect directly to MCP servers, models, or providers.
 
@@ -85,15 +86,17 @@ flowchart TD
     Agent --> Resources["ResourceRegistry"]
     GlobalTools --> Domain["PostgreSQL domain repositories"]
     Resources --> Domain
-    Agent --> DeviceCaps["Scoped device capability projection — ADR-003"]
+    Agent --> DeviceCaps["DeviceToolset — current authenticated device"]
     DeviceCaps --> Device["Authenticated device session"]
 ```
 
 Rules:
 
 - Global backend tools keep one server-owned definition/authorization/execution path.
-- Device-specific availability must not become process-global authority. ADR-003 defines the scoped hardening target.
+- Device-specific availability is invocation-scoped through the ADR-003 `DeviceToolset`; it never becomes process-global authority.
+- Device-pack tools without an explicit context-availability guard fail closed.
 - Hidden/internal capabilities are not exported to the model.
+- Tool visibility is not authorization. Execution still goes through `ToolRegistry.Execute()`.
 - `ResourceRegistry` routes typed resources without forcing internal product reads through MCP.
 - Conversation history is bounded conversational context. Expenses, budgets, timers, reminders, notes, journal, and other durable facts stay authoritative in domain storage.
 - External MCP stays behind backend policy and egress controls.
