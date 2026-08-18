@@ -31,7 +31,12 @@ public:
     uint64_t capability_calls{};
     uint64_t capability_results{};
     uint64_t capability_cancels{};
-    uint64_t settings_applies{};
+    // Temporary Tier-1 metric alias while main.cpp is migrated from the old
+    // config-report assertion to canonical settings capability apply evidence.
+    union {
+      uint64_t settings_applies{};
+      uint64_t config_reports;
+    };
     int capability_volume{-1};
   };
 
