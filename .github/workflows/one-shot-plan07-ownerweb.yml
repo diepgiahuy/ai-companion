@@ -20,6 +20,45 @@ jobs:
       - name: Apply fail-closed Owner Hub settings truth patch
         run: |
           set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          # Patch the two auth-mode dependency blocks by semantic anchors, then
+          # remove only the older unanchored owner_auth section from the temporary
+          # helper before executing the rest of its fail-closed transforms.
+          p = Path("backend/cmd/companiond/owner_auth.go")
+          text = p.read_text()
+          old_sig = "func ownerAuthFromEnvironment(next http.Handler, store *pgstore.Store, control *controlplane.Service, claimRepository controlplane.DeviceClaimRepository) http.Handler {"
+          new_sig = "func ownerAuthFromEnvironment(next http.Handler, store *pgstore.Store, control *controlplane.Service, claimRepository controlplane.DeviceClaimRepository, deviceOnline func(string) bool, updateDeviceSettings ownerweb.DeviceSettingsUpdater) http.Handler {"
+          if text.count(old_sig) != 1:
+              raise SystemExit("owner_auth.go: signature mismatch")
+          text = text.replace(old_sig, new_sig, 1)
+          for auth_marker in ("Auth:          nil,", "Auth:          service,"):
+              marker = auth_marker + "\n"
+              idx = text.find(marker)
+              if idx < 0:
+                  raise SystemExit(f"owner_auth.go: missing {auth_marker}")
+              rec = text.find("RecordingsDir: recordingsDir,", idx)
+              if rec < 0 or rec - idx > 256:
+                  raise SystemExit(f"owner_auth.go: recordings dependency not adjacent to {auth_marker}")
+              line_end = text.find("\n", rec)
+              indent = text[text.rfind("\n", 0, rec) + 1:rec]
+              injection = (
+                  text[rec:line_end + 1]
+                  + indent + "DeviceOnline:         deviceOnline,\n"
+                  + indent + "UpdateDeviceSettings: updateDeviceSettings,\n"
+              )
+              text = text[:rec] + injection + text[line_end + 1:]
+          if text.count("UpdateDeviceSettings: updateDeviceSettings") != 2:
+              raise SystemExit("owner_auth.go: expected exactly two dependency injections")
+          p.write_text(text)
+
+          helper = Path(".github/plan07_ownerweb_truth.py")
+          source = helper.read_text()
+          start = source.index("# Wire Owner Hub to the server-owned live-session settings path.")
+          end = source.index('p = Path("backend/cmd/companiond/main.go")', start)
+          helper.write_text(source[:start] + source[end:])
+          PY
           python3 .github/plan07_ownerweb_truth.py
           (cd backend && gofmt -w internal/server/server.go internal/ownerweb/dashboard.go cmd/companiond/owner_auth.go cmd/companiond/main.go cmd/companiond/owner_auth_test.go)
           git diff --check
