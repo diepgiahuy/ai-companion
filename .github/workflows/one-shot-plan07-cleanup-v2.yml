@@ -1,6 +1,8 @@
 name: one-shot-plan07-cleanup-v2
 
 on:
+  pull_request:
+    types: [opened, synchronize, reopened]
   push:
     branches:
       - feat/phase-03-settings-wake-plan07
@@ -10,7 +12,7 @@ permissions:
 
 jobs:
   cleanup:
-    if: github.event.head_commit.message != 'chore(plan07): apply source cleanup'
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -24,7 +26,7 @@ jobs:
           python3 .github/plan07_cleanup.py
           (cd backend && gofmt -w internal/server/server.go internal/server/server_test.go)
           git diff --check
-      - name: Commit source cleanup
+      - name: Commit source cleanup if needed
         run: |
           set -euo pipefail
           git config user.name "ai-companion-plan07-bot"
@@ -35,5 +37,9 @@ jobs:
                   backend/internal/server/server.go \
                   backend/internal/server/server_test.go
           git diff --cached --check
+          if git diff --cached --quiet; then
+            echo "PLAN 07 source cleanup already applied"
+            exit 0
+          fi
           git commit -m "chore(plan07): apply source cleanup"
           git push origin HEAD:feat/phase-03-settings-wake-plan07
