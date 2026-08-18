@@ -52,10 +52,32 @@ type SettingsReportRepository interface {
 	SettingsMetadata(context.Context, string, string) (SettingsMetadata, error)
 }
 
+// DeviceReportedConfig is the physical-device portion of RuntimeConfig.
+// RuntimeConfig also carries backend/session-owned fields so policy and owner
+// settings can share one resolution object. Those fields must never be copied
+// into reported_json merely because the physical device acknowledged the same
+// desired revision. WakeModel is deliberately excluded until PLAN 07B/#198 has
+// a real Audio-owner apply/reject contract for the active ESP-SR configuration.
+func DeviceReportedConfig(config RuntimeConfig) RuntimeConfig {
+	return RuntimeConfig{
+		SmartVADEnabled:        config.SmartVADEnabled,
+		VADThreshold:           config.VADThreshold,
+		VADSilenceMS:           config.VADSilenceMS,
+		VADMinSpeechMS:         config.VADMinSpeechMS,
+		IdleAfterMS:            config.IdleAfterMS,
+		AlarmVisibleMS:         config.AlarmVisibleMS,
+		OTAPollIntervalSeconds: config.OTAPollIntervalSeconds,
+	}
+}
+
 func (s *Service) ReportResult(ctx context.Context, user, device string, result ConfigReportResult) error {
 	if result.Version < 0 {
 		return fmt.Errorf("config report version must be non-negative")
 	}
+	// Persist only facts the physical device could have applied. This keeps
+	// reported_json truthful when a desired revision also contains backend-owned
+	// locale/timezone/voice configuration.
+	result.Config = DeviceReportedConfig(result.Config)
 	if err := Validate(result.Config); err != nil {
 		return err
 	}
