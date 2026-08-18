@@ -90,6 +90,7 @@ constexpr BackendEventScope scope_for_event_type(BackendEventType type) {
   switch (type) {
   case BackendEventType::connected:
   case BackendEventType::disconnected:
+  case BackendEventType::settings:
     return BackendEventScope::session;
 
   case BackendEventType::transcript:
@@ -106,7 +107,6 @@ constexpr BackendEventScope scope_for_event_type(BackendEventType type) {
 
   case BackendEventType::alarm:
   case BackendEventType::schedule:
-  case BackendEventType::settings:
   case BackendEventType::voice_mail_available:
   case BackendEventType::voice_mail_consumed:
   case BackendEventType::voice_mail_expired:
