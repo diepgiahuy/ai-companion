@@ -26,7 +26,7 @@ func TestPostgresSettingsDesiredReportedLifecycle(t *testing.T) {
 	service := controlplane.New(store, controlplane.RuntimeConfig{})
 	ptr := func(v int) *int { return &v }
 
-	first, err := service.SetDesired(ctx, userID, deviceID, controlplane.RuntimeConfig{VADThreshold: ptr(600)})
+	first, err := service.SetDesired(ctx, userID, deviceID, controlplane.RuntimeConfig{VADThreshold: ptr(600), Locale: "vi-VN"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,6 +64,16 @@ func TestPostgresSettingsDesiredReportedLifecycle(t *testing.T) {
 	if err != nil || status.State != controlplane.SettingsApplied || status.ReportedVersion != first.DesiredVersion || status.FailureCode != "" {
 		t.Fatalf("applied status=%+v err=%v", status, err)
 	}
+	appliedTwin, err := service.Manifest(ctx, userID, deviceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if appliedTwin.Desired.Locale != "vi-VN" || appliedTwin.Reported.Locale != "" {
+		t.Fatalf("backend-owned locale leaked into PostgreSQL reported state: desired=%q reported=%q", appliedTwin.Desired.Locale, appliedTwin.Reported.Locale)
+	}
+	if appliedTwin.Reported.VADThreshold == nil || *appliedTwin.Reported.VADThreshold != 600 {
+		t.Fatalf("device-owned applied setting missing from reported state: %+v", appliedTwin.Reported)
+	}
 
 	// A contradictory duplicate rejection cannot roll the applied revision back.
 	if err := service.ReportResult(ctx, userID, deviceID, controlplane.ConfigReportResult{
@@ -84,8 +94,6 @@ func TestPostgresSettingsDesiredReportedLifecycle(t *testing.T) {
 	if second.DesiredVersion <= first.DesiredVersion {
 		t.Fatalf("versions first=%d second=%d", first.DesiredVersion, second.DesiredVersion)
 	}
-	// Device is still alive but reports its previous applied revision after the
-	// new desired write. That is authoritative stale evidence, not "applied".
 	if err := service.ReportResult(ctx, userID, deviceID, controlplane.ConfigReportResult{
 		Version: first.DesiredVersion, Applied: true, Config: first.Desired,
 		ReportedAt: time.Now().UTC().Add(3 * time.Second),
@@ -106,8 +114,6 @@ func TestPostgresSettingsDesiredReportedLifecycle(t *testing.T) {
 		t.Fatal("wrong owner read settings metadata")
 	}
 
-	// A new Store/Service over the same PostgreSQL pool observes the same facts;
-	// state is not an in-memory session cache.
 	reopened, err := New(pool)
 	if err != nil {
 		t.Fatal(err)
