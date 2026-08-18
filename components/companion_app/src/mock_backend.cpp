@@ -179,18 +179,14 @@ bool MockVoiceBackend::inject_settings(const SettingsTwin& settings) {
   if (event_count_ == event_capacity_) return false;
   BackendEvent event{};
   event.type = BackendEventType::settings;
-  event.scope = BackendEventScope::global;
-  event.session_epoch = 0;
+  event.scope = BackendEventScope::session;
+  event.session_epoch = session_epoch_;
   event.generation = 0;
   event.set_settings(settings);
   events_[event_tail_] = event;
   event_tail_ = (event_tail_ + 1) % event_capacity_;
   ++event_count_;
   return true;
-}
-
-bool MockVoiceBackend::inject_config(const RuntimeConfigPatch& config) {
-  return inject_settings(config);
 }
 
 bool MockVoiceBackend::inject_voice_mail(const VoiceMailMetadata& item,
@@ -250,7 +246,6 @@ bool MockVoiceBackend::push_event(BackendEventType type, std::string_view text,
   event.scope = (scope == BackendEventScope::global &&
                  type != BackendEventType::alarm &&
                  type != BackendEventType::schedule &&
-                 type != BackendEventType::settings &&
                  type != BackendEventType::voice_mail_available &&
                  type != BackendEventType::voice_mail_consumed &&
                  type != BackendEventType::voice_mail_expired)
