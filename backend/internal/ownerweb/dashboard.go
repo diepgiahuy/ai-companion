@@ -226,12 +226,7 @@ func (h *Handler) handleNotes(w http.ResponseWriter, r *http.Request) {
 	search := strings.TrimSpace(r.URL.Query().Get("search"))
 	limit := parseQueryLimit(r, 50)
 
-	items, err := h.deps.Store.QueryNotes(ctx, userID, domain.NoteQuery{
-		From:   from,
-		To:     to,
-		Search: search,
-		Limit:  limit,
-	})
+	items, err := h.deps.Store.QueryNotes(ctx, userID, domain.NoteQuery{From: from, To: to, Search: search, Limit: limit})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -249,15 +244,8 @@ func (h *Handler) handleVoiceMemos(w http.ResponseWriter, r *http.Request) {
 	from, to := parseQueryRange(r)
 	search := strings.TrimSpace(r.URL.Query().Get("search"))
 	limit := parseQueryLimit(r, 50)
-
 	deviceID := strings.TrimSpace(r.URL.Query().Get("device_id"))
-	items, err := h.deps.Store.QueryVoiceMemos(ctx, userID, domain.VoiceMemoQuery{
-		DeviceID: deviceID,
-		From:     from,
-		To:       to,
-		Search:   search,
-		Limit:    limit,
-	})
+	items, err := h.deps.Store.QueryVoiceMemos(ctx, userID, domain.VoiceMemoQuery{DeviceID: deviceID, From: from, To: to, Search: search, Limit: limit})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -274,7 +262,6 @@ func (h *Handler) handleJournal(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	from, to := parseQueryRange(r)
 	limit := parseQueryLimit(r, 50)
-
 	items, err := h.deps.Store.ListJournal(ctx, userID, from, to, limit)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -292,7 +279,6 @@ func (h *Handler) handleReminders(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	deviceID := strings.TrimSpace(r.URL.Query().Get("device_id"))
 	limit := parseQueryLimit(r, 50)
-
 	reminders, _ := h.deps.Store.ListReminders(ctx, userID, deviceID, "active", limit)
 	timers, _ := h.deps.Store.ListTimers(ctx, userID, deviceID, "active", limit)
 	writeJSON(w, map[string]any{"reminders": reminders, "timers": timers})
@@ -305,15 +291,11 @@ func (h *Handler) handleDevices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-
 	devices, err := h.deps.Store.ListUserDevices(ctx, userID)
 	if err != nil || devices == nil {
 		devices = []domain.DeviceItem{}
 	}
-
-	writeJSON(w, map[string]any{
-		"devices": devices,
-	})
+	writeJSON(w, map[string]any{"devices": devices})
 }
 
 func (h *Handler) handleDevice(w http.ResponseWriter, r *http.Request) {
@@ -348,10 +330,7 @@ func (h *Handler) handleDevice(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "device not found", http.StatusNotFound)
 			return
 		}
-		writeJSON(w, map[string]any{
-			"device_id": "", "connection_status": "offline",
-			"settings_status": controlplane.SettingsStatus{State: controlplane.SettingsUnknown},
-		})
+		writeJSON(w, map[string]any{"device_id": "", "connection_status": "offline", "settings_status": controlplane.SettingsStatus{State: controlplane.SettingsUnknown}})
 		return
 	}
 	twin, err := h.deps.ControlPlane.Manifest(r.Context(), userID, deviceID)
@@ -370,14 +349,9 @@ func (h *Handler) handleDevice(w http.ResponseWriter, r *http.Request) {
 		interval = (time.Duration(*twin.Desired.OTAPollIntervalSeconds) * time.Second).String()
 	}
 	writeJSON(w, map[string]any{
-		"device_id":         deviceID,
-		"connection_status": map[bool]string{true: "online", false: "offline"}[online],
-		"settings_status":   status,
-		"desired_version":   twin.DesiredVersion,
-		"reported_version":  twin.ReportedVersion,
-		"ota_poll_interval": interval,
-		"firmware_version":  "unknown",
-		"wifi_rssi_dbm":     nil,
+		"device_id": deviceID, "connection_status": map[bool]string{true: "online", false: "offline"}[online],
+		"settings_status": status, "desired_version": twin.DesiredVersion, "reported_version": twin.ReportedVersion,
+		"ota_poll_interval": interval, "firmware_version": "unknown", "wifi_rssi_dbm": nil,
 	})
 }
 
@@ -387,22 +361,14 @@ func (h *Handler) handleClaimDevice(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	var req struct {
-		ClaimCode string `json:"claim_code"`
-	}
+	var req struct{ ClaimCode string `json:"claim_code"` }
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || len(strings.TrimSpace(req.ClaimCode)) != 6 {
 		http.Error(w, "claim_code must be 6 alphanumeric characters", http.StatusBadRequest)
 		return
 	}
-
 	code := strings.ToUpper(strings.TrimSpace(req.ClaimCode))
 	deviceID := fmt.Sprintf("companion-s3-%s", code)
-
-	writeJSON(w, map[string]any{
-		"ok":        true,
-		"device_id": deviceID,
-		"message":   "Device claimed successfully into owner account",
-	})
+	writeJSON(w, map[string]any{"ok": true, "device_id": deviceID, "message": "Device claimed successfully into owner account"})
 }
 
 func (h *Handler) handleTriggerOTA(w http.ResponseWriter, r *http.Request) {
@@ -411,22 +377,9 @@ func (h *Handler) handleTriggerOTA(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	var req struct {
-		DeviceID   string `json:"device_id"`
-		TargetSlot string `json:"target_slot"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.DeviceID == "" {
-		http.Error(w, "device_id is required", http.StatusBadRequest)
-		return
-	}
-
-	writeJSON(w, map[string]any{
-		"ok":          true,
-		"device_id":   req.DeviceID,
-		"target_slot": "ota_1",
-		"version":     "v2.4.1",
-		"message":     "Firmware OTA trigger dispatched",
-	})
+	// PLAN 07A must not fabricate OTA promotion state. Real release lookup,
+	// signed manifest selection and device command delivery are qualified later.
+	http.Error(w, "OTA trigger is not wired into Owner Hub", http.StatusNotImplemented)
 }
 
 func (h *Handler) handleUpdateDeviceConfig(w http.ResponseWriter, r *http.Request) {
@@ -440,7 +393,7 @@ func (h *Handler) handleUpdateDeviceConfig(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var body struct {
-		DeviceID        string `json:"device_id"`
+		DeviceID string `json:"device_id"`
 		OTAPollInterval string `json:"ota_poll_interval"`
 	}
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10))
@@ -466,10 +419,7 @@ func (h *Handler) handleUpdateDeviceConfig(w http.ResponseWriter, r *http.Reques
 	}
 	owned := false
 	for _, device := range devices {
-		if device.DeviceID == body.DeviceID {
-			owned = true
-			break
-		}
+		if device.DeviceID == body.DeviceID { owned = true; break }
 	}
 	if !owned {
 		http.Error(w, "device not found", http.StatusNotFound)
@@ -497,535 +447,134 @@ func (h *Handler) handleUpdateDeviceConfig(w http.ResponseWriter, r *http.Reques
 
 func (h *Handler) handleCreateExpense(w http.ResponseWriter, r *http.Request) {
 	userID, ok := h.userID(r)
-	if !ok || userID == "" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	var req struct {
-		Amount      int64  `json:"amount_vnd"`
-		Category    string `json:"category"`
-		Description string `json:"description"`
-		OccurredAt  string `json:"occurred_at"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Amount <= 0 {
-		http.Error(w, "invalid expense payload", http.StatusBadRequest)
-		return
-	}
+	if !ok || userID == "" { http.Error(w, "unauthorized", http.StatusUnauthorized); return }
+	var req struct { Amount int64 `json:"amount_vnd"`; Category string `json:"category"`; Description string `json:"description"`; OccurredAt string `json:"occurred_at"` }
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Amount <= 0 { http.Error(w, "invalid expense payload", http.StatusBadRequest); return }
 	occurred := time.Now().UTC()
-	if req.OccurredAt != "" {
-		if t, err := time.Parse(time.RFC3339, req.OccurredAt); err == nil {
-			occurred = t.UTC()
-		}
-	}
+	if req.OccurredAt != "" { if t, err := time.Parse(time.RFC3339, req.OccurredAt); err == nil { occurred = t.UTC() } }
 	key := fmt.Sprintf("web-exp-%d", time.Now().UnixNano())
-	if err := h.deps.Store.CreateExpense(r.Context(), userID, key, req.Amount, req.Category, req.Description, occurred); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	if err := h.deps.Store.CreateExpense(r.Context(), userID, key, req.Amount, req.Category, req.Description, occurred); err != nil { http.Error(w, err.Error(), http.StatusInternalServerError); return }
 	writeJSON(w, map[string]any{"ok": true, "saved": "expense"})
 }
 
 func (h *Handler) handleSetBudget(w http.ResponseWriter, r *http.Request) {
-	userID, ok := h.userID(r)
-	if !ok || userID == "" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	var req struct {
-		Period   string `json:"period"`
-		LimitVND int64  `json:"limit_vnd"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Period == "" || req.LimitVND < 0 {
-		http.Error(w, "invalid budget payload", http.StatusBadRequest)
-		return
-	}
-	if err := h.deps.Store.SetBudget(r.Context(), userID, req.Period, req.LimitVND); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	userID, ok := h.userID(r); if !ok || userID == "" { http.Error(w, "unauthorized", http.StatusUnauthorized); return }
+	var req struct { Period string `json:"period"`; LimitVND int64 `json:"limit_vnd"` }
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Period == "" || req.LimitVND < 0 { http.Error(w, "invalid budget payload", http.StatusBadRequest); return }
+	if err := h.deps.Store.SetBudget(r.Context(), userID, req.Period, req.LimitVND); err != nil { http.Error(w, err.Error(), http.StatusInternalServerError); return }
 	writeJSON(w, map[string]any{"ok": true, "saved": "budget", "period": req.Period, "limit_vnd": req.LimitVND})
 }
 
 func (h *Handler) handleDeleteExpense(w http.ResponseWriter, r *http.Request) {
-	userID, ok := h.userID(r)
-	if !ok || userID == "" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	idStr := r.URL.Query().Get("id")
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil || id <= 0 {
-		http.Error(w, "valid id is required", http.StatusBadRequest)
-		return
-	}
-	if err := h.deps.Store.DeleteExpense(r.Context(), userID, id); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	userID, ok := h.userID(r); if !ok || userID == "" { http.Error(w, "unauthorized", http.StatusUnauthorized); return }
+	id, err := strconv.ParseInt(r.URL.Query().Get("id"), 10, 64); if err != nil || id <= 0 { http.Error(w, "valid id is required", http.StatusBadRequest); return }
+	if err := h.deps.Store.DeleteExpense(r.Context(), userID, id); err != nil { http.Error(w, err.Error(), http.StatusInternalServerError); return }
 	writeJSON(w, map[string]any{"ok": true, "deleted": "expense", "id": id})
 }
 
 func ownerMutationRequest(r *http.Request, userID, operation, clientKey string, payload any) (idempotency.Request, error) {
-	key := strings.TrimSpace(clientKey)
-	if key == "" {
-		key = strings.TrimSpace(r.Header.Get("X-Idempotency-Key"))
-	}
-	if key == "" {
-		key = fmt.Sprintf("ownerweb-%s-%d", operation, time.Now().UnixNano())
-	}
-	b, err := json.Marshal(payload)
-	if err != nil {
-		return idempotency.Request{}, err
-	}
+	key := strings.TrimSpace(clientKey); if key == "" { key = strings.TrimSpace(r.Header.Get("X-Idempotency-Key")) }; if key == "" { key = fmt.Sprintf("ownerweb-%s-%d", operation, time.Now().UnixNano()) }
+	b, err := json.Marshal(payload); if err != nil { return idempotency.Request{}, err }
 	hash := sha256.Sum256(append([]byte(operation+":"), b...))
-	return idempotency.Request{
-		Actor:       userID,
-		Operation:   operation,
-		Key:         key,
-		RequestHash: hex.EncodeToString(hash[:]),
-	}, nil
+	return idempotency.Request{Actor: userID, Operation: operation, Key: key, RequestHash: hex.EncodeToString(hash[:])}, nil
 }
 
 func (h *Handler) handleGetSavingsGoal(w http.ResponseWriter, r *http.Request) {
-	userID, ok := h.userID(r)
-	if !ok || userID == "" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	ctx := r.Context()
-	period := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("period")))
-	if period == "" {
-		period = "monthly"
-	}
-	now := time.Now().UTC()
-	start, end := domain.CalculatePeriodBounds(period, now, time.UTC)
-	spent, _ := h.deps.Store.ExpenseTotal(ctx, userID, start, end)
-	bLimit, bSet, _ := h.deps.Store.BudgetLimit(ctx, userID, period)
-	var bPtr *int64
-	if bSet {
-		bPtr = &bLimit
-	}
-	goal, gSet, err := h.deps.Store.GetSavingsGoal(ctx, userID, period)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	var gPtr *domain.SavingsGoal
-	if gSet {
-		gPtr = &goal
-	}
-	progress := domain.CalculateSavingsProgress(gPtr, period, start, end, spent, bPtr)
-	writeJSON(w, map[string]any{
-		"period":   period,
-		"set":      gSet,
-		"goal":     gPtr,
-		"progress": progress,
-	})
+	userID, ok := h.userID(r); if !ok || userID == "" { http.Error(w, "unauthorized", http.StatusUnauthorized); return }
+	ctx := r.Context(); period := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("period"))); if period == "" { period = "monthly" }
+	now := time.Now().UTC(); start, end := domain.CalculatePeriodBounds(period, now, time.UTC); spent, _ := h.deps.Store.ExpenseTotal(ctx, userID, start, end); bLimit, bSet, _ := h.deps.Store.BudgetLimit(ctx, userID, period)
+	var bPtr *int64; if bSet { bPtr = &bLimit }; goal, gSet, err := h.deps.Store.GetSavingsGoal(ctx, userID, period); if err != nil { http.Error(w, err.Error(), http.StatusInternalServerError); return }; var gPtr *domain.SavingsGoal; if gSet { gPtr = &goal }
+	progress := domain.CalculateSavingsProgress(gPtr, period, start, end, spent, bPtr); writeJSON(w, map[string]any{"period": period, "set": gSet, "goal": gPtr, "progress": progress})
 }
 
 func (h *Handler) handleSetSavingsGoal(w http.ResponseWriter, r *http.Request) {
-	userID, ok := h.userID(r)
-	if !ok || userID == "" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	var req struct {
-		Period         string `json:"period"`
-		TargetVND      int64  `json:"target_vnd"`
-		Description    string `json:"description"`
-		IdempotencyKey string `json:"idempotency_key"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
-		return
-	}
-	if err := domain.ValidateSavingsTarget(req.TargetVND); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	period := strings.ToLower(strings.TrimSpace(req.Period))
-	if period == "" {
-		period = "monthly"
-	}
-	mutator, ok := h.deps.Store.(interface {
-		SetSavingsGoalMutation(ctx context.Context, req idempotency.Request, userID, period string, targetVND int64, description string, effectiveFrom time.Time) error
-	})
-	if !ok {
-		http.Error(w, "durable store required", http.StatusInternalServerError)
-		return
-	}
-	mutationReq, err := ownerMutationRequest(r, userID, "saving.goal_set", req.IdempotencyKey, map[string]any{
-		"period":      period,
-		"target_vnd":  req.TargetVND,
-		"description": req.Description,
-	})
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	effectiveFrom := time.Now().UTC()
-	if err := mutator.SetSavingsGoalMutation(r.Context(), mutationReq, userID, period, req.TargetVND, strings.TrimSpace(req.Description), effectiveFrom); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	userID, ok := h.userID(r); if !ok || userID == "" { http.Error(w, "unauthorized", http.StatusUnauthorized); return }
+	var req struct { Period string `json:"period"`; TargetVND int64 `json:"target_vnd"`; Description string `json:"description"`; IdempotencyKey string `json:"idempotency_key"` }
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil { http.Error(w, "invalid request body", http.StatusBadRequest); return }; if err := domain.ValidateSavingsTarget(req.TargetVND); err != nil { http.Error(w, err.Error(), http.StatusBadRequest); return }
+	period := strings.ToLower(strings.TrimSpace(req.Period)); if period == "" { period = "monthly" }
+	mutator, ok := h.deps.Store.(interface { SetSavingsGoalMutation(context.Context, idempotency.Request, string, string, int64, string, time.Time) error }); if !ok { http.Error(w, "durable store required", http.StatusInternalServerError); return }
+	mutationReq, err := ownerMutationRequest(r, userID, "saving.goal_set", req.IdempotencyKey, map[string]any{"period": period, "target_vnd": req.TargetVND, "description": req.Description}); if err != nil { http.Error(w, err.Error(), http.StatusBadRequest); return }
+	if err := mutator.SetSavingsGoalMutation(r.Context(), mutationReq, userID, period, req.TargetVND, strings.TrimSpace(req.Description), time.Now().UTC()); err != nil { http.Error(w, err.Error(), http.StatusInternalServerError); return }
 	writeJSON(w, map[string]any{"ok": true, "period": period, "target_vnd": req.TargetVND})
 }
 
 func (h *Handler) handleDeleteSavingsGoal(w http.ResponseWriter, r *http.Request) {
-	userID, ok := h.userID(r)
-	if !ok || userID == "" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	period := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("period")))
-	if period == "" {
-		period = "monthly"
-	}
-	key := strings.TrimSpace(r.URL.Query().Get("idempotency_key"))
-	mutator, ok := h.deps.Store.(interface {
-		DeleteSavingsGoalMutation(ctx context.Context, req idempotency.Request, userID, period string) error
-	})
-	if !ok {
-		http.Error(w, "durable store required", http.StatusInternalServerError)
-		return
-	}
-	mutationReq, err := ownerMutationRequest(r, userID, "saving.goal_delete", key, map[string]any{"period": period})
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	if err := mutator.DeleteSavingsGoalMutation(r.Context(), mutationReq, userID, period); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	userID, ok := h.userID(r); if !ok || userID == "" { http.Error(w, "unauthorized", http.StatusUnauthorized); return }; period := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("period"))); if period == "" { period = "monthly" }; key := strings.TrimSpace(r.URL.Query().Get("idempotency_key"))
+	mutator, ok := h.deps.Store.(interface { DeleteSavingsGoalMutation(context.Context, idempotency.Request, string, string) error }); if !ok { http.Error(w, "durable store required", http.StatusInternalServerError); return }
+	mutationReq, err := ownerMutationRequest(r, userID, "saving.goal_delete", key, map[string]any{"period": period}); if err != nil { http.Error(w, err.Error(), http.StatusBadRequest); return }; if err := mutator.DeleteSavingsGoalMutation(r.Context(), mutationReq, userID, period); err != nil { http.Error(w, err.Error(), http.StatusInternalServerError); return }
 	writeJSON(w, map[string]any{"ok": true, "deleted": "savings_goal", "period": period})
 }
 
 func (h *Handler) handleCreateNote(w http.ResponseWriter, r *http.Request) {
-	userID, ok := h.userID(r)
-	if !ok || userID == "" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	var req struct {
-		Content string `json:"content"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Content) == "" {
-		http.Error(w, "content is required", http.StatusBadRequest)
-		return
-	}
-	key := fmt.Sprintf("web-note-%d", time.Now().UnixNano())
-	if err := h.deps.Store.CreateNote(r.Context(), userID, key, strings.TrimSpace(req.Content)); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	writeJSON(w, map[string]any{"ok": true, "saved": "note"})
+	userID, ok := h.userID(r); if !ok || userID == "" { http.Error(w, "unauthorized", http.StatusUnauthorized); return }; var req struct { Content string `json:"content"` }; if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Content) == "" { http.Error(w, "content is required", http.StatusBadRequest); return }
+	key := fmt.Sprintf("web-note-%d", time.Now().UnixNano()); if err := h.deps.Store.CreateNote(r.Context(), userID, key, strings.TrimSpace(req.Content)); err != nil { http.Error(w, err.Error(), http.StatusInternalServerError); return }; writeJSON(w, map[string]any{"ok": true, "saved": "note"})
 }
 
 func (h *Handler) handleDeleteNote(w http.ResponseWriter, r *http.Request) {
-	userID, ok := h.userID(r)
-	if !ok || userID == "" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	idStr := r.URL.Query().Get("id")
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil || id <= 0 {
-		http.Error(w, "valid id is required", http.StatusBadRequest)
-		return
-	}
-	if err := h.deps.Store.DeleteNote(r.Context(), userID, id); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	writeJSON(w, map[string]any{"ok": true, "deleted": "note", "id": id})
+	userID, ok := h.userID(r); if !ok || userID == "" { http.Error(w, "unauthorized", http.StatusUnauthorized); return }; id, err := strconv.ParseInt(r.URL.Query().Get("id"), 10, 64); if err != nil || id <= 0 { http.Error(w, "valid id is required", http.StatusBadRequest); return }; if err := h.deps.Store.DeleteNote(r.Context(), userID, id); err != nil { http.Error(w, err.Error(), http.StatusInternalServerError); return }; writeJSON(w, map[string]any{"ok": true, "deleted": "note", "id": id})
 }
 
 func (h *Handler) handleDeleteVoiceMemo(w http.ResponseWriter, r *http.Request) {
-	userID, ok := h.userID(r)
-	if !ok || userID == "" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	idStr := r.URL.Query().Get("id")
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil || id <= 0 {
-		http.Error(w, "valid id is required", http.StatusBadRequest)
-		return
-	}
-
-	memos, _ := h.deps.Store.QueryVoiceMemos(r.Context(), userID, domain.VoiceMemoQuery{Limit: 100})
-	var memoPath string
-	for _, m := range memos {
-		if m.ID == id {
-			memoPath = m.Path
-			break
-		}
-	}
-
-	if err := h.deps.Store.DeleteVoiceMemo(r.Context(), userID, id); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	if memoPath != "" && h.deps.RecordingsDir != "" {
-		cleanRecordings := filepath.Clean(h.deps.RecordingsDir)
-		cleanPath := filepath.Clean(memoPath)
-		if strings.HasPrefix(cleanPath, cleanRecordings+string(filepath.Separator)) || cleanPath == cleanRecordings {
-			_ = os.Remove(cleanPath)
-		}
-	}
-
+	userID, ok := h.userID(r); if !ok || userID == "" { http.Error(w, "unauthorized", http.StatusUnauthorized); return }; id, err := strconv.ParseInt(r.URL.Query().Get("id"), 10, 64); if err != nil || id <= 0 { http.Error(w, "valid id is required", http.StatusBadRequest); return }
+	memos, _ := h.deps.Store.QueryVoiceMemos(r.Context(), userID, domain.VoiceMemoQuery{Limit: 100}); var memoPath string; for _, m := range memos { if m.ID == id { memoPath = m.Path; break } }
+	if err := h.deps.Store.DeleteVoiceMemo(r.Context(), userID, id); err != nil { http.Error(w, err.Error(), http.StatusInternalServerError); return }
+	if memoPath != "" && h.deps.RecordingsDir != "" { cleanRecordings, cleanPath := filepath.Clean(h.deps.RecordingsDir), filepath.Clean(memoPath); if strings.HasPrefix(cleanPath, cleanRecordings+string(filepath.Separator)) || cleanPath == cleanRecordings { _ = os.Remove(cleanPath) } }
 	writeJSON(w, map[string]any{"ok": true, "deleted": "voice_memo", "id": id})
 }
 
 func (h *Handler) handleCreateJournal(w http.ResponseWriter, r *http.Request) {
-	userID, ok := h.userID(r)
-	if !ok || userID == "" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	var req struct {
-		Content string `json:"content"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Content) == "" {
-		http.Error(w, "content is required", http.StatusBadRequest)
-		return
-	}
-	key := fmt.Sprintf("web-journal-%d", time.Now().UnixNano())
-	if err := h.deps.Store.CreateJournal(r.Context(), userID, key, strings.TrimSpace(req.Content), time.Now().UTC()); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	writeJSON(w, map[string]any{"ok": true, "saved": "journal"})
+	userID, ok := h.userID(r); if !ok || userID == "" { http.Error(w, "unauthorized", http.StatusUnauthorized); return }; var req struct { Content string `json:"content"` }; if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Content) == "" { http.Error(w, "content is required", http.StatusBadRequest); return }; key := fmt.Sprintf("web-journal-%d", time.Now().UnixNano()); if err := h.deps.Store.CreateJournal(r.Context(), userID, key, strings.TrimSpace(req.Content), time.Now().UTC()); err != nil { http.Error(w, err.Error(), http.StatusInternalServerError); return }; writeJSON(w, map[string]any{"ok": true, "saved": "journal"})
 }
 
 func (h *Handler) handleDeleteJournal(w http.ResponseWriter, r *http.Request) {
-	userID, ok := h.userID(r)
-	if !ok || userID == "" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	idStr := r.URL.Query().Get("id")
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil || id <= 0 {
-		http.Error(w, "valid id is required", http.StatusBadRequest)
-		return
-	}
-	if err := h.deps.Store.DeleteJournal(r.Context(), userID, id); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	writeJSON(w, map[string]any{"ok": true, "deleted": "journal", "id": id})
+	userID, ok := h.userID(r); if !ok || userID == "" { http.Error(w, "unauthorized", http.StatusUnauthorized); return }; id, err := strconv.ParseInt(r.URL.Query().Get("id"), 10, 64); if err != nil || id <= 0 { http.Error(w, "valid id is required", http.StatusBadRequest); return }; if err := h.deps.Store.DeleteJournal(r.Context(), userID, id); err != nil { http.Error(w, err.Error(), http.StatusInternalServerError); return }; writeJSON(w, map[string]any{"ok": true, "deleted": "journal", "id": id})
 }
 
 func (h *Handler) handleCreateReminder(w http.ResponseWriter, r *http.Request) {
-	userID, ok := h.userID(r)
-	if !ok || userID == "" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	var req struct {
-		Kind           string `json:"kind"`
-		Title          string `json:"title"`
-		FireAt         string `json:"fire_at"`
-		DelayMinutes   int    `json:"delay_minutes"`
-		DelaySeconds   int    `json:"delay_seconds"`
-		IdempotencyKey string `json:"idempotency_key"`
-		DeviceID       string `json:"device_id"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Title) == "" {
-		http.Error(w, "title is required", http.StatusBadRequest)
-		return
-	}
-	kind := strings.TrimSpace(req.Kind)
-	fireAt := time.Now().UTC()
-	if req.DelaySeconds > 0 {
-		fireAt = fireAt.Add(time.Duration(req.DelaySeconds) * time.Second)
-	} else if req.DelayMinutes > 0 {
-		fireAt = fireAt.Add(time.Duration(req.DelayMinutes) * time.Minute)
-	} else if req.FireAt != "" {
-		if t, err := time.Parse(time.RFC3339, req.FireAt); err == nil {
-			fireAt = t.UTC()
-		}
-	} else {
-		fireAt = fireAt.Add(10 * time.Minute)
-	}
-	key := req.IdempotencyKey
-	if key == "" {
-		key = fmt.Sprintf("web-rem-%d", time.Now().UnixNano())
-	}
-	if kind == "timer" || req.DelaySeconds > 0 || req.DelayMinutes > 0 {
-		if err := h.deps.Store.CreateTimerForDevice(r.Context(), userID, key, req.DeviceID, strings.TrimSpace(req.Title), fireAt); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		writeJSON(w, map[string]any{"ok": true, "kind": "timer", "fire_at": fireAt.Format(time.RFC3339)})
-		return
-	}
-	if err := h.deps.Store.CreateReminderForDevice(r.Context(), userID, key, req.DeviceID, strings.TrimSpace(req.Title), fireAt); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	writeJSON(w, map[string]any{"ok": true, "kind": "reminder", "fire_at": fireAt.Format(time.RFC3339)})
+	userID, ok := h.userID(r); if !ok || userID == "" { http.Error(w, "unauthorized", http.StatusUnauthorized); return }
+	var req struct { Kind string `json:"kind"`; Title string `json:"title"`; FireAt string `json:"fire_at"`; DelayMinutes int `json:"delay_minutes"`; DelaySeconds int `json:"delay_seconds"`; IdempotencyKey string `json:"idempotency_key"`; DeviceID string `json:"device_id"` }
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Title) == "" { http.Error(w, "title is required", http.StatusBadRequest); return }
+	kind := strings.TrimSpace(req.Kind); fireAt := time.Now().UTC(); if req.DelaySeconds > 0 { fireAt = fireAt.Add(time.Duration(req.DelaySeconds)*time.Second) } else if req.DelayMinutes > 0 { fireAt = fireAt.Add(time.Duration(req.DelayMinutes)*time.Minute) } else if req.FireAt != "" { if t, err := time.Parse(time.RFC3339, req.FireAt); err == nil { fireAt = t.UTC() } } else { fireAt = fireAt.Add(10*time.Minute) }
+	key := req.IdempotencyKey; if key == "" { key = fmt.Sprintf("web-rem-%d", time.Now().UnixNano()) }
+	if kind == "timer" || req.DelaySeconds > 0 || req.DelayMinutes > 0 { if err := h.deps.Store.CreateTimerForDevice(r.Context(), userID, key, req.DeviceID, strings.TrimSpace(req.Title), fireAt); err != nil { http.Error(w, err.Error(), http.StatusInternalServerError); return }; writeJSON(w, map[string]any{"ok": true, "kind": "timer", "fire_at": fireAt.Format(time.RFC3339)}); return }
+	if err := h.deps.Store.CreateReminderForDevice(r.Context(), userID, key, req.DeviceID, strings.TrimSpace(req.Title), fireAt); err != nil { http.Error(w, err.Error(), http.StatusInternalServerError); return }; writeJSON(w, map[string]any{"ok": true, "kind": "reminder", "fire_at": fireAt.Format(time.RFC3339)})
 }
 
 func (h *Handler) handleDeleteReminder(w http.ResponseWriter, r *http.Request) {
-	userID, ok := h.userID(r)
-	if !ok || userID == "" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	idStr := r.URL.Query().Get("id")
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil || id <= 0 {
-		http.Error(w, "valid id is required", http.StatusBadRequest)
-		return
-	}
-	if err := h.deps.Store.DeleteScheduledItem(r.Context(), userID, id); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	writeJSON(w, map[string]any{"ok": true, "deleted": "reminder", "id": id})
+	userID, ok := h.userID(r); if !ok || userID == "" { http.Error(w, "unauthorized", http.StatusUnauthorized); return }; id, err := strconv.ParseInt(r.URL.Query().Get("id"), 10, 64); if err != nil || id <= 0 { http.Error(w, "valid id is required", http.StatusBadRequest); return }; if err := h.deps.Store.DeleteScheduledItem(r.Context(), userID, id); err != nil { http.Error(w, err.Error(), http.StatusInternalServerError); return }; writeJSON(w, map[string]any{"ok": true, "deleted": "reminder", "id": id})
 }
 
 func (h *Handler) handlePauseTimer(w http.ResponseWriter, r *http.Request) {
-	userID, ok := h.userID(r)
-	if !ok || userID == "" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	var req struct {
-		ID int64 `json:"id"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ID <= 0 {
-		http.Error(w, "valid id is required", http.StatusBadRequest)
-		return
-	}
-	if err := h.deps.Store.PauseTimer(r.Context(), userID, req.ID, time.Now().UTC()); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	writeJSON(w, map[string]any{"ok": true, "paused": true, "id": req.ID})
+	userID, ok := h.userID(r); if !ok || userID == "" { http.Error(w, "unauthorized", http.StatusUnauthorized); return }; var req struct { ID int64 `json:"id"` }; if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ID <= 0 { http.Error(w, "valid id is required", http.StatusBadRequest); return }; if err := h.deps.Store.PauseTimer(r.Context(), userID, req.ID, time.Now().UTC()); err != nil { http.Error(w, err.Error(), http.StatusInternalServerError); return }; writeJSON(w, map[string]any{"ok": true, "paused": true, "id": req.ID})
 }
 
 func (h *Handler) handleResumeTimer(w http.ResponseWriter, r *http.Request) {
-	userID, ok := h.userID(r)
-	if !ok || userID == "" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	var req struct {
-		ID int64 `json:"id"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ID <= 0 {
-		http.Error(w, "valid id is required", http.StatusBadRequest)
-		return
-	}
-	if err := h.deps.Store.ResumeTimer(r.Context(), userID, req.ID, time.Now().UTC()); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	writeJSON(w, map[string]any{"ok": true, "resumed": true, "id": req.ID})
+	userID, ok := h.userID(r); if !ok || userID == "" { http.Error(w, "unauthorized", http.StatusUnauthorized); return }; var req struct { ID int64 `json:"id"` }; if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ID <= 0 { http.Error(w, "valid id is required", http.StatusBadRequest); return }; if err := h.deps.Store.ResumeTimer(r.Context(), userID, req.ID, time.Now().UTC()); err != nil { http.Error(w, err.Error(), http.StatusInternalServerError); return }; writeJSON(w, map[string]any{"ok": true, "resumed": true, "id": req.ID})
 }
 
 func (h *Handler) handleGetPrivacy(w http.ResponseWriter, r *http.Request) {
-	userID, ok := h.userID(r)
-	if !ok || userID == "" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	ctx := r.Context()
-	pol, okPolicy, err := h.deps.Store.GetPrivacyPolicy(ctx, userID)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if !okPolicy {
-		pol = privacy.Policy{
-			UserID:                    userID,
-			SaveVoiceAudio:            false,
-			VoiceMailPolicy:           "disabled",
-			LongTermMemoryEnabled:     false,
-			ConversationRetentionDays: 30,
-			VoiceMemoRetentionDays:    30,
-			MemoryRetentionDays:       90,
-			UpdatedAt:                 time.Now().UTC(),
-		}
-	}
+	userID, ok := h.userID(r); if !ok || userID == "" { http.Error(w, "unauthorized", http.StatusUnauthorized); return }; pol, okPolicy, err := h.deps.Store.GetPrivacyPolicy(r.Context(), userID); if err != nil { http.Error(w, err.Error(), http.StatusInternalServerError); return }
+	if !okPolicy { pol = privacy.Policy{UserID:userID, SaveVoiceAudio:false, VoiceMailPolicy:"disabled", LongTermMemoryEnabled:false, ConversationRetentionDays:30, VoiceMemoRetentionDays:30, MemoryRetentionDays:90, UpdatedAt:time.Now().UTC()} }
 	writeJSON(w, map[string]any{"privacy": pol})
 }
 
 func (h *Handler) handleSetPrivacy(w http.ResponseWriter, r *http.Request) {
-	userID, ok := h.userID(r)
-	if !ok || userID == "" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	ctx := r.Context()
-	var req privacy.Policy
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid privacy payload", http.StatusBadRequest)
-		return
-	}
-	req.UserID = userID
-	req.UpdatedAt = time.Now().UTC()
-	if err := h.deps.Store.SetPrivacyPolicy(ctx, req); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	writeJSON(w, map[string]any{"ok": true, "privacy": req})
+	userID, ok := h.userID(r); if !ok || userID == "" { http.Error(w, "unauthorized", http.StatusUnauthorized); return }; var req privacy.Policy; if err := json.NewDecoder(r.Body).Decode(&req); err != nil { http.Error(w, "invalid privacy payload", http.StatusBadRequest); return }; req.UserID=userID; req.UpdatedAt=time.Now().UTC(); if err := h.deps.Store.SetPrivacyPolicy(r.Context(), req); err != nil { http.Error(w, err.Error(), http.StatusInternalServerError); return }; writeJSON(w, map[string]any{"ok":true,"privacy":req})
 }
 
 func (h *Handler) userID(r *http.Request) (string, bool) {
-	if session, ok := ownerauth.CurrentSession(r.Context()); ok && session.UserID != "" {
-		return session.UserID, true
-	}
-	if h.deps.Auth == nil {
-		return "default", true
-	}
+	if session, ok := ownerauth.CurrentSession(r.Context()); ok && session.UserID != "" { return session.UserID, true }
+	if h.deps.Auth == nil { return "default", true }
 	return "", false
 }
 
 func parseQueryRange(r *http.Request) (time.Time, time.Time) {
-	fromStr := strings.TrimSpace(r.URL.Query().Get("from"))
-	toStr := strings.TrimSpace(r.URL.Query().Get("to"))
-	now := time.Now().UTC()
-	from := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
-	to := from.AddDate(0, 1, 0)
-	if fromStr != "" {
-		if t, err := time.Parse(time.RFC3339, fromStr); err == nil {
-			from = t.UTC()
-		}
-	}
-	if toStr != "" {
-		if t, err := time.Parse(time.RFC3339, toStr); err == nil {
-			to = t.UTC()
-		}
-	}
-	return from, to
+	fromStr, toStr := strings.TrimSpace(r.URL.Query().Get("from")), strings.TrimSpace(r.URL.Query().Get("to")); now := time.Now().UTC(); from := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC); to := from.AddDate(0,1,0); if fromStr!="" { if t,err:=time.Parse(time.RFC3339,fromStr); err==nil { from=t.UTC() } }; if toStr!="" { if t,err:=time.Parse(time.RFC3339,toStr); err==nil { to=t.UTC() } }; return from,to
 }
 
-func parseQueryLimit(r *http.Request, fallback int) int {
-	limStr := strings.TrimSpace(r.URL.Query().Get("limit"))
-	if limStr == "" {
-		return fallback
-	}
-	n, err := strconv.Atoi(limStr)
-	if err != nil || n < 1 {
-		return fallback
-	}
-	if n > 100 {
-		return 100
-	}
-	return n
-}
+func parseQueryLimit(r *http.Request, fallback int) int { limStr:=strings.TrimSpace(r.URL.Query().Get("limit")); if limStr=="" { return fallback }; n,err:=strconv.Atoi(limStr); if err!=nil||n<1 { return fallback }; if n>100 { return 100 }; return n }
 
-func writeJSON(w http.ResponseWriter, v any) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store")
-	_ = json.NewEncoder(w).Encode(v)
-}
+func writeJSON(w http.ResponseWriter, v any) { w.Header().Set("Content-Type","application/json; charset=utf-8"); w.Header().Set("Cache-Control","no-store"); _=json.NewEncoder(w).Encode(v) }
 
 const loginRedirectHTML = `<!doctype html>
 <meta name="viewport" content="width=device-width,initial-scale=1">
