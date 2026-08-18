@@ -1,0 +1,46 @@
+name: Temporary capability turn patch
+
+on:
+  push:
+    branches:
+      - feat/capability-hardening-246
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/capability-hardening-246
+          fetch-depth: 0
+      - name: Apply exact software-device turn binding patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('host/companion_software_device/websocket_backend.cpp')
+          text = path.read_text()
+          old = '''      const bool sent = send_text(encode_control(\n          static_cast<int>(protocol::ControlType::capability_result), result.dump(), {},\n          correlation_id, true, result_generation));'''
+          new = '''      const bool sent = send_text(encode_control(\n          static_cast<int>(protocol::ControlType::capability_result), result.dump(), incoming_turn,\n          correlation_id, true, result_generation));'''
+          if text.count(old) != 1:
+              raise SystemExit(f'expected exact capability-result call once, found {text.count(old)}')
+          path.write_text(text.replace(old, new, 1))
+          PY
+          git diff --check
+          git diff -- host/companion_software_device/websocket_backend.cpp
+      - name: Commit exact patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add host/companion_software_device/websocket_backend.cpp
+          git commit -m 'fix(tier1): echo turn id in capability results'
+          git push origin HEAD:feat/capability-hardening-246
