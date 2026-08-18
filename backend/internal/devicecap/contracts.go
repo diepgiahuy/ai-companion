@@ -141,7 +141,10 @@ func defaultContracts() []Contract {
 			Audience:    ContractAudienceModel,
 			InputSchema: volumeInput,
 			ResultSchema: objectSchema(
-				map[string]any{"applied": map[string]any{"type": "boolean"}},
+				map[string]any{
+					"applied": map[string]any{"type": "boolean"},
+					"volume":  map[string]any{"type": "integer", "minimum": 0, "maximum": 100},
+				},
 				[]string{"applied"},
 			),
 			ToolDefinition: &capability.ToolDefinition{
