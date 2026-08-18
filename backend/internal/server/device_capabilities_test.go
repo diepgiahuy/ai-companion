@@ -20,18 +20,42 @@ func capabilityTestSession(t *testing.T) (*session, *devicecap.Router) {
 		id: "session-cap-test", deviceID: "device-a", userID: "user-a", hub: service.hub,
 		controlWrites: make(chan outbound, 16), mediaWrites: make(chan outbound, 4),
 		seenInbound: map[string]inboundRecord{}, generation: 7,
+		active: &turn{id: "turn-cap", generation: 7},
 	}
 	advertise, err := protocol.Encode(protocol.CapabilityAdvertiseType, protocol.Metadata{
 		MessageID: "advertise-1", SessionID: s.id,
 	}, protocol.CapabilityAdvertisePayload{Capabilities: []protocol.CapabilityDescriptor{{
 		Name: devicecap.VolumeSetName, Version: devicecap.VolumeSetVersion, Kind: "command",
 	}}})
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	handled, err := s.handleCapabilityControl(context.Background(), advertise)
-	if err != nil || !handled { t.Fatalf("advertise handled=%v err=%v", handled, err) }
-	if !s.Supports(devicecap.VolumeSetName, devicecap.VolumeSetVersion) { t.Fatal("advertised capability unavailable") }
+	if err != nil || !handled {
+		t.Fatalf("advertise handled=%v err=%v", handled, err)
+	}
+	if !s.Supports(devicecap.VolumeSetName, devicecap.VolumeSetVersion) {
+		t.Fatal("advertised capability unavailable")
+	}
 	t.Cleanup(func() { detachDeviceCapabilities(s) })
 	return s, router
+}
+
+func TestDeviceCapabilityRejectsNonCurrentTurnBeforeSend(t *testing.T) {
+	s, router := capabilityTestSession(t)
+	_, err := router.Call(context.Background(), s.deviceID, devicecap.Call{
+		Name: devicecap.VolumeSetName, Version: devicecap.VolumeSetVersion,
+		Arguments: json.RawMessage(`{"volume":42}`), TurnID: "turn-other", Deadline: time.Now().Add(time.Second),
+	})
+	if err == nil {
+		t.Fatal("non-current turn capability call accepted")
+	}
+	select {
+	case frame := <-s.controlWrites:
+		envelope, decodeErr := protocol.Decode(frame.data)
+		t.Fatalf("non-current turn emitted frame=%+v decodeErr=%v", envelope, decodeErr)
+	case <-time.After(50 * time.Millisecond):
+	}
 }
 
 func TestDeviceCapabilityCallCorrelatesSuccessfulResult(t *testing.T) {
@@ -41,28 +65,38 @@ func TestDeviceCapabilityCallCorrelatesSuccessfulResult(t *testing.T) {
 	go func() {
 		result, err := router.Call(context.Background(), s.deviceID, devicecap.Call{
 			Name: devicecap.VolumeSetName, Version: devicecap.VolumeSetVersion,
-			Arguments: json.RawMessage(`{"volume":42}`), Deadline: time.Now().Add(time.Second),
+			Arguments: json.RawMessage(`{"volume":42}`), TurnID: "turn-cap", Deadline: time.Now().Add(time.Second),
 		})
-		if err != nil { errCh <- err; return }
+		if err != nil {
+			errCh <- err
+			return
+		}
 		resultCh <- result
 	}()
 
 	call := <-s.controlWrites
 	envelope, err := protocol.Decode(call.data)
-	if err != nil { t.Fatal(err) }
-	if envelope.Type != protocol.CapabilityCallType || envelope.CorrelationID == "" || envelope.GenerationID != 7 {
+	if err != nil {
+		t.Fatal(err)
+	}
+	if envelope.Type != protocol.CapabilityCallType || envelope.CorrelationID == "" || envelope.GenerationID != 7 || envelope.TurnID != "turn-cap" {
 		t.Fatalf("call envelope=%+v", envelope)
 	}
 	payload, err := protocol.DecodePayload[protocol.CapabilityCallPayload](envelope)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	if payload.Name != devicecap.VolumeSetName || payload.Version != devicecap.VolumeSetVersion {
 		t.Fatalf("call payload=%+v", payload)
 	}
 
 	response, err := protocol.Encode(protocol.CapabilityResultType, protocol.Metadata{
-		MessageID: "result-1", SessionID: s.id, CorrelationID: envelope.CorrelationID, GenerationID: envelope.GenerationID,
+		MessageID: "result-1", SessionID: s.id, CorrelationID: envelope.CorrelationID,
+		TurnID: envelope.TurnID, GenerationID: envelope.GenerationID,
 	}, protocol.CapabilityResultPayload{OK: true, Value: json.RawMessage(`{"applied":true}`)})
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	if handled, err := s.handleCapabilityControl(context.Background(), response); err != nil || !handled {
 		t.Fatalf("result handled=%v err=%v", handled, err)
 	}
@@ -70,34 +104,91 @@ func TestDeviceCapabilityCallCorrelatesSuccessfulResult(t *testing.T) {
 	case err := <-errCh:
 		t.Fatal(err)
 	case result := <-resultCh:
-		if string(result.Value) != `{"applied":true}` { t.Fatalf("value=%s", result.Value) }
+		if string(result.Value) != `{"applied":true}` {
+			t.Fatalf("value=%s", result.Value)
+		}
 	case <-time.After(time.Second):
 		t.Fatal("capability result timed out")
 	}
 }
 
-func TestDeviceCapabilityCancelSendsExplicitCancelAndReturnsContextError(t *testing.T) {
+func TestDeviceCapabilityNonCancelableCallReturnsContextErrorWithoutCancelFrame(t *testing.T) {
 	s, router := capabilityTestSession(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
 	go func() {
 		_, err := router.Call(ctx, s.deviceID, devicecap.Call{
 			Name: devicecap.VolumeSetName, Version: devicecap.VolumeSetVersion,
-			Arguments: json.RawMessage(`{"volume":10}`), Deadline: time.Now().Add(2 * time.Second),
+			Arguments: json.RawMessage(`{"volume":10}`), TurnID: "turn-cap", Deadline: time.Now().Add(2 * time.Second),
 		})
 		errCh <- err
 	}()
 	call := <-s.controlWrites
 	callEnvelope, err := protocol.Decode(call.data)
-	if err != nil { t.Fatal(err) }
-	cancel()
-	cancelFrame := <-s.controlWrites
-	cancelEnvelope, err := protocol.Decode(cancelFrame.data)
-	if err != nil { t.Fatal(err) }
-	if cancelEnvelope.Type != protocol.CapabilityCancelType || cancelEnvelope.CorrelationID != callEnvelope.CorrelationID || cancelEnvelope.GenerationID != callEnvelope.GenerationID {
-		t.Fatalf("cancel envelope=%+v call=%+v", cancelEnvelope, callEnvelope)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if err := <-errCh; !errors.Is(err, context.Canceled) { t.Fatalf("call err=%v", err) }
+	if callEnvelope.Type != protocol.CapabilityCallType {
+		t.Fatalf("call envelope=%+v", callEnvelope)
+	}
+	cancel()
+	if err := <-errCh; !errors.Is(err, context.Canceled) {
+		t.Fatalf("call err=%v", err)
+	}
+	select {
+	case frame := <-s.controlWrites:
+		envelope, decodeErr := protocol.Decode(frame.data)
+		t.Fatalf("non-cancelable volume call emitted frame=%+v decodeErr=%v", envelope, decodeErr)
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+func TestDeviceCapabilityRejectsMalformedSuccessfulResult(t *testing.T) {
+	s, router := capabilityTestSession(t)
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := router.Call(context.Background(), s.deviceID, devicecap.Call{
+			Name: devicecap.VolumeSetName, Version: devicecap.VolumeSetVersion,
+			Arguments: json.RawMessage(`{"volume":20}`), TurnID: "turn-cap", Deadline: time.Now().Add(time.Second),
+		})
+		errCh <- err
+	}()
+	call := <-s.controlWrites
+	envelope, err := protocol.Decode(call.data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	malformed, err := protocol.Encode(protocol.CapabilityResultType, protocol.Metadata{
+		MessageID: "bad-result", SessionID: s.id, CorrelationID: envelope.CorrelationID,
+		TurnID: envelope.TurnID, GenerationID: envelope.GenerationID,
+	}, protocol.CapabilityResultPayload{OK: true, Value: json.RawMessage(`{"unexpected":true}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if handled, err := s.handleCapabilityControl(context.Background(), malformed); err != nil || !handled {
+		t.Fatalf("malformed result dispatch handled=%v err=%v", handled, err)
+	}
+	if err := <-errCh; !errors.Is(err, devicecap.ErrContractViolation) {
+		t.Fatalf("malformed result err=%v", err)
+	}
+}
+
+func TestCapabilityAdvertisementUsesCatalogAndPreservesPreviousSetOnInvalidReplacement(t *testing.T) {
+	s, _ := capabilityTestSession(t)
+	invalid, err := protocol.Encode(protocol.CapabilityAdvertiseType, protocol.Metadata{
+		MessageID: "advertise-invalid", SessionID: s.id,
+	}, protocol.CapabilityAdvertisePayload{Capabilities: []protocol.CapabilityDescriptor{{
+		Name: devicecap.VolumeSetName, Version: "2", Kind: "command",
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if handled, err := s.handleCapabilityControl(context.Background(), invalid); !handled || err == nil {
+		t.Fatalf("invalid replacement handled=%v err=%v", handled, err)
+	}
+	if !s.Supports(devicecap.VolumeSetName, devicecap.VolumeSetVersion) {
+		t.Fatal("invalid replacement mutated previous accepted capability set")
+	}
 }
 
 func TestDeviceCapabilityRejectsStaleGenerationAndDisconnectsEndpoint(t *testing.T) {
@@ -108,29 +199,37 @@ func TestDeviceCapabilityRejectsStaleGenerationAndDisconnectsEndpoint(t *testing
 	go func() {
 		_, err := router.Call(ctx, s.deviceID, devicecap.Call{
 			Name: devicecap.VolumeSetName, Version: devicecap.VolumeSetVersion,
-			Arguments: json.RawMessage(`{"volume":20}`), Deadline: time.Now().Add(2 * time.Second),
+			Arguments: json.RawMessage(`{"volume":20}`), TurnID: "turn-cap", Deadline: time.Now().Add(2 * time.Second),
 		})
 		errCh <- err
 	}()
 	call := <-s.controlWrites
 	envelope, err := protocol.Decode(call.data)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	s.mu.Lock()
 	s.generation++
 	s.mu.Unlock()
 	stale, err := protocol.Encode(protocol.CapabilityResultType, protocol.Metadata{
-		MessageID: "stale-result", SessionID: s.id, CorrelationID: envelope.CorrelationID, GenerationID: envelope.GenerationID,
+		MessageID: "stale-result", SessionID: s.id, CorrelationID: envelope.CorrelationID,
+		TurnID: envelope.TurnID, GenerationID: envelope.GenerationID,
 	}, protocol.CapabilityResultPayload{OK: true, Value: json.RawMessage(`{"applied":true}`)})
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	if handled, err := s.handleCapabilityControl(context.Background(), stale); !handled || err == nil {
 		t.Fatalf("stale result handled=%v err=%v", handled, err)
 	}
 	cancel()
-	<-s.controlWrites // explicit cancellation for the pending call
-	if err := <-errCh; !errors.Is(err, context.Canceled) { t.Fatalf("call err=%v", err) }
+	if err := <-errCh; !errors.Is(err, context.Canceled) {
+		t.Fatalf("call err=%v", err)
+	}
 
 	detachDeviceCapabilities(s)
-	if s.Supports(devicecap.VolumeSetName, devicecap.VolumeSetVersion) { t.Fatal("detached session still supports capability") }
+	if s.Supports(devicecap.VolumeSetName, devicecap.VolumeSetVersion) {
+		t.Fatal("detached session still supports capability")
+	}
 	if _, err := router.Call(context.Background(), s.deviceID, devicecap.Call{Name: devicecap.VolumeSetName, Version: devicecap.VolumeSetVersion}); !errors.Is(err, devicecap.ErrOffline) {
 		t.Fatalf("router after disconnect err=%v", err)
 	}

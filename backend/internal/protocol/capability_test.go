@@ -26,12 +26,16 @@ func TestCapabilityMessagesRoundTripAndValidate(t *testing.T) {
 	}
 }
 
-func TestCapabilityAdvertiseRejectsDuplicateAndInjectedShape(t *testing.T) {
+func TestCapabilityAdvertiseRejectsDuplicateReadAndInjectedShape(t *testing.T) {
 	payload := CapabilityAdvertisePayload{Capabilities: []CapabilityDescriptor{
 		{Name: "device.volume.set", Version: "1", Kind: "command"},
 		{Name: "device.volume.set", Version: "1", Kind: "command"},
 	}}
 	if err := payload.Validate(); err == nil { t.Fatal("duplicate descriptor accepted") }
+
+	if err := (CapabilityDescriptor{Name: "device.battery.read", Version: "1", Kind: "read"}).Validate(); err == nil {
+		t.Fatal("Product-v1 read capability accepted")
+	}
 
 	raw := []byte(`{"version":2,"type":"capability.advertise","message_id":"m","session_id":"s","payload":{"capabilities":[{"name":"device.volume.set","version":"1","kind":"command","schema":{"type":"object"}}]}}`)
 	envelope, err := Decode(raw)

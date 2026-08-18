@@ -8,8 +8,6 @@
 
 namespace companion {
 namespace {
-constexpr std::string_view kConfirmationName = "device.user_confirmation";
-constexpr std::string_view kConfirmationVersion = "1";
 
 template <size_t N>
 std::string_view fixed_view(const std::array<char, N>& value) {
@@ -153,26 +151,38 @@ bool WebSocketVoiceBackend::advertise_capabilities() {
                                     static_cast<unsigned long long>(
                                         message_sequence_.fetch_add(1) + 1));
   if (id_size <= 0 || static_cast<size_t>(id_size) >= message_id.size()) return false;
+
   const bool confirm = confirmation_protocol_enabled_.load();
+  const CapabilityRegistry registry = make_capability_registry(confirm);
   char payload[512]{};
-  if (confirm) {
-    std::snprintf(payload, sizeof(payload),
-                  "{\"capabilities\":["
-                  "{\"name\":\"device.user_confirmation\",\"version\":\"1\",\"kind\":\"command\"},"
-                  "{\"name\":\"device.settings_v1\",\"version\":\"1\",\"kind\":\"command\"}"
-                  "]}");
-  } else {
-    std::snprintf(payload, sizeof(payload),
-                  "{\"capabilities\":["
-                  "{\"name\":\"device.settings_v1\",\"version\":\"1\",\"kind\":\"command\"}"
-                  "]}");
+  size_t payload_size = 0;
+  int length = std::snprintf(payload, sizeof(payload), "{\"capabilities\":[");
+  if (length <= 0 || static_cast<size_t>(length) >= sizeof(payload)) return false;
+  payload_size = static_cast<size_t>(length);
+  for (size_t index = 0; index < registry.size(); ++index) {
+    const CapabilityDefinition& definition = registry[index];
+    const size_t remaining = sizeof(payload) - payload_size;
+    length = std::snprintf(
+        payload + payload_size, remaining,
+        "%s{\"name\":\"%.*s\",\"version\":\"%.*s\",\"kind\":\"%.*s\"}",
+        index == 0 ? "" : ",", static_cast<int>(definition.name.size()),
+        definition.name.data(), static_cast<int>(definition.version.size()),
+        definition.version.data(), static_cast<int>(definition.kind.size()),
+        definition.kind.data());
+    if (length <= 0 || static_cast<size_t>(length) >= remaining) return false;
+    payload_size += static_cast<size_t>(length);
   }
+  const size_t remaining = sizeof(payload) - payload_size;
+  length = std::snprintf(payload + payload_size, remaining, "]}");
+  if (length <= 0 || static_cast<size_t>(length) >= remaining) return false;
+  payload_size += static_cast<size_t>(length);
+
   std::array<char, 768> encoded{};
   size_t written = 0;
   const protocol::Envelope envelope{
       .type = protocol::ControlType::capability_advertise,
       .message_id = message_id.data(),
-      .payload_json = payload,
+      .payload_json = {payload, payload_size},
       .correlation_id = {},
       .session_id = session,
       .turn_id = {},
@@ -345,8 +355,8 @@ bool WebSocketVoiceBackend::handle_confirmation_call(
       turn.empty() || turn.size() > 128 || !active_turn_matches(turn) ||
       !exact_uint64(generation, generation_id) || generation_id == 0 ||
       !has_only_fields(payload, {"name", "version", "arguments", "deadline_ms"}) ||
-      json_string(payload, "name") != kConfirmationName ||
-      json_string(payload, "version") != kConfirmationVersion) {
+      json_string(payload, "name") != kUserConfirmationCapability ||
+      json_string(payload, "version") != kUserConfirmationCapabilityVersion) {
     enqueue_event(BackendEventType::error, "INVALID CONFIRMATION CONTROL");
     return true;
   }
@@ -522,7 +532,7 @@ bool WebSocketVoiceBackend::handle_settings_call(
       !has_only_fields(settings_obj,
                        {"smart_vad_enabled", "vad_threshold", "vad_silence_ms",
                         "vad_min_speech_ms", "idle_after_ms", "alarm_visible_ms",
-                        "ota_poll_interval_s", "wake_model"})) {
+                        "ota_poll_interval_s"})) {
     SettingsTwin rejected{.version = target_version};
     (void)enqueue_settings_result(correlation, {}, 0, false,
                                   false, &rejected, "invalid_argument");
@@ -569,13 +579,6 @@ bool WebSocketVoiceBackend::handle_settings_call(
   PARSE_U32_SETTING("ota_poll_interval_s", ota_poll_interval_s);
 #undef PARSE_U32_SETTING
 
-  if (const cJSON* wake = cJSON_GetObjectItemCaseSensitive(settings_obj, "wake_model");
-      wake != nullptr) {
-    if (!cJSON_IsString(wake) || wake->valuestring == nullptr) goto invalid_settings;
-    const std::string_view model = wake->valuestring;
-    if (model.empty() || model.size() >= parsed.wake_model.size()) goto invalid_settings;
-    parsed.set_wake_model(model);
-  }
   if (!parsed.validate()) goto invalid_settings;
 
   {

@@ -16,11 +16,16 @@ import (
 	"companion-server/internal/protocol"
 )
 
+type capabilityResponse struct {
+	payload protocol.CapabilityResultPayload
+	err     error
+}
+
 type capabilityPending struct {
-	generation    uint64
-	turnID        string
-	sessionScoped bool
-	result        chan protocol.CapabilityResultPayload
+	generation uint64
+	turnID     string
+	contract   devicecap.Contract
+	result     chan capabilityResponse
 }
 
 type sessionCapabilityState struct {
@@ -45,18 +50,6 @@ func WithDeviceCapabilities(router *devicecap.Router) Option {
 
 func capabilityKey(name, version string) string {
 	return strings.TrimSpace(name) + "@" + strings.TrimSpace(version)
-}
-
-func allowedDeviceCapability(descriptor protocol.CapabilityDescriptor) bool {
-	if descriptor.Version != "1" || descriptor.Kind != "command" {
-		return false
-	}
-	switch descriptor.Name {
-	case devicecap.VolumeSetName, devicecap.UserConfirmationName, devicecap.SettingsName:
-		return true
-	default:
-		return false
-	}
 }
 
 func capabilityState(s *session, create bool) *sessionCapabilityState {
@@ -92,8 +85,15 @@ func (s *session) Call(ctx context.Context, call devicecap.Call) (devicecap.Resu
 	if state == nil {
 		return devicecap.Result{}, devicecap.ErrOffline
 	}
+	contract, known := state.router.Contract(call.Name, call.Version)
+	if !known {
+		return devicecap.Result{}, devicecap.ErrUnsupported
+	}
 	if !s.Supports(call.Name, call.Version) {
 		return devicecap.Result{}, devicecap.ErrUnsupported
+	}
+	if err := contract.ValidateInput(call.Arguments); err != nil {
+		return devicecap.Result{}, fmt.Errorf("%w: %v", devicecap.ErrContractViolation, err)
 	}
 	if err := ctx.Err(); err != nil {
 		return devicecap.Result{}, err
@@ -103,19 +103,27 @@ func (s *session) Call(ctx context.Context, call devicecap.Call) (devicecap.Resu
 		return devicecap.Result{}, fmt.Errorf("device capability turn_id exceeds size limit")
 	}
 
-	// Settings reconciliation is intentionally session-scoped. It must work
-	// immediately after capability advertisement, before the first conversational
-	// turn creates a media generation. Turn-owned capabilities keep the existing
-	// generation binding so stale results cannot cross a barge-in/cancel boundary.
-	sessionScoped := call.Name == devicecap.SettingsName && turnID == ""
 	var generation uint64
-	if !sessionScoped {
+	switch contract.Scope {
+	case devicecap.ContractScopeSession:
+		if turnID != "" {
+			return devicecap.Result{}, fmt.Errorf("session-scoped device capability must not include turn_id")
+		}
+	case devicecap.ContractScopeTurn:
+		if turnID == "" {
+			return devicecap.Result{}, fmt.Errorf("turn-scoped device capability requires turn_id")
+		}
 		s.mu.Lock()
 		generation = s.generation
+		active := s.active
+		activeMatches := active != nil && active.id == turnID &&
+			active.generation == generation && generation != 0
 		s.mu.Unlock()
-		if generation == 0 {
-			return devicecap.Result{}, fmt.Errorf("turn-scoped device capability requires an active generation")
+		if !activeMatches {
+			return devicecap.Result{}, fmt.Errorf("turn-scoped device capability requires the active turn and generation")
 		}
+	default:
+		return devicecap.Result{}, fmt.Errorf("device capability has unsupported scope %q", contract.Scope)
 	}
 
 	deadline := call.Deadline
@@ -140,8 +148,10 @@ func (s *session) Call(ctx context.Context, call devicecap.Call) (devicecap.Resu
 
 	correlationID := "cap-" + s.nextMessageID()
 	waiter := &capabilityPending{
-		generation: generation, turnID: turnID, sessionScoped: sessionScoped,
-		result: make(chan protocol.CapabilityResultPayload, 1),
+		generation: generation,
+		turnID:     turnID,
+		contract:   contract,
+		result:     make(chan capabilityResponse, 1),
 	}
 	state.mu.Lock()
 	if state.closed {
@@ -168,18 +178,23 @@ func (s *session) Call(ctx context.Context, call devicecap.Call) (devicecap.Resu
 	defer cancel()
 	select {
 	case <-waitCtx.Done():
-		cancelCtx, cancelSend := context.WithTimeout(context.Background(), 250*time.Millisecond)
-		_ = s.sendJSONMeta(cancelCtx, protocol.CapabilityCancelType, protocol.Metadata{CorrelationID: correlationID, TurnID: turnID, GenerationID: generation}, protocol.CapabilityCancelPayload{Reason: capabilityCancelReason(waitCtx.Err())})
-		cancelSend()
+		if contract.Cancelable {
+			cancelCtx, cancelSend := context.WithTimeout(context.Background(), 250*time.Millisecond)
+			_ = s.sendJSONMeta(cancelCtx, protocol.CapabilityCancelType, protocol.Metadata{CorrelationID: correlationID, TurnID: turnID, GenerationID: generation}, protocol.CapabilityCancelPayload{Reason: capabilityCancelReason(waitCtx.Err())})
+			cancelSend()
+		}
 		return devicecap.Result{}, waitCtx.Err()
-	case result, ok := <-waiter.result:
+	case response, ok := <-waiter.result:
 		if !ok {
 			return devicecap.Result{}, devicecap.ErrOffline
 		}
-		if !result.OK {
-			return devicecap.Result{}, capabilityRemoteError(result.Error)
+		if response.err != nil {
+			return devicecap.Result{}, response.err
 		}
-		return devicecap.Result{Value: append(json.RawMessage(nil), result.Value...)}, nil
+		if !response.payload.OK {
+			return devicecap.Result{}, capabilityRemoteError(response.payload.Error)
+		}
+		return devicecap.Result{Value: append(json.RawMessage(nil), response.payload.Value...)}, nil
 	}
 }
 
@@ -242,8 +257,9 @@ func (s *session) handleCapabilityControl(ctx context.Context, data []byte) (boo
 			}
 			advertised := make(map[string]protocol.CapabilityDescriptor, len(payload.Capabilities))
 			for _, descriptor := range payload.Capabilities {
-				if !allowedDeviceCapability(descriptor) {
-					return fmt.Errorf("unsupported advertised capability %s@%s", descriptor.Name, descriptor.Version)
+				contract, known := state.router.Contract(descriptor.Name, descriptor.Version)
+				if !known || descriptor.Kind != contract.Kind {
+					return fmt.Errorf("unsupported advertised capability %s@%s kind=%s", descriptor.Name, descriptor.Version, descriptor.Kind)
 				}
 				advertised[capabilityKey(descriptor.Name, descriptor.Version)] = descriptor
 			}
@@ -284,13 +300,19 @@ func (s *session) handleCapabilityControl(ctx context.Context, data []byte) (boo
 			}
 			delete(state.pending, message.CorrelationID)
 			state.mu.Unlock()
-			if !waiter.sessionScoped && !s.generationCurrent(waiter.generation) {
+			if waiter.contract.Scope == devicecap.ContractScopeTurn && !s.generationCurrent(waiter.generation) {
 				return fmt.Errorf("stale capability generation")
+			}
+			response := capabilityResponse{payload: payload}
+			if payload.OK {
+				if err := waiter.contract.ValidateResult(payload.Value); err != nil {
+					response.err = fmt.Errorf("%w: %v", devicecap.ErrContractViolation, err)
+				}
 			}
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
-			case waiter.result <- payload:
+			case waiter.result <- response:
 				return nil
 			default:
 				return fmt.Errorf("duplicate capability result")

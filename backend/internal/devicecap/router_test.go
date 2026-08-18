@@ -76,7 +76,7 @@ func TestDeviceToolUsesTurnDeviceIDNotModelArguments(t *testing.T) {
 	if err := router.Register("device-b", endpointB); err != nil { t.Fatal(err) }
 	if err := RegisterTools(registry, router); err != nil { t.Fatal(err) }
 
-	ctx := pipeline.WithTurnContext(context.Background(), pipeline.TurnContext{UserID: "user-a", DeviceID: "device-a"})
+	ctx := pipeline.WithTurnContext(context.Background(), pipeline.TurnContext{UserID: "user-a", DeviceID: "device-a", TurnID: "turn-a"})
 	result := registry.Execute(ctx, VolumeSetName, capability.ToolRequest{Arguments: `{"volume":42}`})
 	var decoded map[string]any
 	if err := json.Unmarshal([]byte(result.Content), &decoded); err != nil { t.Fatal(err) }
@@ -89,6 +89,7 @@ func TestDeviceToolUsesTurnDeviceIDNotModelArguments(t *testing.T) {
 	var args map[string]any
 	if err := json.Unmarshal(endpointA.last.Arguments, &args); err != nil { t.Fatal(err) }
 	if args["volume"] != float64(42) { t.Fatalf("forwarded args=%v", args) }
+	if endpointA.last.TurnID != "turn-a" { t.Fatalf("forwarded turn=%q", endpointA.last.TurnID) }
 }
 
 func TestDeviceToolRejectsMissingTurnAndOutOfRangeBeforeEndpoint(t *testing.T) {

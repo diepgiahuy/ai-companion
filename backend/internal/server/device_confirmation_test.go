@@ -13,6 +13,9 @@ import (
 
 func advertiseConfirmationCapability(t *testing.T, s *session) {
 	t.Helper()
+	s.mu.Lock()
+	s.active = &turn{id: "turn-confirm", generation: s.generation}
+	s.mu.Unlock()
 	advertise, err := protocol.Encode(protocol.CapabilityAdvertiseType, protocol.Metadata{
 		MessageID: "advertise-confirmation", SessionID: s.id,
 	}, protocol.CapabilityAdvertisePayload{Capabilities: []protocol.CapabilityDescriptor{{

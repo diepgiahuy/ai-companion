@@ -15,12 +15,12 @@ const (
 )
 
 const (
-	CapabilityErrorUnsupported    = "unsupported"
+	CapabilityErrorUnsupported     = "unsupported"
 	CapabilityErrorInvalidArgument = "invalid_argument"
-	CapabilityErrorBusy           = "busy"
-	CapabilityErrorTimeout        = "timeout"
-	CapabilityErrorCanceled       = "canceled"
-	CapabilityErrorInternal       = "internal"
+	CapabilityErrorBusy            = "busy"
+	CapabilityErrorTimeout         = "timeout"
+	CapabilityErrorCanceled        = "canceled"
+	CapabilityErrorInternal        = "internal"
 	CapabilityErrorStaleGeneration = "stale_generation"
 )
 
@@ -37,12 +37,10 @@ func (d CapabilityDescriptor) Validate() error {
 	if err := validateOpaqueID("capability version", d.Version, 32); err != nil {
 		return err
 	}
-	switch d.Kind {
-	case "command", "read":
-		return nil
-	default:
+	if d.Kind != "command" {
 		return fmt.Errorf("unsupported capability kind %q", d.Kind)
 	}
+	return nil
 }
 
 type CapabilityAdvertisePayload struct {
