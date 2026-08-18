@@ -1,0 +1,287 @@
+name: one-shot-plan07-cleanup
+
+on:
+  push:
+    branches:
+      - feat/phase-03-settings-wake-plan07
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    if: github.event.head_commit.message != 'chore(plan07): apply one-shot source cleanup'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: feat/phase-03-settings-wake-plan07
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Apply fail-closed PLAN 07 cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected exactly one match, got {count}: {old[:80]!r}")
+              p.write_text(text.replace(old, new, 1))
+
+          # Firmware: settings events belong to one websocket session and the
+          # obsolete config helper is deleted rather than kept as an alias.
+          replace_once(
+              "components/esp32_network/src/websocket_voice_backend.cpp",
+              '''bool WebSocketVoiceBackend::enqueue_settings_event(const SettingsTwin& settings) {
+            BackendEvent event{};
+            event.type = BackendEventType::settings;
+            event.scope = BackendEventScope::global;
+            event.session_epoch = 0;
+            event.generation = 0;
+            event.set_settings(settings);
+            return xQueueSend(event_queue_, &event, 0) == pdPASS;
+          }
+
+          bool WebSocketVoiceBackend::enqueue_config_event(const RuntimeConfigPatch& config) {
+            return enqueue_settings_event(config);
+          }
+          ''',
+              '''bool WebSocketVoiceBackend::enqueue_settings_event(const SettingsTwin& settings) {
+            BackendEvent event{};
+            event.type = BackendEventType::settings;
+            event.scope = BackendEventScope::session;
+            event.session_epoch = session_epoch_.load();
+            event.generation = 0;
+            event.set_settings(settings);
+            return xQueueSend(event_queue_, &event, 0) == pdPASS;
+          }
+          ''')
+
+          # Software-device: remove temporary config_reports compatibility alias.
+          replace_once(
+              "host/companion_software_device/websocket_backend.hpp",
+              '''    // Temporary Tier-1 metric alias while main.cpp is migrated from the old
+              // config-report assertion to canonical settings capability apply evidence.
+              union {
+                uint64_t settings_applies{};
+                uint64_t config_reports;
+              };
+          ''',
+              '''    uint64_t settings_applies{};
+          ''')
+
+          p = Path("host/companion_software_device/main.cpp")
+          text = p.read_text()
+          replacements = {
+              "patch_device_config": "patch_device_settings",
+              '"config PATCH did not return 200"': '"settings PATCH did not return 200"',
+              '"config_reports", stats.config_reports': '"settings_applies", stats.settings_applies',
+              '"config_update_report"': '"settings_update_apply"',
+              '"live config update was not applied"': '"live settings update was not applied"',
+              'stats.config_reports > 0': 'stats.settings_applies > 0',
+              '"applied config was not reported to backend"': '"applied settings were not acknowledged to backend"',
+              '"config_version"': '"settings_version"',
+              'fixture.app.runtime_config_version()': 'fixture.app.settings_version()',
+          }
+          for old, new in replacements.items():
+              if old not in text:
+                  raise SystemExit(f"main.cpp: missing expected marker {old!r}")
+              text = text.replace(old, new)
+          p.write_text(text)
+
+          # Go test harness: delete transport concepts that no longer exist. No
+          # production compatibility types are reintroduced just to satisfy tests.
+          replace_once(
+              "backend/internal/server/server_test.go",
+              '''\tUI            any
+\tConfig        *protocol.RuntimeConfig
+\tConfigVersion int64
+\tApplied       bool
+''',
+              '''\tUI            any
+''')
+          replace_once(
+              "backend/internal/server/server_test.go",
+              '''\tcase protocol.ConfigReportType:
+\t\tif m.Config == nil {
+\t\t\treturn nil, fmt.Errorf("config is required")
+\t\t}
+\t\treturn protocol.Encode(m.Type, metadata, protocol.ConfigReportPayload{ConfigVersion: m.ConfigVersion, Applied: m.Applied, Config: *m.Config})
+''',
+              '''''')
+          replace_once(
+              "backend/internal/server/server_test.go",
+              '''\t\tm.Transport, m.AudioParams = payload.Transport, &payload.AudioParams
+\t\tm.Config, m.ConfigVersion = payload.Config, payload.ConfigVersion
+''',
+              '''\t\tm.Transport, m.AudioParams = payload.Transport, &payload.AudioParams
+''')
+          replace_once(
+              "backend/internal/server/server_test.go",
+              '''\tcase protocol.ConfigUpdateType:
+\t\tpayload, err := protocol.DecodePayload[protocol.ConfigUpdatePayload](envelope)
+\t\tif err != nil {
+\t\t\treturn err
+\t\t}
+\t\tm.Config, m.ConfigVersion = &payload.Config, payload.ConfigVersion
+''',
+              '''''')
+
+          # Server-side direct PATCH dispatch persists the exact device outcome,
+          # and GET projects durable status/failure metadata instead of rebuilding
+          # rejection truth from process-local state.
+          p = Path("backend/internal/server/server.go")
+          text = p.read_text()
+          dispatch_start = text.index("func (s *Server) dispatchSettingsUpdate(")
+          get_start = text.index("func (s *Server) handleTwinGet", dispatch_start)
+          strict_start = text.index("func decodeStrictJSON", get_start)
+          new_dispatch = r'''func (s *Server) dispatchSettingsUpdate(ctx context.Context, userID, deviceID string, twin controlplane.Twin) controlplane.Twin {
+\tonline := s.isDeviceOnline(deviceID)
+\tif !online {
+\t\tif status, err := s.controlPlane.SettingsStatus(ctx, userID, deviceID, false); err == nil {
+\t\t\ttwin.Status = controlplane.TwinStatus(status.State)
+\t\t} else {
+\t\t\ttwin.Status = controlplane.TwinStatusOffline
+\t\t}
+\t\treturn twin
+\t}
+\tsess := s.hub.get(deviceID)
+\tif sess == nil || !sess.Supports(devicecap.SettingsName, devicecap.SettingsVersion) {
+\t\ttwin.Status = controlplane.TwinStatusRequested
+\t\treturn twin
+\t}
+\targs, err := json.Marshal(devicecap.SettingsArgs{Version: twin.DesiredVersion, Settings: twin.Desired})
+\tif err != nil {
+\t\ttwin.Status = controlplane.TwinStatusRequested
+\t\treturn twin
+\t}
+\tcallCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+\tdefer cancel()
+\tres, err := sess.Call(callCtx, devicecap.Call{
+\t\tName: devicecap.SettingsName, Version: devicecap.SettingsVersion,
+\t\tArguments: args, Deadline: time.Now().Add(3 * time.Second),
+\t})
+\tif err != nil {
+\t\tif s.logger != nil {
+\t\t\ts.logger.Warn("settings dispatch failed", "device_id", deviceID, "error", err)
+\t\t}
+\t\ttwin.Status = controlplane.TwinStatusRequested
+\t\treturn twin
+\t}
+\tresult, err := decodeSettingsResult(res.Value)
+\tif err != nil {
+\t\tif s.logger != nil {
+\t\t\ts.logger.Warn("invalid settings result", "device_id", deviceID, "error", err)
+\t\t}
+\t\ttwin.Status = controlplane.TwinStatusRequested
+\t\treturn twin
+\t}
+\tif result.Version != twin.DesiredVersion {
+\t\tif s.logger != nil {
+\t\t\ts.logger.Warn("device acknowledged unexpected settings version", "device_id", deviceID, "want", twin.DesiredVersion, "got", result.Version)
+\t\t}
+\t\ttwin.Status = controlplane.TwinStatusRequested
+\t\treturn twin
+\t}
+\tfailureCode := strings.TrimSpace(result.Error)
+\tif !result.Applied && failureCode == "" {
+\t\tfailureCode = "device_rejected"
+\t}
+\treport := controlplane.ConfigReportResult{
+\t\tVersion: result.Version, Applied: result.Applied, Config: twin.Desired,
+\t\tFailureCode: failureCode, ReportedAt: time.Now().UTC(),
+\t}
+\tif err := s.controlPlane.ReportResult(ctx, userID, deviceID, report); err != nil {
+\t\tif s.logger != nil {
+\t\t\ts.logger.Warn("failed to persist settings outcome", "device_id", deviceID, "version", result.Version, "applied", result.Applied, "error", err)
+\t\t}
+\t\ttwin.Status = controlplane.TwinStatusRequested
+\t\treturn twin
+\t}
+\tif refreshed, err := s.controlPlane.Manifest(ctx, userID, deviceID); err == nil {
+\t\ttwin = refreshed
+\t}
+\tif status, err := s.controlPlane.SettingsStatus(ctx, userID, deviceID, true); err == nil {
+\t\ttwin.Status = controlplane.TwinStatus(status.State)
+\t} else if result.Applied {
+\t\ttwin.Status = controlplane.TwinStatusApplied
+\t} else {
+\t\ttwin.Status = controlplane.TwinStatusRejected
+\t}
+\treturn twin
+}
+'''
+          new_get = r'''func (s *Server) handleTwinGet(w http.ResponseWriter, r *http.Request) {
+\tif !s.adminOK(r) {
+\t\thttp.Error(w, "unauthorized", http.StatusUnauthorized)
+\t\treturn
+\t}
+\tuser := strings.TrimSpace(r.URL.Query().Get("user_id"))
+\tif user == "" {
+\t\tuser = "default"
+\t}
+\tdeviceID := r.PathValue("deviceID")
+\ttwin, err := s.controlPlane.Manifest(r.Context(), user, deviceID)
+\tif err != nil {
+\t\thttp.Error(w, err.Error(), http.StatusBadRequest)
+\t\treturn
+\t}
+\tstatus, err := s.controlPlane.SettingsStatus(r.Context(), user, deviceID, s.isDeviceOnline(deviceID))
+\tif err != nil {
+\t\thttp.Error(w, err.Error(), http.StatusInternalServerError)
+\t\treturn
+\t}
+\ttwin.Status = controlplane.TwinStatus(status.State)
+\tw.Header().Set("Content-Type", "application/json")
+\t_ = json.NewEncoder(w).Encode(struct {
+\t\tcontrolplane.Twin
+\t\tSettingsStatus controlplane.SettingsStatus `json:"settings_status"`
+\t}{Twin: twin, SettingsStatus: status})
+}
+
+'''
+          text = text[:dispatch_start] + new_dispatch + new_get + text[strict_start:]
+          p.write_text(text)
+
+          # Fail closed on any active source-level legacy symbols after cleanup.
+          active = [
+              Path("components/companion_app/include/companion/settings.hpp"),
+              Path("components/companion_app/include/companion/mock_backend.hpp"),
+              Path("components/companion_app/src/mock_backend.cpp"),
+              Path("components/esp32_network/src/websocket_voice_backend.cpp"),
+              Path("host/companion_software_device/main.cpp"),
+              Path("host/companion_software_device/websocket_backend.hpp"),
+              Path("backend/internal/server/server_test.go"),
+          ]
+          forbidden = ["RuntimeConfigPatch", "enqueue_config_event", "config_reports", "ConfigUpdateType", "ConfigReportType"]
+          for path in active:
+              data = path.read_text()
+              for marker in forbidden:
+                  if marker in data:
+                      raise SystemExit(f"{path}: legacy marker remains: {marker}")
+          PY
+
+          (cd backend && gofmt -w internal/server/server.go internal/server/server_test.go)
+          git diff --check
+
+      - name: Commit source cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "ai-companion-plan07-bot"
+          git config user.email "ai-companion-plan07-bot@users.noreply.github.com"
+          git add components/esp32_network/src/websocket_voice_backend.cpp \
+                  host/companion_software_device/websocket_backend.hpp \
+                  host/companion_software_device/main.cpp \
+                  backend/internal/server/server.go \
+                  backend/internal/server/server_test.go
+          git diff --cached --check
+          git commit -m "chore(plan07): apply one-shot source cleanup"
+          git push origin HEAD:feat/phase-03-settings-wake-plan07
