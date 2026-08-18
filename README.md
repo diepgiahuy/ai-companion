@@ -58,6 +58,8 @@ The product is intentionally a **modular monolith + firmware**, not a microservi
 - Durable native tools cover expenses, budgets, notes, journal, reminders/timers, voice memos, memory, conversation and related platform behavior.
 - External MCP is backend-side only. The official MCP Go SDK path and policy boundary are implemented; firmware does not run MCP.
 - Device-local commands use **Typed Companion Capability RPC** over Protocol v2, not MCP-on-device. The device advertises only supported capability identity; the backend remains authoritative for accepted contracts, model visibility, schema and policy.
+- Device model-tool exposure is invocation-scoped through ADK `DeviceToolset`; device-pack tools are not exported as process-wide static ADK tools.
+- Product-v1 capability descriptors are command-only. A read capability requires a future explicit contract/architecture change.
 - The durable capability architecture is owned by [`docs/ADR-003-DEVICE-CAPABILITY-PLANE.md`](docs/ADR-003-DEVICE-CAPABILITY-PLANE.md). Do not infer a second device protocol or device-owned model authority from reference projects.
 
 ### Data and jobs
@@ -109,7 +111,7 @@ Tier 3 — trusted physical HIL for RF/audio/display/power/OTA/peripheral claims
 Current evidence deliberately keeps these concerns separate:
 
 - PostgreSQL/Atlas/River software/data-plane behavior has hosted evidence.
-- Protocol/session/ToolRegistry/device-capability orchestration has deterministic/Tier-1 evidence for the implemented paths; generic capability hardening must earn its own exact-head evidence when it lands.
+- Protocol/session/ToolRegistry/device-capability orchestration has deterministic/Tier-1 evidence for the implemented paths. Capability hardening is covered by exact-head Go/host/ESP32/Tier-1 merge gates; physical volume effect remains unproven because physical firmware does not advertise volume.
 - Reference ASR/TTS/realtime/model adapters exist, but Production-v1 real VN/EN provider/model selection still requires measured evidence.
 - ESP-SR software integration exists, while enclosure AEC/wake/false-interruption/resource behavior remains physical qualification work.
 - Hardware/display selection remains purchase/physical-benchmark gated.
