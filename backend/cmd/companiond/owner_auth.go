@@ -71,7 +71,6 @@ func ownerAuthFromEnvironment(next http.Handler, store *pgstore.Store, control *
 		})
 	}
 	owner := limitOwnerLogins(service.Handler())
-	claimCodeRedeem := limitOwnerClaimCodeRedeems(http.HandlerFunc(service.HandleHumanClaimCodeRedeem))
 	var claims http.Handler
 	if claimRepository != nil {
 		key, keyErr := onboarding.DecodeEncryptionKey(os.Getenv("COMPANION_BOOTSTRAP_ENCRYPTION_KEY"))
@@ -125,12 +124,6 @@ func ownerAuthFromEnvironment(next http.Handler, store *pgstore.Store, control *
 			return
 		case r.URL.Path == "/v1/owner/claim-authorizations":
 			service.HandleBoundClaimAuthorization(w, r)
-			return
-		case r.URL.Path == "/v1/owner/device-claim-code":
-			service.HandleHumanClaimCode(w, r)
-			return
-		case r.URL.Path == "/v1/owner/device-claim-codes/redeem":
-			claimCodeRedeem.ServeHTTP(w, r)
 			return
 		case r.URL.Path == "/v1/owner/device-claims":
 			if claims == nil {
