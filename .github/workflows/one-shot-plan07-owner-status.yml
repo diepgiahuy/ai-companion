@@ -1,0 +1,76 @@
+name: one-shot-plan07-owner-status
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: feat/phase-03-settings-wake-plan07
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Make Owner Hub settings response truthful
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('backend/internal/ownerweb/dashboard.html')
+          text = path.read_text()
+          old = '''  try {
+    const res = await mutate('/v1/owner/data/device/config', 'POST', { device_id: selectedDeviceID, ota_poll_interval: val });
+    const data = await res.json();
+    banner.innerHTML = `✅ Interval updated to <b>${val}</b> for ${selectedDeviceID}.`;
+  } catch (e) {
+    banner.textContent = 'Failed to update interval';
+  }
+'''
+          new = '''  try {
+    const res = await mutate('/v1/owner/data/device/config', 'POST', { device_id: selectedDeviceID, ota_poll_interval: val });
+    let data = null;
+    try { data = await res.json(); } catch (_) {}
+    if (!res.ok || !data?.ok) {
+      banner.textContent = data?.error || `Failed to update interval (${res.status})`;
+      return;
+    }
+    const state = data?.settings_status?.state || 'requested';
+    const desired = data?.settings_status?.desired_version ?? data?.twin?.desired_version ?? '?';
+    const reported = data?.settings_status?.reported_version ?? data?.twin?.reported_version ?? '?';
+    banner.innerHTML = `Settings <b>${state}</b> for ${selectedDeviceID} • desired ${desired} • reported ${reported}`;
+  } catch (e) {
+    banner.textContent = 'Failed to update interval';
+  }
+'''
+          count = text.count(old)
+          if count == 1:
+              text = text.replace(old, new, 1)
+          elif count == 0 and new in text:
+              pass
+          else:
+              raise SystemExit(f'Owner Hub settings response block count={count}')
+          if '✅ Interval updated to <b>${val}</b>' in text:
+              raise SystemExit('unconditional settings success text remains')
+          path.write_text(text)
+          PY
+          git diff --check
+      - name: Commit if needed
+        run: |
+          set -euo pipefail
+          git config user.name "ai-companion-plan07-bot"
+          git config user.email "ai-companion-plan07-bot@users.noreply.github.com"
+          git add backend/internal/ownerweb/dashboard.html
+          if git diff --cached --quiet; then
+            echo already-applied
+            exit 0
+          fi
+          git diff --cached --check
+          git commit -m "fix(settings): show authoritative Owner Hub status"
+          git push origin HEAD:feat/phase-03-settings-wake-plan07
