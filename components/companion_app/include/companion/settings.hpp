@@ -79,6 +79,4 @@ struct SettingsTwin {
   }
 };
 
-using RuntimeConfigPatch = SettingsTwin;
-
 } // namespace companion
