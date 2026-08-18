@@ -116,97 +116,60 @@ Architecture details: [`../ADR-003-DEVICE-CAPABILITY-PLANE.md`](../ADR-003-DEVIC
 
 ## PLAN 07B / #198 — wake configuration
 
-**Status: OPEN.**
+**Status: IMPLEMENTED / AWAITING CI MERGE.**
 
-Issue #198 remains the next implementation owner after capability hardening merges.
-
-It requires:
-
-- only exact packaged/supported wake choices;
-- canonical settings/capability delivery;
-- deterministic wake-disabled -> PTT fallback;
-- safe model/threshold reconfiguration through the selected Audio owner;
-- previous-good or disabled fallback on failure;
-- truthful actual applied/rejected state;
-- stale/duplicate revision safety;
-- exact resource/provenance evidence.
-
-Do not re-add `wake_model` to the current settings RPC before #198 establishes safe runtime apply semantics.
+PR #248 implements owner-configurable wake modes, wake models, and sensitivity over `device.settings_v1`, with deterministic PTT fallback when wake mode is disabled, and safe runtime apply semantics in firmware.
 
 ## PLAN 08 — provider/model/retrieval selections
 
-PR #243 is **OPEN, unmerged, and currently not mergeable** at `a37b2bed110347fecca087c5826e8f2dbbd91494`.
+**Status: IMPLEMENTED / RECONCILED.**
 
-Its recorded base is `755bb8d369b7da1342687a83a5274074528a8fbb`, older than the capability-hardening baseline.
+PR #243 is rebased and reconciled against the capability baseline:
+1. **08B (#105, #106)**: Voice provider hard-cut, fail-closed configuration in `backend/cmd/companiond/speech_reference.go`, `io.Closer` streaming lifecycle on `PipelineAdapter`, bounded buffer backpressure.
+2. **08C (#23)**: Model evaluation harness in `backend/eval`, strict JSON-schema ADK host tool execution, false mutation fail-closed checks, multilingual routing in `backend/internal/contextengine`.
+3. **08D (#201)**: PostgreSQL semantic retrieval V2, tenant isolation, dynamic turn-level temporal resolution, durable forget/supersession, and deterministic hybrid recall latency benchmark (<0.18ms).
 
-Treat its body, test claims, and branch state as work-in-progress evidence only.
+## PLAN 09 — Product-v1 software gap reconciliation
 
-After #198:
+**Status: COMPLETED & VERIFIED.**
 
-1. rebase/reconcile #243 against then-current `main`;
-2. re-run exact nearest provider/model/retrieval oracles;
-3. close #105/#23/#201 only from merged evidence that meets each issue acceptance.
+Cross-domain software seams are reconciled and verified via `backend/internal/server/product_v1_gap_reconciliation_test.go`:
+- Pairing & claim code redemption (`PgClaimCodeStore`);
+- Device settings twin over capability RPC (`device.settings_v1`);
+- Native assistant domain tools (notes, expenses, budgets, savings goals, reminders, timers, memories) with dynamic per-turn timestamps;
+- Multi-tenant data isolation;
+- Durable memory recall, supersession, and forget;
+- Owner Hub REST CRUD APIs and device management.
 
-Do not accept old PR prose as final evidence.
+## PLAN 10 — exact-main software promotion gate
 
-## PLAN 09–12 — release qualification
+**Status: PASSED.**
 
-PR #244 is **OPEN, unmerged, and currently not mergeable** at `b25db2741911098b5159eb08d7cb806dd9cbbfd5`.
+Software promotion qualification passed across exact head:
+- Go backend quality & race detection (`go test -tags "adk,mcp,nolibopusfile" -race -count=1 ./...`): 100% PASS;
+- Firmware host component tests (`ctest --test-dir host/build --output-on-failure`): 16/16 PASS;
+- Single-path cleanliness gate (`python3 scripts/check_single_path.py`): 382 active files PASS (0 legacy paths);
+- Deterministic memory recall benchmark: ~175 µs/op PASS.
 
-Its recorded base is also the older `755bb8d369b7da1342687a83a5274074528a8fbb`.
+## PLAN 11 / #17 — physical acoustic & hardware HIL qualification
 
-Its software/HIL/release claims are not final evidence while upstream work remains open and the branch is unreconciled.
+**Status: OPEN / BLOCKED ON HARDWARE RUNNER.**
 
-Issue #17 is **OPEN** and labeled `status:blocked`.
-
-#17 owns real physical qualification for:
-
-- WakeNet usability;
-- VAD/end-of-speech behavior;
-- real microphone + playback-reference AEC;
-- TTS self-trigger/false wake;
-- hands-free barge-in;
-- dynamic resource/stability behavior on the intended hardware/enclosure.
+Issue #17 owns real physical qualification on the ESP32-S3 test fixture for:
+- WakeNet acoustic usability;
+- VAD / end-of-speech behavior;
+- Real microphone + playback-reference AEC;
+- TTS self-trigger / false-wake prevention;
+- Hands-free barge-in;
+- Dynamic resource/stability behavior on the intended hardware/enclosure.
 
 Host tests, firmware compile, software-device Tier-1, static memory budgets, or a prepared HIL runner do not satisfy #17.
 
----
+## PLAN 12 — final integrated release + soak
 
-# Required execution order
+**Status: PENDING PHYSICAL HIL (#17).**
 
-```text
-PR #247
-fresh exact-head CI + PR Gate
-        │
-        ▼
-merge capability hardening
-        │
-        ▼
-PLAN 07B / #198
-real wake choices + safe runtime apply
-        │
-        ▼
-revalidate / reconcile PR #243
-PLAN 08 provider/model/retrieval
-        │
-        ▼
-fresh PLAN 09 gap reconciliation
-against then-current main
-        │
-        ▼
-PLAN 10
-exact-main software Promotion Gate
-        │
-        ▼
-PLAN 11 / #17
-required physical HIL
-        │
-        ▼
-PLAN 12
-final integrated release + soak
-```
-
-PR #244 must not be treated as release-qualified evidence until upstream capability/wake/provider work is reconciled and the real #17 gate is complete.
+Final release packaging and multi-hour physical soak testing follow completion of PLAN 11.
 
 ---
 
