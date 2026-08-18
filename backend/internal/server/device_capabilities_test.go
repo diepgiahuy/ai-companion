@@ -178,7 +178,7 @@ func TestCapabilityAdvertisementUsesCatalogAndPreservesPreviousSetOnInvalidRepla
 	invalid, err := protocol.Encode(protocol.CapabilityAdvertiseType, protocol.Metadata{
 		MessageID: "advertise-invalid", SessionID: s.id,
 	}, protocol.CapabilityAdvertisePayload{Capabilities: []protocol.CapabilityDescriptor{{
-		Name: devicecap.VolumeSetName, Version: devicecap.VolumeSetVersion, Kind: "read",
+		Name: devicecap.VolumeSetName, Version: "2", Kind: "command",
 	}}})
 	if err != nil {
 		t.Fatal(err)
