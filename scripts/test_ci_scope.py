@@ -36,6 +36,15 @@ class CIScopeTests(unittest.TestCase):
         self.assertFalse(scope.backend)
         self.assertFalse(scope.tier1)
 
+    def test_provisioning_change_requires_real_firmware_compile(self) -> None:
+        scope = ci_scope.classify(
+            "pull_request", ["components/esp32_provisioning/src/claim_client.cpp"]
+        )
+        self.assertTrue(scope.host)
+        self.assertTrue(scope.protocol)
+        self.assertFalse(scope.backend)
+        self.assertFalse(scope.tier1)
+
     def test_software_device_change_keeps_full_tier1_and_nearest_compile(self) -> None:
         scope = ci_scope.classify(
             "pull_request", ["host/companion_software_device/main.cpp"]
@@ -59,6 +68,20 @@ class CIScopeTests(unittest.TestCase):
         self.assertTrue(scope.tier1)
         self.assertFalse(scope.backend_full)
         self.assertFalse(scope.codeql)
+
+    def test_backend_and_provisioning_change_selects_tier1(self) -> None:
+        scope = ci_scope.classify(
+            "pull_request",
+            [
+                "backend/cmd/companiond/owner_auth.go",
+                "components/esp32_provisioning/src/claim_client.cpp",
+            ],
+        )
+        self.assertTrue(scope.backend)
+        self.assertTrue(scope.postgres)
+        self.assertTrue(scope.host)
+        self.assertTrue(scope.protocol)
+        self.assertTrue(scope.tier1)
 
     def test_explicit_tier1_scenario_selects_tier1(self) -> None:
         scope = ci_scope.classify("pull_request", ["testdata/scenarios/config_reconnect.json"])
