@@ -72,6 +72,12 @@ func TestCurrentContractsRejectSchemaDrift(t *testing.T) {
 	if err := volume.ValidateInput(json.RawMessage(`{"volume":101}`)); err == nil {
 		t.Fatal("out-of-range volume accepted")
 	}
+	if err := volume.ValidateResult(json.RawMessage(`{"applied":true,"volume":42}`)); err != nil {
+		t.Fatalf("bounded applied volume result rejected: %v", err)
+	}
+	if err := volume.ValidateResult(json.RawMessage(`{"applied":true,"volume":101}`)); err == nil {
+		t.Fatal("out-of-range applied volume accepted")
+	}
 	if err := volume.ValidateResult(json.RawMessage(`{"applied":true,"extra":1}`)); err == nil {
 		t.Fatal("unknown volume result field accepted")
 	}
