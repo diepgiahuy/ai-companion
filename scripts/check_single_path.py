@@ -70,6 +70,15 @@ FORBIDDEN_WIRE_PATTERNS = [
     re.compile(r"[\"']config\.report[\"']"),
 ]
 
+# These were the in-process compatibility names that kept the deleted transport
+# alive after the first PLAN 07 cutover attempt. Lock their deletion as source
+# invariants so a future refactor cannot silently re-introduce the second path.
+FORBIDDEN_SETTINGS_SOURCE_SYMBOLS = [
+    "RuntimeConfigPatch",
+    "enqueue_config_event",
+    "config_reports",
+]
+
 
 def iter_files(path: Path):
     if path.is_file():
@@ -112,6 +121,11 @@ for rel in SCAN_ROOTS:
                 if pattern.search(text):
                     failures.append(
                         f"{display}: forbidden legacy settings wire literal {pattern.pattern!r}"
+                    )
+            for symbol in FORBIDDEN_SETTINGS_SOURCE_SYMBOLS:
+                if symbol in text:
+                    failures.append(
+                        f"{display}: forbidden legacy settings source symbol {symbol!r}"
                     )
 
 # Positive invariants make the gate fail if the canonical path is accidentally
