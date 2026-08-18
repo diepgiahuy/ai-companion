@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync/atomic"
 	"testing"
 
 	"companion-server/internal/capability"
+	"companion-server/internal/controlplane"
 	"companion-server/internal/pipeline"
 )
 
@@ -48,6 +50,21 @@ func TestRouterRequiresAdvertisedVersionAndAuthenticatedDevice(t *testing.T) {
 		t.Fatalf("version mismatch error=%v", err)
 	}
 	if endpoint.calls.Load() != 0 { t.Fatalf("version mismatch reached endpoint") }
+}
+
+func TestSettingsArgsRejectWakeModelUntilPlan07B(t *testing.T) {
+	_, err := json.Marshal(SettingsArgs{Version: 7, Settings: controlplane.RuntimeConfig{WakeModel: "wn9_hey_computer"}})
+	if err == nil || !strings.Contains(err.Error(), "PLAN 07B") {
+		t.Fatalf("wake model must fail closed until Audio owner can apply it, err=%v", err)
+	}
+
+	wire, err := json.Marshal(SettingsArgs{Version: 8, Settings: controlplane.RuntimeConfig{}})
+	if err != nil {
+		t.Fatalf("normal settings marshal failed: %v", err)
+	}
+	if strings.Contains(string(wire), "wake_model") {
+		t.Fatalf("wake_model leaked onto PLAN 07A device wire: %s", wire)
+	}
 }
 
 func TestDeviceToolUsesTurnDeviceIDNotModelArguments(t *testing.T) {
