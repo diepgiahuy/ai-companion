@@ -1,0 +1,206 @@
+name: Temporary capability source-of-truth refresh
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    if: github.event.pull_request.head.ref == 'feat/capability-hardening-246'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/capability-hardening-246
+          fetch-depth: 0
+      - name: Refresh capability source of truth
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          def replace_once(text, old, new, label):
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected 1 exact match, found {count}')
+              return text.replace(old, new, 1)
+
+          def sub_once(text, pattern, replacement, label):
+              text, count = re.subn(pattern, replacement, text, count=1, flags=re.S)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected 1 regex match, found {count}')
+              return text
+
+          adr_path = Path('docs/ADR-003-DEVICE-CAPABILITY-PLANE.md')
+          adr = adr_path.read_text()
+          adr = replace_once(
+              adr,
+              'Current implementation baseline: **`main@877e7969302afcbf0e526a6002307108d75fae0b`**  ',
+              'Baseline entering capability hardening: **`main@bc47f855e5d69d02ecfc0f8286821b196ad35894`**  \nImplementation owner: **#246 / PR #247**  ',
+              'ADR baseline')
+
+          implemented_facts = '''## Implemented Product-v1 facts
+
+PR #247 hardens the selected capability plane without changing the Protocol-v2 message family.
+
+### Wire and contract boundary
+
+`backend/internal/protocol/capability.go` defines the capability identity as `name + version + kind`.
+
+Product-v1 accepts only `kind: "command"`. `kind: "read"` fails closed. A future read capability requires an explicit architecture/contract change and concrete state semantics before activation.
+
+`capability.advertise` accepts 1..32 descriptors and rejects duplicate `name@version` entries.
+
+`capability.call` requires object arguments and a 50..5000 ms deadline.
+
+`backend/internal/devicecap/contracts.go` owns one exact `name@version` `ContractCatalog` for the current device contracts:
+
+- `device.volume.set@1` — model audience, turn-scoped, non-cancelable;
+- `device.user_confirmation@1` — policy audience, turn-scoped, cancelable;
+- `device.settings_v1@1` — internal audience, session-scoped, non-cancelable.
+
+The catalog owns trusted input and successful-result schemas. The model-visible volume `ToolDefinition` derives from the same input schema. A successful result that violates its server-owned result contract fails locally instead of becoming model-visible success.
+
+### Session and turn isolation
+
+A valid fresh advertisement atomically replaces the prior accepted capability set for that authenticated session. An invalid replacement does not partially mutate the previous set. Session teardown clears advertisements and pending calls and unregisters the endpoint. Reconnect therefore requires a fresh advertisement.
+
+Turn-scoped calls must match the exact active `turn_id` and current generation before a frame is sent. Results must match the pending correlation, turn, and generation. Stale or mismatched results do not satisfy another operation.
+
+`Contract.cancelable` decides whether a timeout/context cancellation sends `capability.cancel`. The wire cancel message still uses correlation/turn/generation and does not add a capability name.
+
+### ToolRegistry and ADK exposure
+
+`ToolRegistry` remains the single model-tool definition, validation, authorization, observability, and execution path.
+
+Static ADK tool construction excludes `Pack: "device"`. `registryDeviceToolset` projects device tools per invocation from trusted `pipeline.TurnContext.DeviceID` and current session support. The adapter still executes through `ToolRegistry.Execute()`, which rechecks context availability before arguments, authorization, and the handler.
+
+A device-pack tool without an explicit context-availability guard fails closed for both model exposure and execution.
+
+`device.settings_v1@1` remains model-hidden. `device.user_confirmation@1` remains policy-owned and model-hidden. `device.volume.set@1` is model-visible only when the authenticated current device advertises that accepted contract.
+
+### Firmware registry and cancellation
+
+Physical firmware uses a bounded, no-heap `CapabilityRegistry`. It rejects duplicate `name@version`, generates advertisement from enabled definitions, performs exact call lookup, and keeps typed local parsers/handlers.
+
+The current physical firmware advertises `device.settings_v1@1` and optional `device.user_confirmation@1`. It does not advertise `device.volume.set@1`, so physical volume effect remains unproven.
+
+Generic cancellation resolves the active pending operation by correlation/turn/generation and invokes cancellation only when that operation is current and cancelable.
+
+The software-device Tier-1 oracle advertises `device.volume.set@1` and echoes the exact turn/generation in `capability.result`, which proves the cross-boundary model -> ToolRegistry -> capability RPC -> device -> result path without claiming physical hardware effect.
+
+### Existing settings semantics
+
+Settings reconciliation still reasserts every non-zero desired revision on a new authenticated session. Exact duplicate revision apply remains idempotent. PostgreSQL desired/reported state remains authoritative.
+
+`wake_model` is intentionally outside the current device settings RPC contract. #198 owns safe packaged wake-model/configuration reinitialization through the selected Audio owner.
+
+---
+
+## Implemented architecture'''
+          adr = sub_once(adr, r'## Verified current facts\n.*?\n---\n\n## Target architecture', implemented_facts, 'ADR facts/architecture heading')
+          adr = replace_once(adr, 'The target is **Generic Typed Companion Capability RPC**.', 'The implemented Product-v1 design is **Generic Typed Companion Capability RPC**.', 'ADR target sentence')
+          adr = replace_once(adr, 'The current static ADK tool build must exclude device-pack tools.', 'The static ADK tool build excludes device-pack tools.', 'ADR ADK static wording')
+          adr = replace_once(adr, '`device.volume.set@1` stops being a static ADK tool when `DeviceToolset` lands. Its ToolRegistry definition remains registered so schema, policy, execution, and observability still have one owner.', '`device.volume.set@1` is not a static ADK tool. Its ToolRegistry definition remains registered so schema, policy, execution, and observability still have one owner.', 'ADR volume tool wording')
+          adr = sub_once(
+              adr,
+              r'### `read`\n.*?\n### Manifest paging',
+              '''### `read`\n\nProduct-v1 rejects `kind: "read"` at the capability descriptor boundary.\n\nDo not add read execution semantics until a concrete capability requires them. A future read contract must define state authority, mutation prohibition, scope, result schema, versioning, and tests before activation.\n\n### Manifest paging''',
+              'ADR read section')
+          adr = replace_once(
+              adr,
+              '## Implementation plan\n\nDo not implement this as one large rewrite.',
+              '## Implementation record\n\nPR #247 completed the five slices below as small coherent changes. This section is retained as an implementation record, not an open architecture plan.',
+              'ADR implementation heading')
+          adr_path.write_text(adr)
+
+          ledger_path = Path('docs/architecture/AI_COMPANION_RESET_EXECUTION_PLANS_V2_CANONICAL_2026-08-17.md')
+          ledger = ledger_path.read_text()
+          ledger = replace_once(
+              ledger,
+              '**Current verified main:** `877e7969302afcbf0e526a6002307108d75fae0b`  ',
+              '**Verified baseline entering capability hardening:** `main@bc47f855e5d69d02ecfc0f8286821b196ad35894`  \n**Active implementation owner:** #246 / PR #247  ',
+              'ledger baseline')
+          ledger = sub_once(
+              ledger,
+              r'## Source-of-truth normalization — PR #245\n.*?\n## Completed foundation on current main',
+              '''## Source-of-truth normalization — PR #245\n\nPR #245 merged as `bc47f855e5d69d02ecfc0f8286821b196ad35894`. It removed the retired phase status snapshots and established this ledger plus one architecture owner per concern.\n\n`docs/plans/README.md` is now an index only. Git history retains the removed phase files. Do not recreate parallel live status plans.\n\n## Completed foundation on the capability-hardening baseline''',
+              'ledger PR245 section')
+          capability_status = '''## Capability hardening — #246 / PR #247
+
+The #225 architecture decision remains valid. PR #247 implements the required generic hardening through the single Typed Companion Capability RPC path.
+
+Implemented in #247:
+
+- Product-v1 capability descriptors are command-only; `kind:"read"` fails closed;
+- one server-owned `ContractCatalog` owns exact current device contracts plus trusted input/result schemas;
+- valid advertisement replacement remains atomic and invalid replacement does not partially mutate the prior session set;
+- turn-scoped calls require the exact active turn and generation;
+- result correlation validates exact correlation/turn/generation and successful result schema;
+- cancellation is contract-driven and pending-correlation scoped;
+- physical firmware uses a bounded `CapabilityRegistry` for truthful advertisement and exact call lookup;
+- static ADK exposure excludes device-pack tools;
+- `DeviceToolset` exposes only current-device supported model-audience capabilities;
+- `ToolRegistry.Execute()` rechecks context availability and remains the sole model-tool execution/policy path;
+- `wake_model` stays outside the current settings RPC contract until #198.
+
+CI #450 proved the integrated code path before the final command-only/docs refresh: Evidence truth, Go backend, host components, ESP32-S3 compile, real-backend Tier-1 including `device-volume`, and PR Gate all passed. PR #247 still requires a fresh exact-head PR Gate after this source-of-truth refresh before merge.
+
+Physical firmware still does not advertise `device.volume.set@1`; software-device Tier-1 volume evidence is not physical volume evidence.
+
+**Sole architecture contract:** [`../ADR-003-DEVICE-CAPABILITY-PLANE.md`](../ADR-003-DEVICE-CAPABILITY-PLANE.md)
+
+## PLAN 07B / #198 — wake configuration'''
+          ledger = sub_once(ledger, r'## Capability hardening — required before release qualification\n.*?\n## PLAN 07B / #198 — wake configuration', capability_status, 'ledger capability section')
+          ledger = replace_once(
+              ledger,
+              '''```text\nPR #245\nsource-of-truth normalization\n        │\n        ▼\nCapability hardening\nADR-003 slices 1 -> 5\n        │\n        ▼\nPLAN 07B / #198''',
+              '''```text\nPR #247\nfinal exact-head gate + merge capability hardening\n        │\n        ▼\nPLAN 07B / #198''',
+              'ledger execution order')
+          ledger = replace_once(
+              ledger,
+              'PR #243 is **OPEN and unmerged** at `a37b2bed110347fecca087c5826e8f2dbbd91494`.',
+              'PR #243 is **OPEN, unmerged, and currently not mergeable** at `a37b2bed110347fecca087c5826e8f2dbbd91494`.',
+              'ledger PR243 live state')
+          ledger = replace_once(
+              ledger,
+              'PR #244 is **OPEN and unmerged** at `b25db2741911098b5159eb08d7cb806dd9cbbfd5`.',
+              'PR #244 is **OPEN, unmerged, and currently not mergeable** at `b25db2741911098b5159eb08d7cb806dd9cbbfd5`.',
+              'ledger PR244 live state')
+          ledger_path.write_text(ledger)
+
+          architecture_path = Path('docs/ARCHITECTURE.md')
+          architecture = architecture_path.read_text()
+          architecture = replace_once(architecture, '- deferred `read` and manifest paging decisions.', '- command-only Product-v1 capability kind and deferred manifest paging decisions.', 'architecture read wording')
+          architecture = replace_once(architecture, '- Device-specific availability must not become process-global authority. ADR-003 defines the scoped hardening target.', '- Device-specific availability is invocation-scoped through the implemented ADR-003 `DeviceToolset`; it never becomes process-global authority.', 'architecture toolset wording')
+          architecture_path.write_text(architecture)
+
+          readme_path = Path('README.md')
+          readme = readme_path.read_text()
+          readme = replace_once(
+              readme,
+              '- Protocol/session/ToolRegistry/device-capability orchestration has deterministic/Tier-1 evidence for the implemented paths; generic capability hardening must earn its own exact-head evidence when it lands.',
+              '- Protocol/session/ToolRegistry/device-capability orchestration has deterministic/Tier-1 evidence for the implemented paths. PR #247 adds generic capability hardening with exact-head Go/host/ESP32/Tier-1 gates; physical volume effect remains unproven because physical firmware does not advertise volume.',
+              'README evidence wording')
+          readme_path.write_text(readme)
+          PY
+          git diff --check
+          git diff -- docs/ADR-003-DEVICE-CAPABILITY-PLANE.md docs/ARCHITECTURE.md docs/architecture/AI_COMPANION_RESET_EXECUTION_PLANS_V2_CANONICAL_2026-08-17.md README.md
+      - name: Commit source-of-truth refresh
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add docs/ADR-003-DEVICE-CAPABILITY-PLANE.md docs/ARCHITECTURE.md docs/architecture/AI_COMPANION_RESET_EXECUTION_PLANS_V2_CANONICAL_2026-08-17.md README.md
+          git commit -m 'docs(capability): record generic RPC hardening cutover'
+          git push origin HEAD:feat/capability-hardening-246
