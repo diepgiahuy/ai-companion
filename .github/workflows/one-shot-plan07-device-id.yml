@@ -17,13 +17,14 @@ jobs:
           ref: feat/phase-03-settings-wake-plan07
           fetch-depth: 0
           persist-credentials: true
-      - name: Remove fake device-id fallback
+      - name: Finish PLAN 07 residue cleanup
         run: |
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
-          p = Path('backend/internal/ownerweb/dashboard.html')
-          text = p.read_text()
+
+          dashboard = Path('backend/internal/ownerweb/dashboard.html')
+          text = dashboard.read_text()
           replacements = [
             (
               "    const data = await fetchJSON('/v1/owner/data/device' + (selectedDeviceID ? `?device_id=${selectedDeviceID}` : ''));\n    container.innerHTML = `",
@@ -37,21 +38,37 @@ jobs:
               "    banner.innerHTML = `✅ Interval updated to <b>${val}</b> for ${selectedDeviceID || 'companion-s3-01'}.`;",
               "    banner.innerHTML = `✅ Interval updated to <b>${val}</b> for ${selectedDeviceID}.`;",
             ),
+            (
+              "  banner.textContent = 'Pushing OTA trigger to device twin...';\n  try {\n    const res = await mutate('/v1/owner/data/device/ota-trigger', 'POST', { device_id: selectedDeviceID || 'companion-s3-01', target_version: 'v2.4.1' });",
+              "  if (!selectedDeviceID) {\n    banner.textContent = 'No owned device selected';\n    return;\n  }\n  banner.textContent = 'Pushing OTA trigger to device twin...';\n  try {\n    const res = await mutate('/v1/owner/data/device/ota-trigger', 'POST', { device_id: selectedDeviceID, target_version: 'v2.4.1' });",
+            ),
           ]
-          changed = False
           for old, new in replacements:
               count = text.count(old)
               if count == 1:
                   text = text.replace(old, new, 1)
-                  changed = True
               elif count == 0 and new in text:
                   pass
               else:
-                  raise SystemExit(f'expected zero(already applied) or one match, got {count}: {old[:80]!r}')
-          if "device_id: selectedDeviceID || 'companion-s3-01'" in text:
-              raise SystemExit('fake settings device-id fallback remains')
-          p.write_text(text)
-          print('changed=', changed)
+                  raise SystemExit(f'expected zero(already applied) or one match, got {count}: {old[:100]!r}')
+          if "selectedDeviceID || 'companion-s3-01'" in text:
+              raise SystemExit('fake Owner Hub device-id fallback remains')
+          dashboard.write_text(text)
+
+          validator = Path('host/companion_software_device/validate_evidence.py')
+          evidence = validator.read_text()
+          old = '"reconnect_new_session", "config_update_report", "protocol_v1_rejected",'
+          new = '"reconnect_new_session", "settings_update_apply", "protocol_v1_rejected",'
+          count = evidence.count(old)
+          if count == 1:
+              evidence = evidence.replace(old, new, 1)
+          elif count == 0 and new in evidence:
+              pass
+          else:
+              raise SystemExit(f'legacy Tier-1 expectation match count={count}')
+          if '"config_update_report"' in evidence:
+              raise SystemExit('legacy Tier-1 scenario expectation remains')
+          validator.write_text(evidence)
           PY
           git diff --check
       - name: Commit if needed
@@ -59,11 +76,11 @@ jobs:
           set -euo pipefail
           git config user.name "ai-companion-plan07-bot"
           git config user.email "ai-companion-plan07-bot@users.noreply.github.com"
-          git add backend/internal/ownerweb/dashboard.html
+          git add backend/internal/ownerweb/dashboard.html host/companion_software_device/validate_evidence.py
           if git diff --cached --quiet; then
             echo already-applied
             exit 0
           fi
           git diff --cached --check
-          git commit -m "fix(settings): remove fake Owner Hub device fallback"
+          git commit -m "fix(settings): close Owner Hub and Tier-1 residues"
           git push origin HEAD:feat/phase-03-settings-wake-plan07
