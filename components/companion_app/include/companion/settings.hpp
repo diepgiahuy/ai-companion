@@ -29,6 +29,11 @@ struct DeviceSettings {
     return {wake_model.data(), length};
   }
 
+  bool wake_enabled() const {
+    const auto view = wake_model_view();
+    return !view.empty() && view != "disabled" && view != "off";
+  }
+
   void set_wake_model(std::string_view model) {
     wake_model.fill('\0');
     const size_t count = std::min(model.size(), wake_model.size() - 1);

@@ -83,13 +83,16 @@ func TestCurrentContractsRejectSchemaDrift(t *testing.T) {
 	}
 
 	settings, _ := catalog.Lookup(SettingsName, SettingsVersion)
-	if err := settings.ValidateInput(json.RawMessage(`{"version":2,"settings":{"vad_threshold":700}}`)); err != nil {
+	if err := settings.ValidateInput(json.RawMessage(`{"version":2,"settings":{"vad_threshold":700,"wake_model":"wn9_hiesp","wake_threshold":0.65}}`)); err != nil {
 		t.Fatal(err)
 	}
-	if err := settings.ValidateInput(json.RawMessage(`{"version":2,"settings":{"wake_model":"wn9"}}`)); err == nil {
-		t.Fatal("wake_model escaped #198 boundary")
+	if err := settings.ValidateInput(json.RawMessage(`{"version":2,"settings":{"wake_threshold":0.20}}`)); err == nil {
+		t.Fatal("out-of-range wake_threshold accepted")
 	}
-	if err := settings.ValidateResult(json.RawMessage(`{"applied":true,"version":2,"settings":{"vad_threshold":700}}`)); err != nil {
+	if err := settings.ValidateInput(json.RawMessage(`{"version":2,"settings":{"wake_threshold":1.20}}`)); err == nil {
+		t.Fatal("out-of-range wake_threshold accepted")
+	}
+	if err := settings.ValidateResult(json.RawMessage(`{"applied":true,"version":2,"settings":{"vad_threshold":700,"wake_model":"wn9_hiesp","wake_threshold":0.65}}`)); err != nil {
 		t.Fatal(err)
 	}
 }

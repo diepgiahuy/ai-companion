@@ -280,29 +280,64 @@ func TestDeviceSettingsDeviceRejection(t *testing.T) {
 	}
 }
 
-func TestDeviceSettingsWakeModelStaysRequestedUntilPlan07B(t *testing.T) {
+func TestDeviceSettingsWakeModelAndThresholdDispatchedInPlan07B(t *testing.T) {
 	repo := newFakeTwinRepo()
 	router := devicecap.NewRouter()
 	cp := controlplane.New(repo, controlplane.RuntimeConfig{})
 	srv := New(pipeline.Components{}, nil, WithAdminToken("admin-secret"), WithControlPlane(cp), WithDeviceCapabilities(router))
-	sess := newSettingsTestSession(t, srv, "dev-wake-pending", "user-wake-pending")
+	sess := newSettingsTestSession(t, srv, "dev-wake-plan07b", "user-wake-plan07b")
 
-	req := httptest.NewRequest(http.MethodPatch, "/api/v1/devices/dev-wake-pending/twin?user_id=user-wake-pending", bytes.NewReader([]byte(`{"wake_model":"hilexin"}`)))
-	req.SetPathValue("deviceID", "dev-wake-pending")
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/devices/dev-wake-plan07b/twin?user_id=user-wake-plan07b", bytes.NewReader([]byte(`{"wake_model":"wn9_hiesp","wake_threshold":0.72}`)))
+	req.SetPathValue("deviceID", "dev-wake-plan07b")
 	req.Header.Set("Authorization", "Bearer admin-secret")
 	rec := httptest.NewRecorder()
-	srv.handleTwinPatch(rec, req)
-	if rec.Code != http.StatusOK { t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String()) }
+	done := make(chan struct{})
+	go func() { defer close(done); srv.handleTwinPatch(rec, req) }()
 
+	var callOut outbound
 	select {
-	case out := <-sess.controlWrites:
-		t.Fatalf("wake model reached device before PLAN07B: %s", out.data)
-	case <-time.After(100 * time.Millisecond):
+	case callOut = <-sess.controlWrites:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for capability.call")
+	}
+	callEnvelope, err := protocol.Decode(callOut.data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	callPayload, err := protocol.DecodePayload[protocol.CapabilityCallPayload](callEnvelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var args devicecap.SettingsArgs
+	if err := json.Unmarshal(callPayload.Arguments, &args); err != nil {
+		t.Fatal(err)
+	}
+	if args.Settings.WakeModel != "wn9_hiesp" || args.Settings.WakeThreshold == nil || *args.Settings.WakeThreshold != 0.72 {
+		t.Fatalf("wake settings in args mismatch: %+v", args)
+	}
+
+	resultVal, _ := json.Marshal(devicecap.SettingsResult{Applied: true, Version: args.Version, Settings: &args.Settings})
+	resultMsg, err := protocol.Encode(protocol.CapabilityResultType, protocol.Metadata{
+		MessageID: "res-wake", SessionID: sess.id, CorrelationID: callEnvelope.CorrelationID, GenerationID: callEnvelope.GenerationID,
+	}, protocol.CapabilityResultPayload{OK: true, Value: resultVal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handled, err := sess.handleCapabilityControl(context.Background(), resultMsg)
+	if err != nil || !handled {
+		t.Fatalf("result handled=%v err=%v", handled, err)
+	}
+	<-done
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	var twin controlplane.Twin
-	if err := json.Unmarshal(rec.Body.Bytes(), &twin); err != nil { t.Fatal(err) }
-	if twin.Desired.WakeModel != "hilexin" || twin.ReportedVersion != 0 || twin.Status != controlplane.TwinStatusRequested {
-		t.Fatalf("wake pending twin=%+v", twin)
+	if err := json.Unmarshal(rec.Body.Bytes(), &twin); err != nil {
+		t.Fatal(err)
+	}
+	if twin.Status != controlplane.TwinStatusApplied || twin.Desired.WakeModel != "wn9_hiesp" || twin.Reported.WakeModel != "wn9_hiesp" {
+		t.Fatalf("wake twin mismatch=%+v", twin)
 	}
 }
 

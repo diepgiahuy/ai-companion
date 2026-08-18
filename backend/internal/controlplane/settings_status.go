@@ -56,8 +56,7 @@ type SettingsReportRepository interface {
 // RuntimeConfig also carries backend/session-owned fields so policy and owner
 // settings can share one resolution object. Those fields must never be copied
 // into reported_json merely because the physical device acknowledged the same
-// desired revision. WakeModel is deliberately excluded until PLAN 07B/#198 has
-// a real Audio-owner apply/reject contract for the active ESP-SR configuration.
+// desired revision.
 func DeviceReportedConfig(config RuntimeConfig) RuntimeConfig {
 	return RuntimeConfig{
 		SmartVADEnabled:        config.SmartVADEnabled,
@@ -67,6 +66,8 @@ func DeviceReportedConfig(config RuntimeConfig) RuntimeConfig {
 		IdleAfterMS:            config.IdleAfterMS,
 		AlarmVisibleMS:         config.AlarmVisibleMS,
 		OTAPollIntervalSeconds: config.OTAPollIntervalSeconds,
+		WakeModel:              config.WakeModel,
+		WakeThreshold:          config.WakeThreshold,
 	}
 }
 

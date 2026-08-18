@@ -191,11 +191,70 @@ void alarm_suspends_hands_free_monitor_and_ready_restarts_it() {
   app.tick(110); assert(app.state() == UiState::ready); assert(microphone.active); assert(microphone.starts == 2);
 }
 
+void wake_disabled_falls_back_to_ptt_and_wake_enabled_triggers_turn() {
+  MonitorMicrophone microphone;
+  RecordingSpeaker speaker;
+  RecordingDisplay display;
+  InputRouter input;
+  ScriptedBackend backend;
+  ScriptedFrontend frontend;
+  AudioRuntime audio(microphone, speaker, frontend);
+  AppConfig config{};
+  config.vad_min_speech_ms = 0;
+  CompanionApp app(audio, display, input, backend, config);
+  connect_without_wake(app, frontend);
+
+  // 1. Apply wake_model = "disabled"
+  SettingsTwin disabled_wake{};
+  disabled_wake.version = 2;
+  disabled_wake.settings.vad_min_speech_ms = 50;
+  disabled_wake.settings.set_wake_model("disabled");
+  assert(app.apply_settings(disabled_wake));
+  assert(!app.config().wake_enabled());
+
+  // In disabled mode, wake event does NOT trigger turn
+  frontend.events.push_back(AudioFrontendEvent::wake_detected);
+  app.tick(20);
+  assert(app.state() == UiState::ready);
+  assert(backend.begin_count == 0);
+
+  // But PTT primary button press DOES begin turn
+  input.queue_primary_action(InputIntent::primary_action);
+  app.tick(40);
+  assert(app.state() == UiState::listening);
+  assert(backend.begin_count == 1);
+
+  // Finish turn (speech lasting 110ms >= 50ms vad_min_speech_ms)
+  frontend.events.push_back(AudioFrontendEvent::speech_started);
+  app.tick(50);
+  frontend.events.push_back(AudioFrontendEvent::speech_ended);
+  app.tick(160);
+  assert(app.state() == UiState::processing);
+  backend.push(BackendEventType::tts_started);
+  backend.push(BackendEventType::tts_finished);
+  app.tick(180);
+  assert(app.state() == UiState::ready);
+
+  // 2. Apply wake_model = "wn9_hiesp"
+  SettingsTwin enabled_wake = disabled_wake;
+  enabled_wake.version = 3;
+  enabled_wake.settings.set_wake_model("wn9_hiesp");
+  assert(app.apply_settings(enabled_wake));
+  assert(app.config().wake_enabled());
+
+  // In enabled mode, wake event DOES trigger turn
+  frontend.events.push_back(AudioFrontendEvent::wake_detected);
+  app.tick(200);
+  assert(app.state() == UiState::listening);
+  assert(backend.begin_count == 2);
+}
+
 } // namespace
 
 int main() {
   wake_and_vad_use_canonical_turn_path();
   playback_reference_and_speech_barge_in_share_generation_path();
   alarm_suspends_hands_free_monitor_and_ready_restarts_it();
+  wake_disabled_falls_back_to_ptt_and_wake_enabled_triggers_turn();
   return 0;
 }

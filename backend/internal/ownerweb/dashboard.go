@@ -348,10 +348,19 @@ func (h *Handler) handleDevice(w http.ResponseWriter, r *http.Request) {
 	if twin.Desired.OTAPollIntervalSeconds != nil {
 		interval = (time.Duration(*twin.Desired.OTAPollIntervalSeconds) * time.Second).String()
 	}
+	wakeModel := twin.Desired.WakeModel
+	if wakeModel == "" {
+		wakeModel = "wn9_hiesp"
+	}
+	var wakeThreshold float64 = 0.60
+	if twin.Desired.WakeThreshold != nil {
+		wakeThreshold = *twin.Desired.WakeThreshold
+	}
 	writeJSON(w, map[string]any{
 		"device_id": deviceID, "connection_status": map[bool]string{true: "online", false: "offline"}[online],
 		"settings_status": status, "desired_version": twin.DesiredVersion, "reported_version": twin.ReportedVersion,
-		"ota_poll_interval": interval, "firmware_version": "unknown", "wifi_rssi_dbm": nil,
+		"ota_poll_interval": interval, "wake_model": wakeModel, "wake_threshold": wakeThreshold,
+		"firmware_version": "unknown", "wifi_rssi_dbm": nil,
 	})
 }
 
@@ -393,8 +402,10 @@ func (h *Handler) handleUpdateDeviceConfig(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var body struct {
-		DeviceID string `json:"device_id"`
-		OTAPollInterval string `json:"ota_poll_interval"`
+		DeviceID        string   `json:"device_id"`
+		OTAPollInterval string   `json:"ota_poll_interval,omitempty"`
+		WakeModel       *string  `json:"wake_model,omitempty"`
+		WakeThreshold   *float64 `json:"wake_threshold,omitempty"`
 	}
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10))
 	decoder.DisallowUnknownFields()
@@ -425,18 +436,46 @@ func (h *Handler) handleUpdateDeviceConfig(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "device not found", http.StatusNotFound)
 		return
 	}
-	interval, err := time.ParseDuration(strings.TrimSpace(body.OTAPollInterval))
-	if err != nil || interval <= 0 || interval%time.Second != 0 {
-		http.Error(w, "ota_poll_interval must be a whole-second duration", http.StatusBadRequest)
+
+	var patch controlplane.RuntimeConfig
+	if strings.TrimSpace(body.OTAPollInterval) != "" {
+		interval, err := time.ParseDuration(strings.TrimSpace(body.OTAPollInterval))
+		if err != nil || interval <= 0 || interval%time.Second != 0 {
+			http.Error(w, "ota_poll_interval must be a whole-second duration", http.StatusBadRequest)
+			return
+		}
+		seconds64 := int64(interval / time.Second)
+		if seconds64 > int64(^uint(0)>>1) {
+			http.Error(w, "ota_poll_interval is out of range", http.StatusBadRequest)
+			return
+		}
+		seconds := int(seconds64)
+		patch.OTAPollIntervalSeconds = &seconds
+	}
+	if body.WakeModel != nil {
+		model := strings.TrimSpace(*body.WakeModel)
+		if model == "" {
+			http.Error(w, "wake_model cannot be empty", http.StatusBadRequest)
+			return
+		}
+		if len(model) > 63 {
+			http.Error(w, "wake_model too long", http.StatusBadRequest)
+			return
+		}
+		patch.WakeModel = model
+	}
+	if body.WakeThreshold != nil {
+		if *body.WakeThreshold < 0.40 || *body.WakeThreshold > 0.9999 {
+			http.Error(w, "wake_threshold must be between 0.40 and 0.9999", http.StatusBadRequest)
+			return
+		}
+		patch.WakeThreshold = body.WakeThreshold
+	}
+	if patch.OTAPollIntervalSeconds == nil && patch.WakeModel == "" && patch.WakeThreshold == nil {
+		http.Error(w, "no settings provided to update", http.StatusBadRequest)
 		return
 	}
-	seconds64 := int64(interval / time.Second)
-	if seconds64 > int64(^uint(0)>>1) {
-		http.Error(w, "ota_poll_interval is out of range", http.StatusBadRequest)
-		return
-	}
-	seconds := int(seconds64)
-	patch := controlplane.RuntimeConfig{OTAPollIntervalSeconds: &seconds}
+
 	twin, status, err := h.deps.UpdateDeviceSettings(r.Context(), userID, body.DeviceID, patch)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)

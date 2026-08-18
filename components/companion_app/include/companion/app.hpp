@@ -252,6 +252,17 @@ struct AppConfig {
   uint8_t volume{70};
   float wake_threshold{0.60F};
   std::array<char, 64> wake_model{"default"};
+
+  std::string_view wake_model_view() const {
+    size_t length = 0;
+    while (length < wake_model.size() && wake_model[length] != '\0') ++length;
+    return {wake_model.data(), length};
+  }
+
+  bool wake_enabled() const {
+    const auto view = wake_model_view();
+    return !view.empty() && view != "disabled" && view != "off";
+  }
 };
 
 class CompanionApp final {

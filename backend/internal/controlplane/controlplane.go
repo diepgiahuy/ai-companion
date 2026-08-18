@@ -19,8 +19,9 @@ type RuntimeConfig struct {
 	OTAPollIntervalSeconds *int   `json:"ota_poll_interval_s,omitempty"`
 	Locale                 string `json:"locale,omitempty"`
 	Timezone               string `json:"timezone,omitempty"`
-	VoiceKey               string `json:"voice_key,omitempty"`
-	WakeModel              string `json:"wake_model,omitempty"`
+	VoiceKey               string   `json:"voice_key,omitempty"`
+	WakeModel              string   `json:"wake_model,omitempty"`
+	WakeThreshold          *float64 `json:"wake_threshold,omitempty"`
 }
 
 type TwinStatus string
@@ -209,6 +210,9 @@ func Validate(c RuntimeConfig) error {
 	if len(c.WakeModel) > 63 {
 		return fmt.Errorf("wake_model too long")
 	}
+	if c.WakeThreshold != nil && (*c.WakeThreshold < 0.40 || *c.WakeThreshold > 0.9999) {
+		return fmt.Errorf("wake_threshold out of range (must be between 0.40 and 0.9999)")
+	}
 	return nil
 }
 func merge(a, b RuntimeConfig) RuntimeConfig {
@@ -245,6 +249,9 @@ func merge(a, b RuntimeConfig) RuntimeConfig {
 	if b.WakeModel != "" {
 		a.WakeModel = b.WakeModel
 	}
+	if b.WakeThreshold != nil {
+		a.WakeThreshold = b.WakeThreshold
+	}
 	return a
 }
 
@@ -273,6 +280,7 @@ func ConfigSchema() []ConfigField {
 		{Key: "timezone", Dynamic: true, Scopes: scopes},
 		{Key: "voice_key", Dynamic: true, Scopes: scopes},
 		{Key: "wake_model", Dynamic: true, Scopes: scopes},
+		{Key: "wake_threshold", Dynamic: true, Scopes: scopes},
 	}
 }
 
