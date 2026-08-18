@@ -229,6 +229,55 @@ func (r *Router) RequestConfirmation(ctx context.Context, target capability.Conf
 
 var _ capability.ConfirmationRequester = (*Router)(nil)
 
+type volumeTool struct {
+	router     *Router
+	definition capability.ToolDefinition
+}
+
+func (t *volumeTool) Name() string { return VolumeSetName }
+func (t *volumeTool) Definition() *capability.ToolDefinition { return &t.definition }
+
+func (t *volumeTool) Available(ctx context.Context) bool {
+	if t == nil || t.router == nil {
+		return false
+	}
+	turn, ok := pipeline.CurrentTurn(ctx)
+	if !ok || strings.TrimSpace(turn.DeviceID) == "" {
+		return false
+	}
+	return t.router.Supports(turn.DeviceID, VolumeSetName, VolumeSetVersion)
+}
+
+func (t *volumeTool) Execute(ctx context.Context, req capability.ToolRequest) capability.ToolResult {
+	turn, ok := pipeline.CurrentTurn(ctx)
+	if !ok || strings.TrimSpace(turn.DeviceID) == "" || strings.TrimSpace(turn.TurnID) == "" {
+		return capability.Failure(fmt.Errorf("device capability requires authenticated turn context"))
+	}
+	var args struct {
+		Volume int `json:"volume"`
+	}
+	if err := json.Unmarshal([]byte(req.Arguments), &args); err != nil {
+		return capability.Failure(fmt.Errorf("decode device capability arguments: %w", err))
+	}
+	payload, _ := json.Marshal(map[string]any{"volume": args.Volume})
+	result, err := t.router.Call(ctx, turn.DeviceID, Call{
+		Name: VolumeSetName, Version: VolumeSetVersion, Arguments: payload,
+		TurnID: strings.TrimSpace(turn.TurnID), Deadline: time.Now().Add(3 * time.Second),
+	})
+	if err != nil {
+		return capability.Failure(err)
+	}
+	var value any
+	if len(result.Value) > 0 {
+		if err := json.Unmarshal(result.Value, &value); err != nil {
+			return capability.Failure(fmt.Errorf("invalid device capability result: %w", err))
+		}
+	}
+	return capability.Success(map[string]any{"device_id": turn.DeviceID, "capability": VolumeSetName, "result": value})
+}
+
+var _ capability.ContextAvailability = (*volumeTool)(nil)
+
 func RegisterTools(registry *capability.ToolRegistry, router *Router) error {
 	if registry == nil || router == nil {
 		return fmt.Errorf("device capability ToolRegistry and router are required")
@@ -238,35 +287,5 @@ func RegisterTools(registry *capability.ToolRegistry, router *Router) error {
 		return fmt.Errorf("device volume capability contract is unavailable")
 	}
 	definition := *contract.ToolDefinition
-	return registry.Register(capability.FunctionTool{
-		ToolName:       VolumeSetName,
-		ToolDefinition: &definition,
-		Handler: func(ctx context.Context, req capability.ToolRequest) capability.ToolResult {
-			turn, ok := pipeline.CurrentTurn(ctx)
-			if !ok || strings.TrimSpace(turn.DeviceID) == "" {
-				return capability.Failure(fmt.Errorf("device capability requires authenticated turn context"))
-			}
-			var args struct {
-				Volume int `json:"volume"`
-			}
-			if err := json.Unmarshal([]byte(req.Arguments), &args); err != nil {
-				return capability.Failure(fmt.Errorf("decode device capability arguments: %w", err))
-			}
-			payload, _ := json.Marshal(map[string]any{"volume": args.Volume})
-			result, err := router.Call(ctx, turn.DeviceID, Call{
-				Name: VolumeSetName, Version: VolumeSetVersion, Arguments: payload,
-				TurnID: strings.TrimSpace(turn.TurnID), Deadline: time.Now().Add(3 * time.Second),
-			})
-			if err != nil {
-				return capability.Failure(err)
-			}
-			var value any
-			if len(result.Value) > 0 {
-				if err := json.Unmarshal(result.Value, &value); err != nil {
-					return capability.Failure(fmt.Errorf("invalid device capability result: %w", err))
-				}
-			}
-			return capability.Success(map[string]any{"device_id": turn.DeviceID, "capability": VolumeSetName, "result": value})
-		},
-	})
+	return registry.Register(&volumeTool{router: router, definition: definition})
 }

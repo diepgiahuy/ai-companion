@@ -44,6 +44,14 @@ type Tool interface {
 	Execute(context.Context, ToolRequest) ToolResult
 }
 
+// ContextAvailability lets a registered tool fail closed when the trusted
+// invocation context does not currently support it. Model exposure may use the
+// same predicate, but Execute always rechecks it so visibility is never treated
+// as authorization.
+type ContextAvailability interface {
+	Available(context.Context) bool
+}
+
 type ToolAuthorizer interface {
 	Authorize(context.Context, ToolDefinition, ToolRequest) error
 }
@@ -91,6 +99,26 @@ func (r *ToolRegistry) Definition(name string) (ToolDefinition, bool) {
 	}
 	return *t.Definition(), true
 }
+
+// Available reports whether a model-visible registered tool is currently
+// usable in this trusted context. Tools without a definition are not eligible
+// for model exposure. Tools without a dynamic guard are available by default.
+func (r *ToolRegistry) Available(ctx context.Context, name string) bool {
+	if r == nil {
+		return false
+	}
+	r.mu.RLock()
+	t := r.tools[name]
+	r.mu.RUnlock()
+	if t == nil || t.Definition() == nil {
+		return false
+	}
+	if guard, ok := t.(ContextAvailability); ok {
+		return guard.Available(ctx)
+	}
+	return true
+}
+
 func (r *ToolRegistry) DefinitionsForPacks(packs []string) []ToolDefinition {
 	allowed := map[string]bool{}
 	for _, p := range packs {
@@ -141,6 +169,9 @@ func (r *ToolRegistry) Execute(ctx context.Context, name string, req ToolRequest
 		return Failure(fmt.Errorf("unsupported tool %q", name))
 	}
 	recordedName = t.Name()
+	if guard, ok := t.(ContextAvailability); ok && !guard.Available(ctx) {
+		return Failure(fmt.Errorf("tool %q unavailable in current context", name))
+	}
 	if d := t.Definition(); d != nil {
 		risk = d.Risk
 		if err := ValidateArguments(d.Parameters, req.Arguments); err != nil {

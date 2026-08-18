@@ -89,7 +89,8 @@ func newWithModel(cfg Config, llm model.LLM) (*Runtime, error) {
 	}
 	agent, err := llmagent.New(llmagent.Config{
 		Name: "companion", Description: "Single-user voice companion coordinator", Model: llm,
-		Instruction: instruction, InstructionProvider: instructionProvider, Tools: tools, Mode: llmagent.ModeChat,
+		Instruction: instruction, InstructionProvider: instructionProvider, Tools: tools,
+		Toolsets: []tool.Toolset{registryDeviceToolset{registry: cfg.Tools}}, Mode: llmagent.ModeChat,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create ADK llm agent: %w", err)
@@ -352,34 +353,45 @@ func emitPresentations(ps []capability.Presentation, emit func(pipeline.AgentStr
 	return nil
 }
 
-// buildRegistryTools adapts the complete current Companion ToolRegistry into
-// ADK FunctionTools. ToolRegistry remains the source of truth for schema,
-// authorization, idempotency and execution; this layer only translates calls.
+// buildRegistryTools adapts global non-device ToolRegistry definitions into
+// static ADK FunctionTools. Device-pack tools are projected per invocation by
+// registryDeviceToolset instead of becoming process-wide model-visible tools.
 func buildRegistryTools(registry *capability.ToolRegistry) ([]tool.Tool, error) {
 	definitions := registry.Definitions()
-	executor := HostToolExecutor{Registry: registry}
 	out := make([]tool.Tool, 0, len(definitions))
 	for _, def := range definitions {
-		name := strings.TrimSpace(def.Name)
-		if name == "" {
-			return nil, fmt.Errorf("registered tool has empty name")
+		if strings.TrimSpace(def.Pack) == "device" {
+			continue
 		}
-		schema, err := schemaFromMap(def.Parameters)
+		adapted, err := adaptRegistryTool(registry, def)
 		if err != nil {
-			return nil, fmt.Errorf("tool %s schema: %w", name, err)
-		}
-		adapted, err := functiontool.New[map[string]any, map[string]any](
-			functiontool.Config{Name: name, Description: def.Description, InputSchema: schema},
-			func(ctx adkagent.Context, args map[string]any) (map[string]any, error) {
-				return executor.Execute(ctx, name, ctx.FunctionCallID(), args)
-			},
-		)
-		if err != nil {
-			return nil, fmt.Errorf("adapt tool %s: %w", name, err)
+			return nil, err
 		}
 		out = append(out, adapted)
 	}
 	return out, nil
+}
+
+func adaptRegistryTool(registry *capability.ToolRegistry, def capability.ToolDefinition) (tool.Tool, error) {
+	name := strings.TrimSpace(def.Name)
+	if name == "" {
+		return nil, fmt.Errorf("registered tool has empty name")
+	}
+	schema, err := schemaFromMap(def.Parameters)
+	if err != nil {
+		return nil, fmt.Errorf("tool %s schema: %w", name, err)
+	}
+	executor := HostToolExecutor{Registry: registry}
+	adapted, err := functiontool.New[map[string]any, map[string]any](
+		functiontool.Config{Name: name, Description: def.Description, InputSchema: schema},
+		func(ctx adkagent.Context, args map[string]any) (map[string]any, error) {
+			return executor.Execute(ctx, name, ctx.FunctionCallID(), args)
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("adapt tool %s: %w", name, err)
+	}
+	return adapted, nil
 }
 
 func schemaFromMap(input map[string]any) (*jsonschema.Schema, error) {
