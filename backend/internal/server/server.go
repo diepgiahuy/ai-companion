@@ -1121,7 +1121,11 @@ func (s *Server) isDeviceOnline(deviceID string) bool {
 func (s *Server) dispatchSettingsUpdate(ctx context.Context, userID, deviceID string, twin controlplane.Twin) controlplane.Twin {
 	online := s.isDeviceOnline(deviceID)
 	if !online {
-		twin.Status = controlplane.TwinStatusOffline
+		if status, err := s.controlPlane.SettingsStatus(ctx, userID, deviceID, false); err == nil {
+			twin.Status = controlplane.TwinStatus(status.State)
+		} else {
+			twin.Status = controlplane.TwinStatusOffline
+		}
 		return twin
 	}
 	sess := s.hub.get(deviceID)
@@ -1129,10 +1133,7 @@ func (s *Server) dispatchSettingsUpdate(ctx context.Context, userID, deviceID st
 		twin.Status = controlplane.TwinStatusRequested
 		return twin
 	}
-	args, err := json.Marshal(devicecap.SettingsArgs{
-		Version:  twin.DesiredVersion,
-		Settings: twin.Desired,
-	})
+	args, err := json.Marshal(devicecap.SettingsArgs{Version: twin.DesiredVersion, Settings: twin.Desired})
 	if err != nil {
 		twin.Status = controlplane.TwinStatusRequested
 		return twin
@@ -1140,10 +1141,8 @@ func (s *Server) dispatchSettingsUpdate(ctx context.Context, userID, deviceID st
 	callCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	res, err := sess.Call(callCtx, devicecap.Call{
-		Name:      devicecap.SettingsName,
-		Version:   devicecap.SettingsVersion,
-		Arguments: args,
-		Deadline:  time.Now().Add(3 * time.Second),
+		Name: devicecap.SettingsName, Version: devicecap.SettingsVersion,
+		Arguments: args, Deadline: time.Now().Add(3 * time.Second),
 	})
 	if err != nil {
 		if s.logger != nil {
@@ -1152,21 +1151,12 @@ func (s *Server) dispatchSettingsUpdate(ctx context.Context, userID, deviceID st
 		twin.Status = controlplane.TwinStatusRequested
 		return twin
 	}
-	var result devicecap.SettingsResult
-	decoder := json.NewDecoder(strings.NewReader(string(res.Value)))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&result); err != nil {
+	result, err := decodeSettingsResult(res.Value)
+	if err != nil {
 		if s.logger != nil {
 			s.logger.Warn("invalid settings result", "device_id", deviceID, "error", err)
 		}
 		twin.Status = controlplane.TwinStatusRequested
-		return twin
-	}
-	if !result.Applied {
-		if s.logger != nil {
-			s.logger.Warn("device rejected settings", "device_id", deviceID, "version", result.Version, "error", result.Error)
-		}
-		twin.Status = controlplane.TwinStatusRejected
 		return twin
 	}
 	if result.Version != twin.DesiredVersion {
@@ -1176,21 +1166,31 @@ func (s *Server) dispatchSettingsUpdate(ctx context.Context, userID, deviceID st
 		twin.Status = controlplane.TwinStatusRequested
 		return twin
 	}
-	// Device acknowledgement proves the device-owned projection for this exact
-	// revision. Backend-owned locale/timezone/voice fields already apply from the
-	// same authoritative desired revision, so the complete effective revision is
-	// promoted only after the device acknowledgement succeeds.
-	reportedConfig := twin.Desired
-	if err := s.controlPlane.Report(ctx, userID, deviceID, result.Version, reportedConfig); err != nil {
+	failureCode := strings.TrimSpace(result.Error)
+	if !result.Applied && failureCode == "" {
+		failureCode = "device_rejected"
+	}
+	report := controlplane.ConfigReportResult{
+		Version: result.Version, Applied: result.Applied, Config: twin.Desired,
+		FailureCode: failureCode, ReportedAt: time.Now().UTC(),
+	}
+	if err := s.controlPlane.ReportResult(ctx, userID, deviceID, report); err != nil {
 		if s.logger != nil {
-			s.logger.Warn("failed to report twin state", "device_id", deviceID, "error", err)
+			s.logger.Warn("failed to persist settings outcome", "device_id", deviceID, "version", result.Version, "applied", result.Applied, "error", err)
 		}
 		twin.Status = controlplane.TwinStatusRequested
 		return twin
 	}
-	twin.Reported = reportedConfig
-	twin.ReportedVersion = result.Version
-	twin.Status = controlplane.TwinStatusApplied
+	if refreshed, err := s.controlPlane.Manifest(ctx, userID, deviceID); err == nil {
+		twin = refreshed
+	}
+	if status, err := s.controlPlane.SettingsStatus(ctx, userID, deviceID, true); err == nil {
+		twin.Status = controlplane.TwinStatus(status.State)
+	} else if result.Applied {
+		twin.Status = controlplane.TwinStatusApplied
+	} else {
+		twin.Status = controlplane.TwinStatusRejected
+	}
 	return twin
 }
 func (s *Server) handleTwinGet(w http.ResponseWriter, r *http.Request) {
@@ -1203,14 +1203,22 @@ func (s *Server) handleTwinGet(w http.ResponseWriter, r *http.Request) {
 		user = "default"
 	}
 	deviceID := r.PathValue("deviceID")
-	t, e := s.controlPlane.Manifest(r.Context(), user, deviceID)
-	if e != nil {
-		http.Error(w, e.Error(), http.StatusBadRequest)
+	twin, err := s.controlPlane.Manifest(r.Context(), user, deviceID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	t.Status = controlplane.DeriveTwinStatus(t, s.isDeviceOnline(deviceID), false)
+	status, err := s.controlPlane.SettingsStatus(r.Context(), user, deviceID, s.isDeviceOnline(deviceID))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	twin.Status = controlplane.TwinStatus(status.State)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(t)
+	_ = json.NewEncoder(w).Encode(struct {
+		controlplane.Twin
+		SettingsStatus controlplane.SettingsStatus `json:"settings_status"`
+	}{Twin: twin, SettingsStatus: status})
 }
 
 func decodeStrictJSON(w http.ResponseWriter, r *http.Request, limit int64, dst any) error {

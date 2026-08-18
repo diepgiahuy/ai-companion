@@ -1766,16 +1766,13 @@ bool WebSocketVoiceBackend::enqueue_agent_status_event(
 bool WebSocketVoiceBackend::enqueue_settings_event(const SettingsTwin& settings) {
   BackendEvent event{};
   event.type = BackendEventType::settings;
-  event.scope = BackendEventScope::global;
-  event.session_epoch = 0;
+  event.scope = BackendEventScope::session;
+  event.session_epoch = session_epoch_.load();
   event.generation = 0;
   event.set_settings(settings);
   return xQueueSend(event_queue_, &event, 0) == pdPASS;
 }
 
-bool WebSocketVoiceBackend::enqueue_config_event(const RuntimeConfigPatch& config) {
-  return enqueue_settings_event(config);
-}
 
 bool WebSocketVoiceBackend::enqueue_voice_mail_event(
     BackendEventType type, const VoiceMailMetadata& item, std::string_view text) {

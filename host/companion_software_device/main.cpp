@@ -192,7 +192,7 @@ void require(bool value, std::string_view message) {
   if (!value) throw std::runtime_error(std::string(message));
 }
 
-void patch_device_config(const std::string& host, const std::string& port,
+void patch_device_settings(const std::string& host, const std::string& port,
                          const std::string& admin_token, const std::string& device_id) {
   net::io_context io;
   tcp::resolver resolver(io);
@@ -213,7 +213,7 @@ void patch_device_config(const std::string& host, const std::string& port,
   beast::flat_buffer buffer;
   http::response<http::string_body> response;
   http::read(stream, buffer, response);
-  require(response.result() == http::status::ok, "config PATCH did not return 200");
+  require(response.result() == http::status::ok, "settings PATCH did not return 200");
   beast::error_code ignored;
   stream.socket().shutdown(tcp::socket::shutdown_both, ignored);
 }
@@ -369,7 +369,7 @@ json stats_json(const WebSocketVoiceBackend::Stats& stats) {
   return {{"connections", stats.connections}, {"turns_started", stats.turns_started},
           {"cancels", stats.cancels}, {"stale_controls", stats.stale_controls},
           {"discarded_binary_packets", stats.discarded_binary_packets},
-          {"config_reports", stats.config_reports}};
+          {"settings_applies", stats.settings_applies}};
 }
 } // namespace
 
@@ -485,18 +485,18 @@ int run(int argc, char** argv) {
     result.counters = stats_json(fixture.backend.stats());
   }));
 
-  results.push_back(run_scenario("config_update_report", [&](ScenarioResult& result) {
+  results.push_back(run_scenario("settings_update_apply", [&](ScenarioResult& result) {
     const std::string device = device_id;
     DeviceFixture fixture(url, token, device);
     fixture.require_ready();
-    const uint64_t before = fixture.app.runtime_config_version();
-    patch_device_config(host, port, admin_token, device);
-    require(fixture.until([&] { return fixture.app.runtime_config_version() > before; }),
-            "live config update was not applied");
+    const uint64_t before = fixture.app.settings_version();
+    patch_device_settings(host, port, admin_token, device);
+    require(fixture.until([&] { return fixture.app.settings_version() > before; }),
+            "live settings update was not applied");
     const auto stats = fixture.backend.stats();
-    require(stats.config_reports > 0, "applied config was not reported to backend");
+    require(stats.settings_applies > 0, "applied settings were not acknowledged to backend");
     result.counters = stats_json(stats);
-    result.counters["config_version"] = fixture.app.runtime_config_version();
+    result.counters["settings_version"] = fixture.app.settings_version();
   }));
 
   results.push_back(run_scenario("protocol_v1_rejected", [&](ScenarioResult&) {
