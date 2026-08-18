@@ -1,10 +1,11 @@
 package capability
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
-	"strings"
 )
 
 // ValidateArguments validates the JSON-schema subset deliberately used by
@@ -14,16 +15,43 @@ func ValidateArguments(schema map[string]any, raw string) error {
 	if schema == nil {
 		return nil
 	}
-	dec := json.NewDecoder(strings.NewReader(raw))
+	value, err := decodeOneJSON([]byte(raw))
+	if err != nil {
+		return fmt.Errorf("invalid JSON arguments: %w", err)
+	}
+	return validateValue(schema, value, "$")
+}
+
+// ValidateJSON validates exactly one JSON value against the bounded schema
+// subset used by Companion. Device capability inputs and successful results use
+// this same implementation so the backend does not maintain a second schema
+// engine for the device RPC boundary.
+func ValidateJSON(schema map[string]any, raw []byte) error {
+	if schema == nil {
+		return nil
+	}
+	value, err := decodeOneJSON(raw)
+	if err != nil {
+		return err
+	}
+	return validateValue(schema, value, "$")
+}
+
+func decodeOneJSON(raw []byte) (any, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
 	var value any
 	if err := dec.Decode(&value); err != nil {
-		return fmt.Errorf("invalid JSON arguments: %w", err)
+		return nil, fmt.Errorf("invalid JSON: %w", err)
 	}
-	if dec.More() {
-		return fmt.Errorf("multiple JSON values are not allowed")
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return nil, fmt.Errorf("multiple JSON values are not allowed")
+		}
+		return nil, fmt.Errorf("invalid trailing JSON: %w", err)
 	}
-	return validateValue(schema, value, "$")
+	return value, nil
 }
 
 func validateValue(schema map[string]any, value any, path string) error {
@@ -141,6 +169,7 @@ func validateValue(schema map[string]any, value any, path string) error {
 	}
 	return nil
 }
+
 func number(v any) (float64, bool) {
 	switch x := v.(type) {
 	case json.Number:
@@ -163,6 +192,7 @@ func number(v any) (float64, bool) {
 	}
 	return 0, false
 }
+
 func contains(xs []string, v string) bool {
 	for _, x := range xs {
 		if x == v {

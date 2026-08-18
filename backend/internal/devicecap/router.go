@@ -26,8 +26,9 @@ const (
 )
 
 var (
-	ErrOffline     = errors.New("device capability endpoint is offline")
-	ErrUnsupported = errors.New("device capability is not advertised by this device")
+	ErrOffline           = errors.New("device capability endpoint is offline")
+	ErrUnsupported       = errors.New("device capability is not advertised by this device")
+	ErrContractViolation = errors.New("device capability contract violation")
 )
 
 type Descriptor struct {
@@ -37,7 +38,7 @@ type Descriptor struct {
 }
 
 type SettingsArgs struct {
-	Version  int64                       `json:"version"`
+	Version  int64                      `json:"version"`
 	Settings controlplane.RuntimeConfig `json:"settings"`
 }
 
@@ -61,7 +62,7 @@ func (a SettingsArgs) MarshalJSON() ([]byte, error) {
 		OTAPollIntervalSeconds: a.Settings.OTAPollIntervalSeconds,
 	}
 	type wireSettingsArgs struct {
-		Version  int64                       `json:"version"`
+		Version  int64                      `json:"version"`
 		Settings controlplane.RuntimeConfig `json:"settings"`
 	}
 	return json.Marshal(wireSettingsArgs{Version: a.Version, Settings: device})
@@ -94,9 +95,33 @@ type Endpoint interface {
 type Router struct {
 	mu       sync.RWMutex
 	byDevice map[string]Endpoint
+	catalog  *ContractCatalog
 }
 
-func NewRouter() *Router { return &Router{byDevice: map[string]Endpoint{}} }
+func NewRouter() *Router {
+	return &Router{byDevice: map[string]Endpoint{}, catalog: DefaultContractCatalog()}
+}
+
+func (r *Router) Contract(name, version string) (Contract, bool) {
+	if r == nil || r.catalog == nil {
+		return Contract{}, false
+	}
+	return r.catalog.Lookup(name, version)
+}
+
+func (r *Router) Supports(deviceID, name, version string) bool {
+	if r == nil {
+		return false
+	}
+	deviceID = strings.TrimSpace(deviceID)
+	if deviceID == "" {
+		return false
+	}
+	r.mu.RLock()
+	endpoint := r.byDevice[deviceID]
+	r.mu.RUnlock()
+	return endpoint != nil && endpoint.Supports(name, version)
+}
 
 func (r *Router) Register(deviceID string, endpoint Endpoint) error {
 	deviceID = strings.TrimSpace(deviceID)
@@ -129,6 +154,10 @@ func (r *Router) Call(ctx context.Context, deviceID string, call Call) (Result, 
 	if deviceID == "" {
 		return Result{}, fmt.Errorf("authenticated device id is required")
 	}
+	contract, known := r.Contract(call.Name, call.Version)
+	if !known {
+		return Result{}, ErrUnsupported
+	}
 	r.mu.RLock()
 	endpoint := r.byDevice[deviceID]
 	r.mu.RUnlock()
@@ -138,12 +167,22 @@ func (r *Router) Call(ctx context.Context, deviceID string, call Call) (Result, 
 	if !endpoint.Supports(call.Name, call.Version) {
 		return Result{}, ErrUnsupported
 	}
+	if err := contract.ValidateInput(call.Arguments); err != nil {
+		return Result{}, fmt.Errorf("%w: %v", ErrContractViolation, err)
+	}
 	if !call.Deadline.IsZero() {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithDeadline(ctx, call.Deadline)
 		defer cancel()
 	}
-	return endpoint.Call(ctx, call)
+	result, err := endpoint.Call(ctx, call)
+	if err != nil {
+		return Result{}, err
+	}
+	if err := contract.ValidateResult(result.Value); err != nil {
+		return Result{}, fmt.Errorf("%w: %v", ErrContractViolation, err)
+	}
+	return result, nil
 }
 
 // RequestConfirmation implements capability.ConfirmationRequester using the
@@ -194,32 +233,29 @@ func RegisterTools(registry *capability.ToolRegistry, router *Router) error {
 	if registry == nil || router == nil {
 		return fmt.Errorf("device capability ToolRegistry and router are required")
 	}
+	contract, ok := router.Contract(VolumeSetName, VolumeSetVersion)
+	if !ok || contract.ToolDefinition == nil {
+		return fmt.Errorf("device volume capability contract is unavailable")
+	}
+	definition := *contract.ToolDefinition
 	return registry.Register(capability.FunctionTool{
-		ToolName: VolumeSetName,
-		ToolDefinition: &capability.ToolDefinition{
-			Name: VolumeSetName,
-			Description: "Set the authenticated current device speaker volume from 0 to 100.",
-			Pack: "device", Risk: "write",
-			Parameters: map[string]any{
-				"type": "object",
-				"properties": map[string]any{"volume": map[string]any{"type": "integer", "minimum": 0, "maximum": 100}},
-				"required": []string{"volume"},
-				"additionalProperties": false,
-			},
-		},
+		ToolName:       VolumeSetName,
+		ToolDefinition: &definition,
 		Handler: func(ctx context.Context, req capability.ToolRequest) capability.ToolResult {
 			turn, ok := pipeline.CurrentTurn(ctx)
 			if !ok || strings.TrimSpace(turn.DeviceID) == "" {
 				return capability.Failure(fmt.Errorf("device capability requires authenticated turn context"))
 			}
-			var args struct{ Volume int `json:"volume"` }
+			var args struct {
+				Volume int `json:"volume"`
+			}
 			if err := json.Unmarshal([]byte(req.Arguments), &args); err != nil {
 				return capability.Failure(fmt.Errorf("decode device capability arguments: %w", err))
 			}
 			payload, _ := json.Marshal(map[string]any{"volume": args.Volume})
 			result, err := router.Call(ctx, turn.DeviceID, Call{
 				Name: VolumeSetName, Version: VolumeSetVersion, Arguments: payload,
-				Deadline: time.Now().Add(3 * time.Second),
+				TurnID: strings.TrimSpace(turn.TurnID), Deadline: time.Now().Add(3 * time.Second),
 			})
 			if err != nil {
 				return capability.Failure(err)
