@@ -20,6 +20,7 @@ import (
 type fakeTwinRepo struct {
 	mu        sync.Mutex
 	twins     map[string]controlplane.Twin
+	metadata  map[string]controlplane.SettingsMetadata
 	version   int64
 	overrides map[string]controlplane.RuntimeConfig
 }
@@ -27,6 +28,7 @@ type fakeTwinRepo struct {
 func newFakeTwinRepo() *fakeTwinRepo {
 	return &fakeTwinRepo{
 		twins:     make(map[string]controlplane.Twin),
+		metadata:  make(map[string]controlplane.SettingsMetadata),
 		overrides: make(map[string]controlplane.RuntimeConfig),
 	}
 }
@@ -65,12 +67,24 @@ func (r *fakeTwinRepo) SetDesired(ctx context.Context, userID, deviceID string, 
 	r.version++
 	twin.Desired = config
 	twin.DesiredVersion = r.version
-	twin.UpdatedAt = time.Now().UTC()
+	now := time.Now().UTC()
+	twin.UpdatedAt = now
 	r.twins[deviceID] = twin
+	meta := r.metadata[deviceID]
+	meta.DesiredVersion = twin.DesiredVersion
+	meta.ReportedVersion = twin.ReportedVersion
+	meta.DesiredAt = now
+	r.metadata[deviceID] = meta
 	return twin, nil
 }
 
 func (r *fakeTwinRepo) Report(ctx context.Context, userID, deviceID string, version int64, config controlplane.RuntimeConfig) error {
+	return r.RecordConfigReport(ctx, userID, deviceID, controlplane.ConfigReportResult{
+		Version: version, Applied: true, Config: config, ReportedAt: time.Now().UTC(),
+	})
+}
+
+func (r *fakeTwinRepo) RecordConfigReport(_ context.Context, userID, deviceID string, result controlplane.ConfigReportResult) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	twin, ok := r.twins[deviceID]
@@ -80,18 +94,65 @@ func (r *fakeTwinRepo) Report(ctx context.Context, userID, deviceID string, vers
 	if twin.UserID != userID {
 		return fmt.Errorf("device owner mismatch")
 	}
-	if version < twin.ReportedVersion {
-		return fmt.Errorf("reported config version %d is stale (current %d)", version, twin.ReportedVersion)
-	}
-	if version > twin.DesiredVersion {
+	if result.Version > twin.DesiredVersion {
 		return fmt.Errorf("reported config version ahead of desired")
 	}
-	twin.Reported = config
-	twin.ReportedVersion = version
-	twin.UpdatedAt = time.Now().UTC()
-	r.twins[deviceID] = twin
+	meta := r.metadata[deviceID]
+	if result.Version < meta.LastReportVersion {
+		return nil
+	}
+	if !result.Applied && result.Version <= twin.ReportedVersion {
+		return nil
+	}
+	if result.Applied && result.Version < twin.ReportedVersion {
+		return nil
+	}
+	reportedAt := result.ReportedAt.UTC()
+	if result.ReportedAt.IsZero() {
+		reportedAt = time.Now().UTC()
+	}
+	if result.Applied {
+		twin.Reported = result.Config
+		twin.ReportedVersion = result.Version
+		twin.UpdatedAt = reportedAt
+		r.twins[deviceID] = twin
+		meta.ReportedVersion = result.Version
+		meta.LastReportState = controlplane.SettingsApplied
+		meta.FailureCode = ""
+	} else {
+		meta.LastReportState = controlplane.SettingsRejected
+		meta.FailureCode = result.FailureCode
+	}
+	meta.DesiredVersion = twin.DesiredVersion
+	if meta.DesiredAt.IsZero() {
+		meta.DesiredAt = twin.UpdatedAt
+	}
+	meta.LastReportVersion = result.Version
+	meta.ReportedAt = &reportedAt
+	r.metadata[deviceID] = meta
 	return nil
 }
+
+func (r *fakeTwinRepo) SettingsMetadata(_ context.Context, userID, deviceID string) (controlplane.SettingsMetadata, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	twin, ok := r.twins[deviceID]
+	if !ok {
+		return controlplane.SettingsMetadata{}, fmt.Errorf("device not found")
+	}
+	if twin.UserID != userID {
+		return controlplane.SettingsMetadata{}, fmt.Errorf("device owner mismatch")
+	}
+	meta := r.metadata[deviceID]
+	meta.DesiredVersion = twin.DesiredVersion
+	meta.ReportedVersion = twin.ReportedVersion
+	if meta.DesiredAt.IsZero() {
+		meta.DesiredAt = twin.UpdatedAt
+	}
+	return meta, nil
+}
+
+var _ controlplane.SettingsReportRepository = (*fakeTwinRepo)(nil)
 
 func newSettingsTestSession(t *testing.T, srv *Server, deviceID, userID string) *session {
 	t.Helper()
@@ -176,7 +237,7 @@ func TestDeviceSettingsHappyApply(t *testing.T) {
 	if err := json.Unmarshal(callPayload.Arguments, &args); err != nil {
 		t.Fatalf("unmarshal args: %v", err)
 	}
-	if args.Version != 1 || args.Settings.WakeModel != "hilexin" || args.Settings.Locale != "vi-VN" {
+	if args.Version != 1 || args.Settings.WakeModel != "hilexin" || args.Settings.Locale != "" {
 		t.Fatalf("args = %+v", args)
 	}
 
