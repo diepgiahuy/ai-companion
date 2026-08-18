@@ -35,6 +35,9 @@ type ClaimSessionRecord struct {
 	BootstrapID        string             `json:"bootstrap_id"`
 	DeviceCodeHash     string             `json:"device_code_hash"`
 	UserCodeHash       string             `json:"user_code_hash"`
+	// UserCodePlain is transient only. PostgreSQL stores only UserCodeHash.
+	// It exists so isolated in-memory tests can inspect the generated code.
+	UserCodePlain      string             `json:"-"`
 	OwnerUserID        string             `json:"owner_user_id,omitempty"`
 	Status             ClaimSessionStatus `json:"status"`
 	ClaimAuthorization string             `json:"claim_authorization,omitempty"`
