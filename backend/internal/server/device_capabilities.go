@@ -115,9 +115,12 @@ func (s *session) Call(ctx context.Context, call devicecap.Call) (devicecap.Resu
 		}
 		s.mu.Lock()
 		generation = s.generation
+		active := s.active
+		activeMatches := active != nil && active.id == turnID &&
+			active.generation == generation && generation != 0
 		s.mu.Unlock()
-		if generation == 0 {
-			return devicecap.Result{}, fmt.Errorf("turn-scoped device capability requires an active generation")
+		if !activeMatches {
+			return devicecap.Result{}, fmt.Errorf("turn-scoped device capability requires the active turn and generation")
 		}
 	default:
 		return devicecap.Result{}, fmt.Errorf("device capability has unsupported scope %q", contract.Scope)
