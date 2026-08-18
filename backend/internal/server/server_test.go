@@ -25,28 +25,25 @@ import (
 )
 
 type testEnvelope struct {
-	Type          protocol.MessageType
-	MessageID     string
-	Version       int
-	Transport     string
-	SessionID     string
-	TurnID        string
-	GenerationID  uint64
-	State         string
-	Mode          string
-	Text          string
-	ID            string
-	Message       string
-	FireAt        string
-	Reason        string
-	Code          string
-	Emotion       protocol.UIEmotion
-	ToolName      string
-	AudioParams   *protocol.AudioParams
-	UI            any
-	Config        *protocol.RuntimeConfig
-	ConfigVersion int64
-	Applied       bool
+	Type         protocol.MessageType
+	MessageID    string
+	Version      int
+	Transport    string
+	SessionID    string
+	TurnID       string
+	GenerationID uint64
+	State        string
+	Mode         string
+	Text         string
+	ID           string
+	Message      string
+	FireAt       string
+	Reason       string
+	Code         string
+	Emotion      protocol.UIEmotion
+	ToolName     string
+	AudioParams  *protocol.AudioParams
+	UI           any
 }
 
 var testEnvelopeSequence atomic.Uint64
@@ -102,11 +99,6 @@ func (m testEnvelope) MarshalJSON() ([]byte, error) {
 		return protocol.Encode(m.Type, metadata, protocol.AbortPayload{Reason: reason})
 	case protocol.AlarmAckType:
 		return protocol.Encode(m.Type, metadata, protocol.AlarmAckPayload{AlarmID: m.ID})
-	case protocol.ConfigReportType:
-		if m.Config == nil {
-			return nil, fmt.Errorf("config is required")
-		}
-		return protocol.Encode(m.Type, metadata, protocol.ConfigReportPayload{ConfigVersion: m.ConfigVersion, Applied: m.Applied, Config: *m.Config})
 	case protocol.SessionPingType:
 		return protocol.Encode(m.Type, metadata, protocol.EmptyPayload{})
 	default:
@@ -131,7 +123,6 @@ func (m *testEnvelope) UnmarshalJSON(data []byte) error {
 			return err
 		}
 		m.Transport, m.AudioParams = payload.Transport, &payload.AudioParams
-		m.Config, m.ConfigVersion = payload.Config, payload.ConfigVersion
 	case protocol.TranscriptFinalType:
 		payload, err := protocol.DecodePayload[protocol.TextPayload](envelope)
 		if err != nil {
@@ -180,12 +171,6 @@ func (m *testEnvelope) UnmarshalJSON(data []byte) error {
 			return err
 		}
 		m.State = payload.State
-	case protocol.ConfigUpdateType:
-		payload, err := protocol.DecodePayload[protocol.ConfigUpdatePayload](envelope)
-		if err != nil {
-			return err
-		}
-		m.Config, m.ConfigVersion = &payload.Config, payload.ConfigVersion
 	case protocol.ProtocolErrorType:
 		payload, err := protocol.DecodePayload[protocol.ProtocolErrorPayload](envelope)
 		if err != nil {

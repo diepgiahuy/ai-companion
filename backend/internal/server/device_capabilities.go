@@ -1,22 +1,26 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"time"
 
+	"companion-server/internal/controlplane"
 	"companion-server/internal/devicecap"
 	"companion-server/internal/protocol"
 )
 
 type capabilityPending struct {
-	generation uint64
-	turnID     string
-	result     chan protocol.CapabilityResultPayload
+	generation    uint64
+	turnID        string
+	sessionScoped bool
+	result        chan protocol.CapabilityResultPayload
 }
 
 type sessionCapabilityState struct {
@@ -48,7 +52,7 @@ func allowedDeviceCapability(descriptor protocol.CapabilityDescriptor) bool {
 		return false
 	}
 	switch descriptor.Name {
-	case devicecap.VolumeSetName, devicecap.UserConfirmationName:
+	case devicecap.VolumeSetName, devicecap.UserConfirmationName, devicecap.SettingsName:
 		return true
 	default:
 		return false
@@ -99,12 +103,21 @@ func (s *session) Call(ctx context.Context, call devicecap.Call) (devicecap.Resu
 		return devicecap.Result{}, fmt.Errorf("device capability turn_id exceeds size limit")
 	}
 
-	s.mu.Lock()
-	generation := s.generation
-	s.mu.Unlock()
-	if generation == 0 {
-		return devicecap.Result{}, fmt.Errorf("device capability requires an active generation")
+	// Settings reconciliation is intentionally session-scoped. It must work
+	// immediately after capability advertisement, before the first conversational
+	// turn creates a media generation. Turn-owned capabilities keep the existing
+	// generation binding so stale results cannot cross a barge-in/cancel boundary.
+	sessionScoped := call.Name == devicecap.SettingsName && turnID == ""
+	var generation uint64
+	if !sessionScoped {
+		s.mu.Lock()
+		generation = s.generation
+		s.mu.Unlock()
+		if generation == 0 {
+			return devicecap.Result{}, fmt.Errorf("turn-scoped device capability requires an active generation")
+		}
 	}
+
 	deadline := call.Deadline
 	if deadline.IsZero() {
 		deadline = time.Now().Add(3 * time.Second)
@@ -126,7 +139,10 @@ func (s *session) Call(ctx context.Context, call devicecap.Call) (devicecap.Resu
 	}
 
 	correlationID := "cap-" + s.nextMessageID()
-	waiter := &capabilityPending{generation: generation, turnID: turnID, result: make(chan protocol.CapabilityResultPayload, 1)}
+	waiter := &capabilityPending{
+		generation: generation, turnID: turnID, sessionScoped: sessionScoped,
+		result: make(chan protocol.CapabilityResultPayload, 1),
+	}
 	state.mu.Lock()
 	if state.closed {
 		state.mu.Unlock()
@@ -238,6 +254,9 @@ func (s *session) handleCapabilityControl(ctx context.Context, data []byte) (boo
 			}
 			state.advertised = advertised
 			state.mu.Unlock()
+			if s.Supports(devicecap.SettingsName, devicecap.SettingsVersion) {
+				go s.reconcileSettings(context.Background())
+			}
 			return nil
 		})
 	case protocol.CapabilityResultType:
@@ -265,7 +284,7 @@ func (s *session) handleCapabilityControl(ctx context.Context, data []byte) (boo
 			}
 			delete(state.pending, message.CorrelationID)
 			state.mu.Unlock()
-			if !s.generationCurrent(waiter.generation) {
+			if !waiter.sessionScoped && !s.generationCurrent(waiter.generation) {
 				return fmt.Errorf("stale capability generation")
 			}
 			select {
@@ -279,4 +298,100 @@ func (s *session) handleCapabilityControl(ctx context.Context, data []byte) (boo
 		})
 	}
 	return false, nil
+}
+
+func decodeSettingsResult(raw json.RawMessage) (devicecap.SettingsResult, error) {
+	var result devicecap.SettingsResult
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&result); err != nil {
+		return result, err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return result, fmt.Errorf("multiple settings result values")
+		}
+		return result, err
+	}
+	return result, nil
+}
+
+func (s *session) reconcileSettings(ctx context.Context) {
+	if s == nil || s.controlPlane == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	twin, err := s.controlPlane.ManifestFor(ctx, controlplane.ResolutionContext{
+		UserID:   s.userID,
+		DeviceID: s.deviceID,
+		TenantID: s.tenantID,
+		Plan:     s.plan,
+	})
+	if err != nil {
+		return
+	}
+	// A durable reported_version is evidence about the last successful runtime,
+	// not proof that a newly booted/reconnected process still holds the config.
+	// Reassert every non-zero desired revision on each authenticated session.
+	// Exact-version duplicate apply is idempotent on the device side.
+	if twin.DesiredVersion <= 0 {
+		return
+	}
+	if !s.Supports(devicecap.SettingsName, devicecap.SettingsVersion) {
+		return
+	}
+	args, err := json.Marshal(devicecap.SettingsArgs{
+		Version:  twin.DesiredVersion,
+		Settings: twin.Desired,
+	})
+	if err != nil {
+		return
+	}
+	res, err := s.Call(ctx, devicecap.Call{
+		Name:      devicecap.SettingsName,
+		Version:   devicecap.SettingsVersion,
+		Arguments: args,
+		Deadline:  time.Now().Add(3 * time.Second),
+	})
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Warn("settings reconciliation call failed", "device_id", s.deviceID, "error", err)
+		}
+		return
+	}
+	result, err := decodeSettingsResult(res.Value)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Warn("invalid settings reconciliation result", "device_id", s.deviceID, "error", err)
+		}
+		return
+	}
+	if result.Version != twin.DesiredVersion {
+		if s.logger != nil {
+			s.logger.Warn("device acknowledged unexpected settings version", "device_id", s.deviceID, "want", twin.DesiredVersion, "got", result.Version)
+		}
+		return
+	}
+	failureCode := strings.TrimSpace(result.Error)
+	if !result.Applied && failureCode == "" {
+		failureCode = "device_rejected"
+	}
+	report := controlplane.ConfigReportResult{
+		Version:     result.Version,
+		Applied:     result.Applied,
+		Config:      twin.Desired,
+		FailureCode: failureCode,
+		ReportedAt:  time.Now().UTC(),
+	}
+	if err := s.controlPlane.ReportResult(ctx, s.userID, s.deviceID, report); err != nil {
+		if s.logger != nil {
+			s.logger.Warn("failed to persist reconciled settings outcome", "device_id", s.deviceID, "version", result.Version, "applied", result.Applied, "error", err)
+		}
+		return
+	}
+	if !result.Applied && s.logger != nil {
+		s.logger.Warn("device rejected settings reconciliation", "device_id", s.deviceID, "version", result.Version, "error", failureCode)
+	}
 }

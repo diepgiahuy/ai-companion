@@ -2,6 +2,7 @@
 
 #include "companion/app.hpp"
 #include "companion/audio_runtime.hpp"
+#include "companion/input_router.hpp"
 
 #include <boost/asio/connect.hpp>
 #include <boost/asio/ip/tcp.hpp>
@@ -104,18 +105,12 @@ struct RecordingDisplay final : Display {
   }
 };
 
-struct ScriptedButton final : Button {
-  bool pending{};
-  bool consume_press(uint64_t) override { return std::exchange(pending, false); }
-  void press() { pending = true; }
-};
-
 struct DeviceFixture {
   FixtureMicrophone microphone;
   RecordingSpeaker speaker;
   AudioRuntime audio;
   RecordingDisplay display;
-  ScriptedButton button;
+  InputRouter input;
   WebSocketVoiceBackend backend;
   CompanionApp app;
   uint64_t now_ms{};
@@ -123,12 +118,16 @@ struct DeviceFixture {
   DeviceFixture(const std::string& url, const std::string& token, const std::string& device)
       : audio(microphone, speaker),
         backend(url, token, device),
-        app(audio, display, button, backend,
+        app(audio, display, input, backend,
             AppConfig{.maximum_recording_ms = 8'000,
                       .idle_after_ms = 60'000,
                       .alarm_visible_ms = 10'000,
                       .alarm_tone_ms = 0,
                       .smart_vad_enabled = false}) {}
+
+  void press() {
+    input.queue_primary_action(InputIntent::primary_action);
+  }
 
   void tick() {
     now_ms += 20;
@@ -152,14 +151,14 @@ struct DeviceFixture {
 
   void begin_audio_turn() {
     microphone.arm();
-    button.press();
+    press();
     tick();
     if (app.state() != UiState::listening) throw std::runtime_error("turn did not start");
     for (int i = 0; i < 6; ++i) tick();
   }
 
   void finish_audio_turn() {
-    button.press();
+    press();
     tick();
     if (app.state() != UiState::processing)
       throw std::runtime_error("turn did not enter processing");
@@ -193,7 +192,7 @@ void require(bool value, std::string_view message) {
   if (!value) throw std::runtime_error(std::string(message));
 }
 
-void patch_device_config(const std::string& host, const std::string& port,
+void patch_device_settings(const std::string& host, const std::string& port,
                          const std::string& admin_token, const std::string& device_id) {
   net::io_context io;
   tcp::resolver resolver(io);
@@ -214,7 +213,7 @@ void patch_device_config(const std::string& host, const std::string& port,
   beast::flat_buffer buffer;
   http::response<http::string_body> response;
   http::read(stream, buffer, response);
-  require(response.result() == http::status::ok, "config PATCH did not return 200");
+  require(response.result() == http::status::ok, "settings PATCH did not return 200");
   beast::error_code ignored;
   stream.socket().shutdown(tcp::socket::shutdown_both, ignored);
 }
@@ -370,7 +369,7 @@ json stats_json(const WebSocketVoiceBackend::Stats& stats) {
   return {{"connections", stats.connections}, {"turns_started", stats.turns_started},
           {"cancels", stats.cancels}, {"stale_controls", stats.stale_controls},
           {"discarded_binary_packets", stats.discarded_binary_packets},
-          {"config_reports", stats.config_reports}};
+          {"settings_applies", stats.settings_applies}};
 }
 } // namespace
 
@@ -450,12 +449,12 @@ int run(int argc, char** argv) {
             "first turn never reached speaking");
     const uint64_t before = fixture.speaker.samples;
     fixture.microphone.arm();
-    fixture.button.press();
+    fixture.press();
     fixture.tick();
     require(fixture.app.state() == UiState::listening, "barge-in did not start a new turn");
     for (int i = 0; i < 6; ++i) fixture.tick();
     require(fixture.speaker.samples == before, "stale audio leaked while new turn was listening");
-    fixture.button.press();
+    fixture.press();
     fixture.tick();
     require(fixture.until([&] { return fixture.app.state() == UiState::ready; }),
             "second turn did not complete after barge-in");
@@ -473,7 +472,7 @@ int run(int argc, char** argv) {
     fixture.backend.disconnect_for_test();
     require(fixture.until([&] { return fixture.app.state() == UiState::error; }),
             "disconnect did not reach application error state");
-    fixture.button.press();
+    fixture.press();
     fixture.tick();
     require(fixture.until([&] { return fixture.app.state() == UiState::ready; }),
             "reconnect did not return ready");
@@ -486,18 +485,18 @@ int run(int argc, char** argv) {
     result.counters = stats_json(fixture.backend.stats());
   }));
 
-  results.push_back(run_scenario("config_update_report", [&](ScenarioResult& result) {
+  results.push_back(run_scenario("settings_update_apply", [&](ScenarioResult& result) {
     const std::string device = device_id;
     DeviceFixture fixture(url, token, device);
     fixture.require_ready();
-    const uint64_t before = fixture.app.runtime_config_version();
-    patch_device_config(host, port, admin_token, device);
-    require(fixture.until([&] { return fixture.app.runtime_config_version() > before; }),
-            "live config update was not applied");
+    const uint64_t before = fixture.app.settings_version();
+    patch_device_settings(host, port, admin_token, device);
+    require(fixture.until([&] { return fixture.app.settings_version() > before; }),
+            "live settings update was not applied");
     const auto stats = fixture.backend.stats();
-    require(stats.config_reports > 0, "applied config was not reported to backend");
+    require(stats.settings_applies > 0, "applied settings were not acknowledged to backend");
     result.counters = stats_json(stats);
-    result.counters["config_version"] = fixture.app.runtime_config_version();
+    result.counters["settings_version"] = fixture.app.settings_version();
   }));
 
   results.push_back(run_scenario("protocol_v1_rejected", [&](ScenarioResult&) {
@@ -533,7 +532,7 @@ int run(int argc, char** argv) {
       fixture.backend.disconnect_for_test();
       require(fixture.until([&] { return fixture.app.state() == UiState::error; }),
               "duplicate recovery setup did not observe disconnect");
-      fixture.button.press();
+      fixture.press();
       fixture.tick();
       require(fixture.until([&] {
                 return fixture.app.state() == UiState::voice_mail_waiting;
@@ -542,7 +541,7 @@ int run(int argc, char** argv) {
               "duplicate notification triggered automatic playback");
 
       fixture.speaker.drained = false;
-      fixture.button.press();
+      fixture.press();
       fixture.tick();
       require(fixture.until([&] {
                 return fixture.app.state() == UiState::voice_mail_playing &&
@@ -563,12 +562,12 @@ int run(int argc, char** argv) {
       require(fixture.until([&] {
                 return fixture.app.state() == UiState::voice_mail_waiting;
               }), "cancel fixture did not reach waiting");
-      fixture.button.press();
+      fixture.press();
       fixture.tick();
       require(fixture.until([&] {
                 return fixture.app.state() == UiState::voice_mail_playing;
               }), "cancel fixture did not start playback");
-      fixture.button.press();
+      fixture.press();
       fixture.tick();
       require(fixture.app.state() == UiState::voice_mail_waiting,
               "explicit cancel did not return waiting");
@@ -576,7 +575,7 @@ int run(int argc, char** argv) {
                 return unread_voice_mail_count(host, port, device_id, token) == 1;
               }, 200), "cancelled voice mail was consumed instead of released");
 
-      fixture.button.press();
+      fixture.press();
       fixture.tick();
       require(fixture.until([&] {
                 return fixture.app.state() == UiState::voice_mail_playing;
@@ -591,7 +590,7 @@ int run(int argc, char** argv) {
                 return fixture.app.state() == UiState::voice_mail_waiting;
               }), "timeout fixture did not reach waiting");
       fixture.speaker.maximum_write = 0;
-      fixture.button.press();
+      fixture.press();
       fixture.tick();
       require(fixture.until([&] {
                 return fixture.app.state() == UiState::voice_mail_playing;

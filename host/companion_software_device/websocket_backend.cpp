@@ -70,24 +70,6 @@ std::optional<ParsedURL> parse_ws_url(const std::string& url) {
   return ParsedURL{authority.substr(0, colon), authority.substr(colon + 1), target};
 }
 
-RuntimeConfigPatch parse_config(const json& payload) {
-  const auto& config = payload.at("config");
-  RuntimeConfigPatch out{};
-  out.version = payload.at("config_version").get<uint64_t>();
-  out.smart_vad_enabled = config.at("smart_vad_enabled").get<bool>();
-  out.vad_threshold = config.at("vad_threshold").get<uint32_t>();
-  out.vad_silence_ms = config.at("vad_silence_ms").get<uint32_t>();
-  out.vad_min_speech_ms = config.at("vad_min_speech_ms").get<uint32_t>();
-  out.idle_after_ms = config.at("idle_after_ms").get<uint32_t>();
-  out.alarm_visible_ms = config.at("alarm_visible_ms").get<uint32_t>();
-  if (config.contains("ota_poll_interval_s") && config.at("ota_poll_interval_s").is_number_integer()) {
-    out.ota_poll_interval_s = config.at("ota_poll_interval_s").get<uint32_t>();
-  } else {
-    out.ota_poll_interval_s = 21'600;
-  }
-  return out;
-}
-
 std::string json_string(const json& object, const char* key) {
   const auto it = object.find(key);
   return it != object.end() && it->is_string() ? it->get<std::string>() : std::string{};
@@ -103,6 +85,98 @@ bool has_only_fields(const json& object,
       return false;
     }
   }
+  return true;
+}
+
+bool exact_uint64(const json& value, uint64_t& output) {
+  if (!value.is_number_integer()) return false;
+  if (value.is_number_unsigned()) {
+    output = value.get<uint64_t>();
+    return output <= 9'007'199'254'740'991ULL;
+  }
+  const int64_t signed_value = value.get<int64_t>();
+  if (signed_value < 0) return false;
+  output = static_cast<uint64_t>(signed_value);
+  return output <= 9'007'199'254'740'991ULL;
+}
+
+bool exact_uint32(const json& value, uint32_t& output) {
+  uint64_t parsed = 0;
+  if (!exact_uint64(value, parsed) || parsed > std::numeric_limits<uint32_t>::max()) {
+    return false;
+  }
+  output = static_cast<uint32_t>(parsed);
+  return true;
+}
+
+bool same_settings(const DeviceSettings& left, const DeviceSettings& right) {
+  return left.smart_vad_enabled == right.smart_vad_enabled &&
+         left.vad_threshold == right.vad_threshold &&
+         left.vad_silence_ms == right.vad_silence_ms &&
+         left.vad_min_speech_ms == right.vad_min_speech_ms &&
+         left.idle_after_ms == right.idle_after_ms &&
+         left.alarm_visible_ms == right.alarm_visible_ms &&
+         left.alarm_tone_ms == right.alarm_tone_ms &&
+         left.alarm_tone_hz == right.alarm_tone_hz &&
+         left.alarm_tone_amplitude == right.alarm_tone_amplitude &&
+         left.ota_poll_interval_s == right.ota_poll_interval_s &&
+         left.volume == right.volume &&
+         left.wake_threshold == right.wake_threshold &&
+         left.wake_model_view() == right.wake_model_view();
+}
+
+bool parse_settings_arguments(const json& arguments,
+                              const DeviceSettings& current,
+                              uint64_t current_version,
+                              SettingsTwin& output,
+                              bool& duplicate) {
+  if (!has_only_fields(arguments, {"version", "settings"})) return false;
+  const auto version_it = arguments.find("version");
+  const auto settings_it = arguments.find("settings");
+  uint64_t version = 0;
+  if (version_it == arguments.end() || !exact_uint64(*version_it, version) || version == 0 ||
+      settings_it == arguments.end() || !settings_it->is_object() ||
+      !has_only_fields(*settings_it,
+                       {"smart_vad_enabled", "vad_threshold", "vad_silence_ms",
+                        "vad_min_speech_ms", "idle_after_ms", "alarm_visible_ms",
+                        "ota_poll_interval_s", "wake_model"})) {
+    return false;
+  }
+  if (version < current_version) return false;
+
+  DeviceSettings parsed = current;
+  const json& settings = *settings_it;
+  if (const auto it = settings.find("smart_vad_enabled"); it != settings.end()) {
+    if (!it->is_boolean()) return false;
+    parsed.smart_vad_enabled = it->get<bool>();
+  }
+  auto parse_u32 = [&](const char* key, uint32_t& destination) {
+    const auto it = settings.find(key);
+    if (it == settings.end()) return true;
+    uint32_t value = 0;
+    if (!exact_uint32(*it, value)) return false;
+    destination = value;
+    return true;
+  };
+  if (!parse_u32("vad_threshold", parsed.vad_threshold) ||
+      !parse_u32("vad_silence_ms", parsed.vad_silence_ms) ||
+      !parse_u32("vad_min_speech_ms", parsed.vad_min_speech_ms) ||
+      !parse_u32("idle_after_ms", parsed.idle_after_ms) ||
+      !parse_u32("alarm_visible_ms", parsed.alarm_visible_ms) ||
+      !parse_u32("ota_poll_interval_s", parsed.ota_poll_interval_s)) {
+    return false;
+  }
+  if (const auto it = settings.find("wake_model"); it != settings.end()) {
+    if (!it->is_string()) return false;
+    const std::string model = it->get<std::string>();
+    if (model.empty() || model.size() >= parsed.wake_model.size()) return false;
+    parsed.set_wake_model(model);
+  }
+  if (!parsed.validate()) return false;
+
+  duplicate = version == current_version;
+  if (duplicate && !same_settings(parsed, current)) return false;
+  output = SettingsTwin{.version = version, .settings = parsed};
   return true;
 }
 
@@ -451,6 +525,9 @@ bool WebSocketVoiceBackend::start(uint64_t) {
     last_begin_wire_.clear();
     turn_active_ = false;
     tts_active_ = false;
+    pending_settings_ = {};
+    pending_settings_correlation_.clear();
+    settings_pending_ = false;
     upload_samples_.clear();
     playback_samples_.clear();
     clear_voice_mail_locked();
@@ -477,6 +554,7 @@ bool WebSocketVoiceBackend::begin_turn(uint64_t, ListenMode mode) {
     active_turn_id_ = turn_id;
     turn_active_ = true;
     tts_active_ = false;
+    media_generation_.fetch_add(1);
     clear_turn_media_locked();
     ++stats_.turns_started;
   }
@@ -517,15 +595,17 @@ bool WebSocketVoiceBackend::send_audio(std::span<const int16_t> pcm) {
 }
 
 bool WebSocketVoiceBackend::finish_turn(uint64_t) {
+  std::string turn_id;
   std::array<int16_t, kUplinkFrameSamples> final{};
   bool has_final = false;
-  std::string turn_id;
   {
     std::lock_guard lock(state_mutex_);
     if (!turn_active_) return false;
     turn_id = active_turn_id_;
     if (!upload_samples_.empty()) {
-      std::copy(upload_samples_.begin(), upload_samples_.end(), final.begin());
+      std::copy_n(upload_samples_.begin(),
+                  std::min(upload_samples_.size(), final.size()),
+                  final.begin());
       upload_samples_.clear();
       has_final = true;
     }
@@ -540,10 +620,10 @@ void WebSocketVoiceBackend::cancel_turn() {
   std::string turn_id;
   {
     std::lock_guard lock(state_mutex_);
-    if (!turn_active_ && !tts_active_) return;
     turn_id = active_turn_id_;
     turn_active_ = false;
     tts_active_ = false;
+    media_generation_.fetch_add(1);
     clear_turn_media_locked();
     ++stats_.cancels;
   }
@@ -556,28 +636,61 @@ void WebSocketVoiceBackend::cancel_turn() {
 
 bool WebSocketVoiceBackend::poll_event(BackendEvent& event) {
   std::lock_guard lock(state_mutex_);
-  if (events_.empty()) return false;
-  event = events_.front();
-  events_.pop_front();
-  return true;
+  while (!events_.empty()) {
+    event = events_.front();
+    events_.pop_front();
+    if (event.scope == BackendEventScope::generation) {
+      if (event.session_epoch != connection_generation_.load() ||
+          event.generation != media_generation_.load()) {
+        continue;
+      }
+    } else if (event.scope == BackendEventScope::session) {
+      if (event.type != BackendEventType::disconnected &&
+          event.session_epoch != connection_generation_.load()) {
+        continue;
+      }
+    }
+    return true;
+  }
+  return false;
 }
 
-bool WebSocketVoiceBackend::report_config(const RuntimeConfigPatch& config, bool applied) {
-  if (!protocol_connected_.load()) return false;
-  json payload{{"config_version", config.version},
-               {"applied", applied},
-               {"config", {{"smart_vad_enabled", config.smart_vad_enabled},
-                           {"vad_threshold", config.vad_threshold},
-                           {"vad_silence_ms", config.vad_silence_ms},
-                           {"vad_min_speech_ms", config.vad_min_speech_ms},
-                           {"idle_after_ms", config.idle_after_ms},
-                           {"alarm_visible_ms", config.alarm_visible_ms},
-                           {"ota_poll_interval_s", config.ota_poll_interval_s}}}};
+bool WebSocketVoiceBackend::report_settings_apply(const SettingsTwin& twin,
+                                                  bool applied) {
+  std::string correlation;
+  bool matched = false;
+  {
+    std::lock_guard lock(state_mutex_);
+    if (settings_pending_ && pending_settings_.version == twin.version &&
+        same_settings(pending_settings_.settings, twin.settings)) {
+      matched = true;
+      correlation = pending_settings_correlation_;
+      if (applied) {
+        current_settings_ = twin.settings;
+        settings_version_ = twin.version;
+        ++stats_.settings_applies;
+      }
+      pending_settings_ = {};
+      pending_settings_correlation_.clear();
+      settings_pending_ = false;
+    }
+  }
+  if (!matched || correlation.empty() || !protocol_connected_.load()) return false;
+  json result;
+  if (applied) {
+    result = {{"ok", true}, {"value", {{"applied", true}, {"version", twin.version}}}};
+  } else {
+    result = {{"ok", true},
+              {"value", {{"applied", false},
+                         {"version", twin.version},
+                         {"error", "apply_failed"}}}};
+  }
   const bool sent = send_text(encode_control(
-      static_cast<int>(protocol::ControlType::config_report), payload.dump()));
+      static_cast<int>(protocol::ControlType::capability_result), result.dump(), {},
+      correlation, true, std::nullopt));
   if (sent) {
     std::lock_guard lock(state_mutex_);
-    ++stats_.config_reports;
+    ++stats_.capability_results;
   }
   return sent;
 }
@@ -796,6 +909,9 @@ void WebSocketVoiceBackend::enqueue_event(BackendEventType type, std::string_vie
   if (events_.size() == kMaximumEvents) events_.pop_front();
   BackendEvent event{};
   event.type = type;
+  event.scope = scope_for_event_type(type);
+  event.session_epoch = connection_generation_.load();
+  event.generation = media_generation_.load();
   event.set_text(text);
   events_.push_back(event);
 }
@@ -805,6 +921,9 @@ void WebSocketVoiceBackend::enqueue_card_event(const PresentationCardV1& card) {
   if (events_.size() == kMaximumEvents) events_.pop_front();
   BackendEvent event{};
   event.type = BackendEventType::presentation_card;
+  event.scope = BackendEventScope::generation;
+  event.session_epoch = connection_generation_.load();
+  event.generation = media_generation_.load();
   event.set_card(card);
   events_.push_back(event);
 }
@@ -814,6 +933,9 @@ void WebSocketVoiceBackend::enqueue_hint_event(const PresentationHint& hint) {
   if (events_.size() == kMaximumEvents) events_.pop_front();
   BackendEvent event{};
   event.type = BackendEventType::presentation_hint;
+  event.scope = BackendEventScope::generation;
+  event.session_epoch = connection_generation_.load();
+  event.generation = media_generation_.load();
   event.set_hint(hint);
   events_.push_back(event);
 }
@@ -824,6 +946,9 @@ void WebSocketVoiceBackend::enqueue_agent_status_event(
   if (events_.size() == kMaximumEvents) events_.pop_front();
   BackendEvent event{};
   event.type = BackendEventType::agent_status;
+  event.scope = BackendEventScope::generation;
+  event.session_epoch = connection_generation_.load();
+  event.generation = media_generation_.load();
   event.set_agent_status(status);
   events_.push_back(event);
 }
@@ -835,6 +960,9 @@ void WebSocketVoiceBackend::enqueue_voice_mail_event(BackendEventType type,
   if (events_.size() == kMaximumEvents) events_.pop_front();
   BackendEvent event{};
   event.type = type;
+  event.scope = scope_for_event_type(type);
+  event.session_epoch = connection_generation_.load();
+  event.generation = media_generation_.load();
   event.set_voice_mail(item);
   event.set_text(text);
   events_.push_back(event);
@@ -859,6 +987,10 @@ void WebSocketVoiceBackend::handle_connection_closed(uint64_t generation,
     std::lock_guard lock(state_mutex_);
     turn_active_ = false;
     tts_active_ = false;
+    pending_settings_ = {};
+    pending_settings_correlation_.clear();
+    settings_pending_ = false;
+    media_generation_.fetch_add(1);
     clear_turn_media_locked();
     clear_voice_mail_locked();
   }
@@ -909,7 +1041,8 @@ void WebSocketVoiceBackend::handle_text(uint64_t generation, const std::string& 
     }
     if (type == protocol::ControlType::session_ready) {
       const auto audio = payload.at("audio_params");
-      if (incoming_session.empty() || payload.at("transport") != "websocket" ||
+      if (!has_only_fields(payload, {"transport", "audio_params", "features"}) ||
+          incoming_session.empty() || payload.at("transport") != "websocket" ||
           audio.at("format") != "opus" || audio.at("sample_rate") != 24'000 ||
           audio.at("channels") != 1 || audio.at("frame_duration") != 60) {
         enqueue_event(BackendEventType::error, "INVALID READY");
@@ -920,17 +1053,11 @@ void WebSocketVoiceBackend::handle_text(uint64_t generation, const std::string& 
         session_id_ = incoming_session;
         playback_sample_rate_ = 24'000;
         ++stats_.connections;
-        if (payload.contains("config") && !payload.at("config").is_null()) {
-          BackendEvent config{};
-          config.type = BackendEventType::config;
-          config.set_config(parse_config(payload));
-          if (events_.size() == kMaximumEvents) events_.pop_front();
-          events_.push_back(config);
-        }
       }
       protocol_connected_.store(true);
       json advertise{{"capabilities", json::array({
-          {{"name", "device.volume.set"}, {"version", "1"}, {"kind", "command"}}
+          {{"name", "device.volume.set"}, {"version", "1"}, {"kind", "command"}},
+          {{"name", "device.settings_v1"}, {"version", "1"}, {"kind", "command"}}
       })}};
       if (send_text(encode_control(static_cast<int>(protocol::ControlType::capability_advertise),
                                    advertise.dump()))) {
@@ -1033,15 +1160,6 @@ void WebSocketVoiceBackend::handle_text(uint64_t generation, const std::string& 
         break;
       }
       enqueue_agent_status_event(status);
-      break;
-    }
-    case protocol::ControlType::config_update: {
-      BackendEvent event{};
-      event.type = BackendEventType::config;
-      event.set_config(parse_config(payload));
-      std::lock_guard lock(state_mutex_);
-      if (events_.size() == kMaximumEvents) events_.pop_front();
-      events_.push_back(event);
       break;
     }
     case protocol::ControlType::voice_mail_available: {
@@ -1148,32 +1266,98 @@ void WebSocketVoiceBackend::handle_text(uint64_t generation, const std::string& 
         ++stats_.capability_calls;
       }
       json result;
+      bool defer_result = false;
       const std::string name = json_string(payload, "name");
       const std::string version = json_string(payload, "version");
       const auto arguments = payload.find("arguments");
       const int deadline_ms = payload.value("deadline_ms", 0);
-      if (correlation_id.empty() || !has_generation || deadline_ms < 50 || deadline_ms > 5000) {
+      if (correlation_id.empty() || deadline_ms < 50 || deadline_ms > 5000) {
         result = {{"ok", false}, {"error", "invalid_argument"}};
-      } else if (name != "device.volume.set" || version != "1") {
-        result = {{"ok", false}, {"error", "unsupported"}};
-      } else if (arguments == payload.end() || !arguments->is_object() ||
-                 !arguments->contains("volume") || !arguments->at("volume").is_number_integer()) {
-        result = {{"ok", false}, {"error", "invalid_argument"}};
-      } else {
-        const int volume = arguments->at("volume").get<int>();
-        if (volume < 0 || volume > 100) {
+      } else if (name == "device.settings_v1" && version == "1") {
+        if (has_generation || !incoming_turn.empty() || arguments == payload.end() ||
+            !arguments->is_object()) {
           result = {{"ok", false}, {"error", "invalid_argument"}};
         } else {
+          DeviceSettings current{};
+          uint64_t current_version = 0;
+          bool busy = false;
           {
             std::lock_guard lock(state_mutex_);
-            stats_.capability_volume = volume;
+            current = current_settings_;
+            current_version = settings_version_;
+            busy = settings_pending_;
           }
-          result = {{"ok", true}, {"value", {{"volume", volume}, {"applied", true}}}};
+          if (busy) {
+            result = {{"ok", false}, {"error", "busy"}};
+          } else {
+            SettingsTwin candidate{};
+            bool duplicate = false;
+            if (!parse_settings_arguments(*arguments, current, current_version,
+                                          candidate, duplicate)) {
+              uint64_t attempted_version = 0;
+              const auto version_it = arguments->find("version");
+              if (version_it != arguments->end()) {
+                (void)exact_uint64(*version_it, attempted_version);
+              }
+              result = {{"ok", true},
+                        {"value", {{"applied", false},
+                                   {"version", attempted_version},
+                                   {"error", "invalid_argument"}}}};
+            } else if (duplicate) {
+              result = {{"ok", true},
+                        {"value", {{"applied", true}, {"version", candidate.version}}}};
+            } else {
+              bool queued = false;
+              {
+                std::lock_guard lock(state_mutex_);
+                if (!settings_pending_) {
+                  if (events_.size() == kMaximumEvents) events_.pop_front();
+                  BackendEvent event{};
+                  event.type = BackendEventType::settings;
+                  event.scope = BackendEventScope::session;
+                  event.session_epoch = connection_generation_.load();
+                  event.generation = 0;
+                  event.set_settings(candidate);
+                  events_.push_back(event);
+                  pending_settings_ = candidate;
+                  pending_settings_correlation_ = correlation_id;
+                  settings_pending_ = true;
+                  queued = true;
+                }
+              }
+              if (queued) {
+                defer_result = true;
+              } else {
+                result = {{"ok", false}, {"error", "busy"}};
+              }
+            }
+          }
         }
+      } else if (name == "device.volume.set" && version == "1") {
+        if (!has_generation || arguments == payload.end() || !arguments->is_object() ||
+            !arguments->contains("volume") || !arguments->at("volume").is_number_integer()) {
+          result = {{"ok", false}, {"error", "invalid_argument"}};
+        } else {
+          const int volume = arguments->at("volume").get<int>();
+          if (volume < 0 || volume > 100) {
+            result = {{"ok", false}, {"error", "invalid_argument"}};
+          } else {
+            {
+              std::lock_guard lock(state_mutex_);
+              stats_.capability_volume = volume;
+            }
+            result = {{"ok", true}, {"value", {{"volume", volume}, {"applied", true}}}};
+          }
+        }
+      } else {
+        result = {{"ok", false}, {"error", "unsupported"}};
       }
+      if (defer_result) break;
+      const std::optional<uint64_t> result_generation =
+          has_generation ? std::optional<uint64_t>(incoming_generation) : std::nullopt;
       const bool sent = send_text(encode_control(
           static_cast<int>(protocol::ControlType::capability_result), result.dump(), {},
-          correlation_id, true, incoming_generation));
+          correlation_id, true, result_generation));
       if (sent) {
         std::lock_guard lock(state_mutex_);
         ++stats_.capability_results;

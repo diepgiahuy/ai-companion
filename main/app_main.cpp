@@ -67,20 +67,6 @@ private:
   companion::PressGesture gesture_;
 };
 
-// Temporary #228 migration adapter: CompanionApp still consumes its existing
-// Button seam, but production input now arrives only after InputRouter has
-// converted the physical gesture into a semantic primary action. PLAN 06E can
-// delete this compatibility seam without changing the physical routing again.
-class SemanticButtonAdapter final : public companion::Button {
-public:
-  explicit SemanticButtonAdapter(companion::InputRouter& router) : router_(router) {}
-
-  bool consume_press(uint64_t) override { return router_.consume_primary_action(); }
-
-private:
-  companion::InputRouter& router_;
-};
-
 BootGesture boot_gesture(companion::GpioButton& button,
                          companion::Display& display) {
   if (!button.is_pressed()) return BootGesture::none;
@@ -270,7 +256,6 @@ extern "C" void app_main() {
   static GpioButton physical_button;
   static RuntimeButton button(physical_button);
   static InputRouter input_router;
-  static SemanticButtonAdapter input_button(input_router);
   static WifiStation wifi;
   static WebSocketVoiceBackend backend;
   static pairing::NimblePairingDiscovery pairing_radio;
@@ -421,7 +406,7 @@ extern "C" void app_main() {
   app_config.smart_vad_enabled = false;
 #endif
 
-  static CompanionApp app(audio_runtime, presentation, input_button, backend, app_config);
+  static CompanionApp app(audio_runtime, presentation, input_router, backend, app_config);
   app.start(now_ms());
   ESP_LOGI(kTag, "hardware product path using stored provisioning + ESP-SR + secure WebSocket protocol v2");
 

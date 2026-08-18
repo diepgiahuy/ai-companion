@@ -1,7 +1,9 @@
 #pragma once
 
 #include "companion/audio_frontend.hpp"
+#include "companion/input_router.hpp"
 #include "companion/presentation_ingress.hpp"
+#include "companion/settings.hpp"
 
 #include <algorithm>
 #include <array>
@@ -37,17 +39,6 @@ enum class ListenMode : uint8_t {
   auto_vad,
 };
 
-struct RuntimeConfigPatch {
-  uint64_t version{};
-  bool smart_vad_enabled{true};
-  uint32_t vad_threshold{450};
-  uint32_t vad_silence_ms{800};
-  uint32_t vad_min_speech_ms{250};
-  uint32_t idle_after_ms{5'000};
-  uint32_t alarm_visible_ms{10'000};
-  uint32_t ota_poll_interval_s{21'600};
-};
-
 enum class BackendEventType : uint8_t {
   connected,
   disconnected,
@@ -60,7 +51,7 @@ enum class BackendEventType : uint8_t {
   presentation_card,
   presentation_hint,
   agent_status,
-  config,
+  settings,
   voice_mail_available,
   voice_mail_playback_ready,
   voice_mail_playback_finished,
@@ -89,21 +80,60 @@ struct VoiceMailMetadata {
   bool valid() const;
 };
 
+enum class BackendEventScope : uint8_t {
+  global,
+  session,
+  generation,
+};
+
+constexpr BackendEventScope scope_for_event_type(BackendEventType type) {
+  switch (type) {
+  case BackendEventType::connected:
+  case BackendEventType::disconnected:
+  case BackendEventType::settings:
+    return BackendEventScope::session;
+
+  case BackendEventType::transcript:
+  case BackendEventType::tts_started:
+  case BackendEventType::tts_sentence:
+  case BackendEventType::tts_finished:
+  case BackendEventType::presentation_card:
+  case BackendEventType::presentation_hint:
+  case BackendEventType::agent_status:
+  case BackendEventType::voice_mail_playback_ready:
+  case BackendEventType::voice_mail_playback_finished:
+  case BackendEventType::voice_mail_failed:
+    return BackendEventScope::generation;
+
+  case BackendEventType::alarm:
+  case BackendEventType::schedule:
+  case BackendEventType::voice_mail_available:
+  case BackendEventType::voice_mail_consumed:
+  case BackendEventType::voice_mail_expired:
+  case BackendEventType::error:
+    return BackendEventScope::global;
+  }
+  return BackendEventScope::global;
+}
+
 // FreeRTOS queues byte-copy BackendEvent values. Keep the payload tagged by
 // BackendEventType and union-backed so typed presentation data does not multiply
 // the queue's static DRAM footprint. Every member is trivially copyable.
 union BackendEventPayload {
-  RuntimeConfigPatch config;
+  SettingsTwin settings;
   VoiceMailMetadata voice_mail;
   PresentationCardV1 card;
   PresentationHint hint;
   AgentPresentationStatus agent_status;
 
-  constexpr BackendEventPayload() : config{} {}
+  constexpr BackendEventPayload() : settings{} {}
 };
 
 struct BackendEvent {
   BackendEventType type{BackendEventType::error};
+  BackendEventScope scope{BackendEventScope::global};
+  uint64_t session_epoch{};
+  uint64_t generation{};
   std::array<char, 96> text{};
   BackendEventPayload payload{};
 
@@ -118,8 +148,8 @@ struct BackendEvent {
     return {text.data(), static_cast<size_t>(end - text.begin())};
   }
 
-  void set_config(const RuntimeConfigPatch& value) {
-    new (&payload.config) RuntimeConfigPatch(value);
+  void set_settings(const SettingsTwin& value) {
+    new (&payload.settings) SettingsTwin(value);
   }
   void set_voice_mail(const VoiceMailMetadata& value) {
     new (&payload.voice_mail) VoiceMailMetadata(value);
@@ -135,33 +165,13 @@ struct BackendEvent {
   }
 };
 
-static_assert(std::is_trivially_copyable_v<RuntimeConfigPatch>);
+static_assert(std::is_trivially_copyable_v<DeviceSettings>);
+static_assert(std::is_trivially_copyable_v<SettingsTwin>);
 static_assert(std::is_trivially_copyable_v<VoiceMailMetadata>);
 static_assert(std::is_trivially_copyable_v<PresentationCardV1>);
 static_assert(std::is_trivially_copyable_v<PresentationHint>);
 static_assert(std::is_trivially_copyable_v<AgentPresentationStatus>);
 static_assert(std::is_trivially_copyable_v<BackendEvent>);
-
-// Board-facing capture port. Only AudioRuntime should compose this into the
-// product runtime; CompanionApp must not own physical audio adapters directly.
-class Microphone {
-public:
-  virtual ~Microphone() = default;
-  virtual bool start_capture() = 0;
-  virtual size_t read_capture(std::span<int16_t> destination) = 0;
-  virtual void stop_capture() = 0;
-};
-
-// Board-facing playback port. Accepted-frame semantics are the authoritative
-// source for the AEC reference owned by AudioRuntime.
-class Speaker {
-public:
-  virtual ~Speaker() = default;
-  virtual bool start_playback(uint32_t sample_rate_hz) = 0;
-  virtual size_t write_playback(std::span<const int16_t> mono_pcm) = 0;
-  virtual bool playback_drained() const = 0;
-  virtual void stop_playback() = 0;
-};
 
 // Single app-facing audio owner. It hides physical microphone/speaker adapters,
 // optional vendor AFE state, playback-reference epochs and rate conversion from
@@ -194,12 +204,7 @@ public:
   virtual bool show_agent_status(UiState, const AgentPresentationStatus&) {
     return false;
   }
-};
-
-class Button {
-public:
-  virtual ~Button() = default;
-  virtual bool consume_press(uint64_t now_ms) = 0;
+  virtual void set_context(uint64_t /*session_epoch*/, uint64_t /*generation*/) {}
 };
 
 class VoiceBackend {
@@ -212,7 +217,10 @@ public:
   virtual bool finish_turn(uint64_t now_ms) = 0;
   virtual void cancel_turn() = 0;
   virtual bool poll_event(BackendEvent& event) = 0;
-  virtual bool report_config(const RuntimeConfigPatch& config, bool applied) = 0;
+  // Called only after CompanionApp has actually accepted or rejected a settings
+  // event. Network backends use this to complete the pending capability RPC;
+  // simple test backends may use the default no-op acknowledgement.
+  virtual bool report_settings_apply(const SettingsTwin&, bool) { return true; }
   virtual bool claim_voice_mail(const VoiceMailMetadata& item, uint64_t now_ms) = 0;
   virtual bool report_voice_mail_playback(const VoiceMailMetadata& item,
                                           bool succeeded,
@@ -224,6 +232,8 @@ public:
   virtual size_t read_playback(std::span<int16_t> destination) = 0;
   virtual bool playback_empty() const = 0;
   virtual uint32_t playback_sample_rate_hz() const = 0;
+  virtual uint64_t session_epoch() const { return 0; }
+  virtual uint64_t media_generation() const { return 0; }
 };
 
 struct AppConfig {
@@ -239,11 +249,14 @@ struct AppConfig {
   uint32_t vad_min_speech_ms{250};
   uint32_t voice_mail_operation_timeout_ms{15'000};
   uint32_t ota_poll_interval_s{21'600};
+  uint8_t volume{70};
+  float wake_threshold{0.60F};
+  std::array<char, 64> wake_model{"default"};
 };
 
 class CompanionApp final {
 public:
-  CompanionApp(AudioEngine& audio, Display& display, Button& button,
+  CompanionApp(AudioEngine& audio, Display& display, InputRouter& input,
                VoiceBackend& backend, AppConfig config = {});
 
   bool start(uint64_t now_ms);
@@ -252,11 +265,13 @@ public:
   const AppConfig& config() const { return config_; }
   uint64_t streamed_samples() const { return streamed_samples_; }
   uint64_t runtime_config_version() const { return runtime_config_version_; }
+  uint64_t settings_version() const { return runtime_config_version_; }
+  bool apply_settings(const SettingsTwin& twin);
 
 private:
   AudioEngine& audio_;
   Display& display_;
-  Button& button_;
+  InputRouter& input_;
   VoiceBackend& backend_;
   AppConfig config_;
   UiState state_{UiState::booting};
@@ -275,7 +290,6 @@ private:
   bool tts_finished_{};
   bool alarm_pending_{};
   bool alarm_tone_active_{};
-  bool capture_active_{};
   bool voice_mail_stream_finished_{};
   bool voice_mail_result_pending_{};
   static constexpr size_t kVoiceMailQueueCapacity = 4;

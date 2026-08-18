@@ -1,5 +1,6 @@
 #include "companion/app.hpp"
 #include "companion/audio_runtime.hpp"
+#include "companion/input_router.hpp"
 #include "companion/mock_backend.hpp"
 
 #include <algorithm>
@@ -47,10 +48,6 @@ struct SimDisplay final : Display {
     std::cout << "[display " << static_cast<int>(state) << "] " << text << '\n';
   }
 };
-struct SimButton final : Button {
-  bool pending{};
-  bool consume_press(uint64_t) override { return std::exchange(pending, false); }
-};
 }
 
 int main() {
@@ -58,9 +55,9 @@ int main() {
   SimSpeaker speaker;
   AudioRuntime audio(microphone, speaker);
   SimDisplay display;
-  SimButton button;
+  InputRouter input;
   MockVoiceBackend backend;
-  CompanionApp app(audio, display, button, backend);
+  CompanionApp app(audio, display, input, backend);
   uint64_t now = 0;
   app.start(now);
   app.tick(now);
@@ -68,7 +65,7 @@ int main() {
   std::cout << "Commands: press | tick <milliseconds> | quit\n";
   std::string command;
   while (std::cin >> command && command != "quit") {
-    if (command == "press") button.pending = true;
+    if (command == "press") input.queue_primary_action(InputIntent::primary_action);
     if (command == "tick") {
       uint64_t delta{};
       std::cin >> delta;

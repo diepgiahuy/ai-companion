@@ -112,6 +112,16 @@ substitute for a verifiable fact.
   actually ran against the identified code and the result is available.
 - Public PR code must never execute automatically on the personal HIL runner.
 
+## Modular Phase Execution & Context Management
+
+To keep agent sessions token-efficient and prevent context bloat:
+
+- Consult `docs/plans/README.md` to identify the active phase.
+- Load **only** the single relevant `docs/plans/PHASE_*.md` file for your assigned task.
+- Do not dump monolithic architecture roadmaps into the prompt or load unrelated phase files.
+- When completing a phase slice, update the checklist and status in that phase's markdown file and index.
+- During active development: no backward compatibility wrappers or dual legacy/new paths. Delete replaced internal code immediately after proven cutover.
+
 ## Canonical pointers
 
 For implementation lifecycle, issue revalidation, risk classification, delegation,

@@ -20,7 +20,20 @@ type RuntimeConfig struct {
 	Locale                 string `json:"locale,omitempty"`
 	Timezone               string `json:"timezone,omitempty"`
 	VoiceKey               string `json:"voice_key,omitempty"`
+	WakeModel              string `json:"wake_model,omitempty"`
 }
+
+type TwinStatus string
+
+const (
+	TwinStatusRequested TwinStatus = "requested"
+	TwinStatusApplied   TwinStatus = "applied"
+	TwinStatusRejected  TwinStatus = "rejected"
+	TwinStatusStale     TwinStatus = "stale"
+	TwinStatusOffline   TwinStatus = "offline"
+	TwinStatusUnknown   TwinStatus = "unknown"
+)
+
 type Twin struct {
 	DeviceID        string        `json:"device_id"`
 	UserID          string        `json:"user_id"`
@@ -28,7 +41,33 @@ type Twin struct {
 	DesiredVersion  int64         `json:"desired_version"`
 	Reported        RuntimeConfig `json:"reported"`
 	ReportedVersion int64         `json:"reported_version"`
+	Status          TwinStatus    `json:"status,omitempty"`
 	UpdatedAt       time.Time     `json:"updated_at"`
+}
+
+func DeriveTwinStatus(twin Twin, online bool, rejected bool) TwinStatus {
+	if strings.TrimSpace(twin.DeviceID) == "" {
+		return TwinStatusUnknown
+	}
+	if rejected {
+		return TwinStatusRejected
+	}
+	if twin.ReportedVersion > twin.DesiredVersion {
+		return TwinStatusStale
+	}
+	if twin.DesiredVersion > 0 && twin.ReportedVersion == twin.DesiredVersion {
+		return TwinStatusApplied
+	}
+	if twin.DesiredVersion > twin.ReportedVersion {
+		if !online {
+			return TwinStatusOffline
+		}
+		return TwinStatusRequested
+	}
+	if twin.DesiredVersion == 0 && twin.ReportedVersion == 0 {
+		return TwinStatusApplied
+	}
+	return TwinStatusUnknown
 }
 type Repository interface {
 	GetTwin(context.Context, string, string) (Twin, error)
@@ -166,6 +205,10 @@ func Validate(c RuntimeConfig) error {
 	if len(c.VoiceKey) > 128 {
 		return fmt.Errorf("voice_key too long")
 	}
+	// Firmware stores wake_model in a 64-byte NUL-terminated fixed buffer.
+	if len(c.WakeModel) > 63 {
+		return fmt.Errorf("wake_model too long")
+	}
 	return nil
 }
 func merge(a, b RuntimeConfig) RuntimeConfig {
@@ -199,6 +242,9 @@ func merge(a, b RuntimeConfig) RuntimeConfig {
 	if b.VoiceKey != "" {
 		a.VoiceKey = b.VoiceKey
 	}
+	if b.WakeModel != "" {
+		a.WakeModel = b.WakeModel
+	}
 	return a
 }
 
@@ -226,6 +272,7 @@ func ConfigSchema() []ConfigField {
 		{Key: "locale", Dynamic: true, Scopes: scopes},
 		{Key: "timezone", Dynamic: true, Scopes: scopes},
 		{Key: "voice_key", Dynamic: true, Scopes: scopes},
+		{Key: "wake_model", Dynamic: true, Scopes: scopes},
 	}
 }
 

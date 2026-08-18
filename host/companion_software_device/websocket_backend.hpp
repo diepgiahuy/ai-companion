@@ -27,11 +27,11 @@ public:
     uint64_t cancels{};
     uint64_t stale_controls{};
     uint64_t discarded_binary_packets{};
-    uint64_t config_reports{};
     uint64_t capability_advertisements{};
     uint64_t capability_calls{};
     uint64_t capability_results{};
     uint64_t capability_cancels{};
+    uint64_t settings_applies{};
     int capability_volume{-1};
   };
 
@@ -48,7 +48,7 @@ public:
   bool finish_turn(uint64_t now_ms) override;
   void cancel_turn() override;
   bool poll_event(BackendEvent& event) override;
-  bool report_config(const RuntimeConfigPatch& config, bool applied) override;
+  bool report_settings_apply(const SettingsTwin& twin, bool applied) override;
   bool claim_voice_mail(const VoiceMailMetadata& item, uint64_t now_ms) override;
   bool report_voice_mail_playback(const VoiceMailMetadata& item, bool succeeded,
                                   std::string_view failure_code,
@@ -59,6 +59,8 @@ public:
   size_t read_playback(std::span<int16_t> destination) override;
   bool playback_empty() const override;
   uint32_t playback_sample_rate_hz() const override;
+  uint64_t session_epoch() const override { return connection_generation_.load(); }
+  uint64_t media_generation() const override { return media_generation_.load(); }
 
   bool resend_last_begin_for_test();
   void disconnect_for_test();
@@ -76,6 +78,7 @@ private:
   std::atomic<uint64_t> connection_generation_{0};
   std::atomic<uint64_t> message_sequence_{0};
   std::atomic<uint64_t> turn_sequence_{0};
+  std::atomic<uint64_t> media_generation_{0};
   std::atomic<bool> protocol_connected_{false};
   std::atomic<bool> stopping_{false};
   std::atomic<bool> media_worker_running_{false};
@@ -87,6 +90,11 @@ private:
   bool turn_active_{};
   bool tts_active_{};
   uint32_t playback_sample_rate_{24'000};
+  uint64_t settings_version_{};
+  DeviceSettings current_settings_{};
+  SettingsTwin pending_settings_{};
+  std::string pending_settings_correlation_;
+  bool settings_pending_{};
   std::vector<int16_t> upload_samples_;
   std::deque<int16_t> playback_samples_;
   std::vector<int16_t> voice_mail_samples_;

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"companion-server/internal/capability"
+	"companion-server/internal/controlplane"
 	"companion-server/internal/pipeline"
 )
 
@@ -20,6 +21,8 @@ const (
 	VolumeSetVersion        = "1"
 	UserConfirmationName    = "device.user_confirmation"
 	UserConfirmationVersion = "1"
+	SettingsName            = "device.settings_v1"
+	SettingsVersion         = "1"
 )
 
 var (
@@ -31,6 +34,44 @@ type Descriptor struct {
 	Name    string `json:"name"`
 	Version string `json:"version"`
 	Kind    string `json:"kind"`
+}
+
+type SettingsArgs struct {
+	Version  int64                       `json:"version"`
+	Settings controlplane.RuntimeConfig `json:"settings"`
+}
+
+// MarshalJSON deliberately projects only fields owned by the physical device.
+// Locale, timezone and voice_key are backend/session concerns and must never be
+// mistaken for firmware-applied state merely because they share RuntimeConfig.
+// WakeModel is reserved for PLAN 07B/#198: the current AudioFrontend has no safe
+// runtime model-switch contract, so transmitting it now would let the control
+// plane record an "applied" revision without changing the active WakeNet model.
+func (a SettingsArgs) MarshalJSON() ([]byte, error) {
+	if strings.TrimSpace(a.Settings.WakeModel) != "" {
+		return nil, fmt.Errorf("wake_model is not device-applicable until PLAN 07B/#198")
+	}
+	device := controlplane.RuntimeConfig{
+		SmartVADEnabled:        a.Settings.SmartVADEnabled,
+		VADThreshold:           a.Settings.VADThreshold,
+		VADSilenceMS:           a.Settings.VADSilenceMS,
+		VADMinSpeechMS:         a.Settings.VADMinSpeechMS,
+		IdleAfterMS:            a.Settings.IdleAfterMS,
+		AlarmVisibleMS:         a.Settings.AlarmVisibleMS,
+		OTAPollIntervalSeconds: a.Settings.OTAPollIntervalSeconds,
+	}
+	type wireSettingsArgs struct {
+		Version  int64                       `json:"version"`
+		Settings controlplane.RuntimeConfig `json:"settings"`
+	}
+	return json.Marshal(wireSettingsArgs{Version: a.Version, Settings: device})
+}
+
+type SettingsResult struct {
+	Applied  bool                        `json:"applied"`
+	Version  int64                       `json:"version"`
+	Settings *controlplane.RuntimeConfig `json:"settings,omitempty"`
+	Error    string                      `json:"error,omitempty"`
 }
 
 type Call struct {

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "companion/app.hpp"
+#include "companion/audio_runtime.hpp"
 
 #include "driver/i2s_std.h"
 

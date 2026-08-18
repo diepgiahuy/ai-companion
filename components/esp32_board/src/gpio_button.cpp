@@ -18,19 +18,6 @@ bool GpioButton::initialize() {
   return true;
 }
 
-bool GpioButton::consume_press(uint64_t now_ms) {
-  const int level = gpio_get_level(board::kButton);
-  if (level != raw_level_) {
-    raw_level_ = level;
-    changed_at_ms_ = now_ms;
-  }
-  if (stable_level_ != raw_level_ && now_ms - changed_at_ms_ >= debounce_ms_) {
-    stable_level_ = raw_level_;
-    return stable_level_ == 0;
-  }
-  return false;
-}
-
 bool GpioButton::is_pressed() const {
   return gpio_get_level(board::kButton) == 0;
 }

@@ -24,6 +24,19 @@ int main() {
              "device.user_confirmation", "1", false) ==
          CapabilityDispatch::unsupported_call);
 
+  assert(select_capability_dispatch(
+             ControlType::capability_call,
+             "device.settings_v1", "1", true) ==
+         CapabilityDispatch::settings_call);
+  assert(select_capability_dispatch(
+             ControlType::capability_call,
+             "device.settings_v1", "2", true) ==
+         CapabilityDispatch::unsupported_call);
+  assert(select_capability_dispatch(
+             ControlType::capability_call,
+             "device.settings_v1", "1", true, false) ==
+         CapabilityDispatch::unsupported_call);
+
   // Cancellation is correlation-scoped, not capability-name scoped. Once the
   // user-confirmation plane is enabled the single parser gives its active
   // request handler first ownership; otherwise a cancel is harmlessly consumed.
@@ -35,7 +48,7 @@ int main() {
          CapabilityDispatch::ignored_cancel);
 
   assert(select_capability_dispatch(
-             ControlType::config_update, {}, {}, true) ==
+             ControlType::alarm_ack, {}, {}, true) ==
          CapabilityDispatch::not_capability);
   assert(select_capability_dispatch(
              ControlType::pairing_confirmation, {}, {}, true) ==

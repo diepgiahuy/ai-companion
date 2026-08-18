@@ -63,8 +63,9 @@ public:
     if (text.empty()) return false;
     const bool applied = show_attention_internal(PresentationDomain::card,
                                                  renderer_state, text,
-                                                 PresentationScope::global,
-                                                 0, 0, true);
+                                                 PresentationScope::generation,
+                                                 reducer_.session_epoch(),
+                                                 reducer_.generation(), true);
     if (applied) transient_active_ = true;
     return applied;
   }
@@ -123,7 +124,7 @@ public:
     return applied;
   }
 
-  void set_context(uint64_t session_epoch, uint64_t generation) {
+  void set_context(uint64_t session_epoch, uint64_t generation) override {
     const uint64_t old_session = reducer_.session_epoch();
     const uint64_t old_generation = reducer_.generation();
     reducer_.set_context(session_epoch, generation);

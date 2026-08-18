@@ -11,10 +11,14 @@ inline constexpr std::string_view kUserConfirmationCapability =
     "device.user_confirmation";
 inline constexpr std::string_view kUserConfirmationCapabilityVersion = "1";
 
+inline constexpr std::string_view kSettingsCapability = "device.settings_v1";
+inline constexpr std::string_view kSettingsCapabilityVersion = "1";
+
 enum class CapabilityDispatch : uint8_t {
   not_capability,
   user_confirmation_call,
   user_confirmation_cancel,
+  settings_call,
   unsupported_call,
   ignored_cancel,
 };
@@ -24,11 +28,16 @@ enum class CapabilityDispatch : uint8_t {
 // capability handler, if any, owns an already-parsed capability envelope.
 constexpr CapabilityDispatch select_capability_dispatch(
     protocol::ControlType type, std::string_view name,
-    std::string_view version, bool user_confirmation_enabled) {
+    std::string_view version, bool user_confirmation_enabled,
+    bool settings_enabled = true) {
   if (type == protocol::ControlType::capability_call) {
     if (user_confirmation_enabled && name == kUserConfirmationCapability &&
         version == kUserConfirmationCapabilityVersion) {
       return CapabilityDispatch::user_confirmation_call;
+    }
+    if (settings_enabled && name == kSettingsCapability &&
+        version == kSettingsCapabilityVersion) {
+      return CapabilityDispatch::settings_call;
     }
     return CapabilityDispatch::unsupported_call;
   }

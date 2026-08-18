@@ -482,6 +482,9 @@ bool WebSocketVoiceBackend::handle_pairing_text(std::string_view json) {
     case CapabilityDispatch::user_confirmation_cancel:
       (void)handle_confirmation_cancel(root, payload);
       break;
+    case CapabilityDispatch::settings_call:
+      (void)handle_settings_call(root, payload);
+      break;
     case CapabilityDispatch::unsupported_call: {
       const std::string_view correlation = json_string(root, "correlation_id");
       const std::string_view turn = json_string(root, "turn_id");

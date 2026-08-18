@@ -229,54 +229,6 @@ bool string_in(std::string_view value,
   return std::find(allowed.begin(), allowed.end(), value) != allowed.end();
 }
 
-bool parse_runtime_config(const cJSON* payload, RuntimeConfigPatch& out) {
-  const cJSON* version = cJSON_GetObjectItemCaseSensitive(payload, "config_version");
-  const cJSON* config = cJSON_GetObjectItemCaseSensitive(payload, "config");
-  uint64_t parsed_version = 0;
-  if (!parse_uint64(version, parsed_version) || !cJSON_IsObject(config) ||
-      !has_only_fields(config, {"smart_vad_enabled", "vad_threshold",
-                                "vad_silence_ms", "vad_min_speech_ms",
-                                "idle_after_ms", "alarm_visible_ms",
-                                "ota_poll_interval_s", "locale",
-                                "timezone", "voice_key"}) ||
-      !optional_bounded_string(config, "locale", 64) ||
-      !optional_bounded_string(config, "timezone", 64) ||
-      !optional_bounded_string(config, "voice_key", 128)) return false;
-  const cJSON* smart = cJSON_GetObjectItemCaseSensitive(config, "smart_vad_enabled");
-  const cJSON* threshold = cJSON_GetObjectItemCaseSensitive(config, "vad_threshold");
-  const cJSON* silence = cJSON_GetObjectItemCaseSensitive(config, "vad_silence_ms");
-  const cJSON* min_speech = cJSON_GetObjectItemCaseSensitive(config, "vad_min_speech_ms");
-  const cJSON* idle = cJSON_GetObjectItemCaseSensitive(config, "idle_after_ms");
-  const cJSON* alarm = cJSON_GetObjectItemCaseSensitive(config, "alarm_visible_ms");
-  const cJSON* ota_poll = cJSON_GetObjectItemCaseSensitive(config, "ota_poll_interval_s");
-  uint32_t parsed_threshold = 0;
-  uint32_t parsed_silence = 0;
-  uint32_t parsed_min_speech = 0;
-  uint32_t parsed_idle = 0;
-  uint32_t parsed_alarm = 0;
-  uint32_t parsed_ota_poll = 21'600;
-  if (!cJSON_IsBool(smart) || !parse_uint32(threshold, parsed_threshold) ||
-      !parse_uint32(silence, parsed_silence) ||
-      !parse_uint32(min_speech, parsed_min_speech) ||
-      !parse_uint32(idle, parsed_idle) || !parse_uint32(alarm, parsed_alarm) ||
-      (ota_poll != nullptr && !parse_uint32(ota_poll, parsed_ota_poll)) ||
-      parsed_threshold < 1 || parsed_threshold > 65'535 ||
-      parsed_silence < 100 || parsed_silence > 5'000 ||
-      parsed_min_speech < 50 || parsed_min_speech > 5'000 ||
-      parsed_idle < 1'000 || parsed_idle > 3'600'000 ||
-      parsed_alarm < 1'000 || parsed_alarm > 3'600'000 ||
-      parsed_ota_poll < 3'600 || parsed_ota_poll > 604'800) return false;
-  out.version = parsed_version;
-  out.smart_vad_enabled = cJSON_IsTrue(smart);
-  out.vad_threshold = parsed_threshold;
-  out.vad_silence_ms = parsed_silence;
-  out.vad_min_speech_ms = parsed_min_speech;
-  out.idle_after_ms = parsed_idle;
-  out.alarm_visible_ms = parsed_alarm;
-  out.ota_poll_interval_s = parsed_ota_poll;
-  return true;
-}
-
 bool optional_features_valid(const cJSON* payload) {
   const cJSON* features = cJSON_GetObjectItemCaseSensitive(payload, "features");
   if (features == nullptr) return true;
@@ -369,8 +321,7 @@ bool payload_fields_valid(protocol::ControlType type, const cJSON* payload) {
   using protocol::ControlType;
   switch (type) {
   case ControlType::session_ready:
-    return has_only_fields(payload, {"transport", "audio_params", "features",
-                                     "config", "config_version"});
+    return has_only_fields(payload, {"transport", "audio_params", "features"});
   case ControlType::session_ping:
   case ControlType::session_pong:
     return has_only_fields(payload, {});
@@ -392,8 +343,6 @@ bool payload_fields_valid(protocol::ControlType type, const cJSON* payload) {
     return has_only_fields(payload, {"alarm_id", "message", "fire_at"});
   case ControlType::schedule_updated:
     return has_only_fields(payload, {"message", "fire_at"});
-  case ControlType::config_update:
-    return has_only_fields(payload, {"config_version", "config"});
   case ControlType::protocol_error:
     return has_only_fields(payload, {"code", "message"});
   case ControlType::voice_mail_available:
@@ -418,16 +367,8 @@ bool payload_semantics_valid(protocol::ControlType type, const cJSON* payload) {
     return !json_string(payload, field).empty();
   };
   switch (type) {
-  case ControlType::session_ready: {
-    if (!optional_features_valid(payload)) return false;
-    const cJSON* version = cJSON_GetObjectItemCaseSensitive(payload, "config_version");
-    const cJSON* config = cJSON_GetObjectItemCaseSensitive(payload, "config");
-    uint64_t ignored_version = 0;
-    if (!parse_uint64(version, ignored_version)) return false;
-    if (config == nullptr) return true;
-    RuntimeConfigPatch ignored{};
-    return parse_runtime_config(payload, ignored);
-  }
+  case ControlType::session_ready:
+    return optional_features_valid(payload);
   case ControlType::session_ping:
   case ControlType::session_pong:
     return true;
@@ -467,10 +408,6 @@ bool payload_semantics_valid(protocol::ControlType type, const cJSON* payload) {
            bounded_nonempty_string(payload, "message", 512) && nonempty("fire_at");
   case ControlType::schedule_updated:
     return bounded_nonempty_string(payload, "message", 512) && nonempty("fire_at");
-  case ControlType::config_update: {
-    RuntimeConfigPatch ignored{};
-    return parse_runtime_config(payload, ignored);
-  }
   case ControlType::protocol_error:
     return bounded_nonempty_string(payload, "code", 64) &&
            bounded_nonempty_string(payload, "message", 1024);
@@ -898,16 +835,27 @@ void WebSocketVoiceBackend::cancel_turn() {
 }
 
 bool WebSocketVoiceBackend::poll_event(BackendEvent& event) {
-  return xQueueReceive(event_queue_, &event, 0) == pdPASS;
-}
-
-bool WebSocketVoiceBackend::report_config(const RuntimeConfigPatch& config, bool applied) {
-  Outbound outbound{};
-  outbound.type = OutboundType::control;
-  outbound.command.type = CommandType::config_report;
-  outbound.command.config = config;
-  outbound.command.applied = applied;
-  return xQueueSend(outbound_queue_, &outbound, 0) == pdPASS;
+  while (xQueueReceive(event_queue_, &event, 0) == pdPASS) {
+    if (event.scope == BackendEventScope::generation) {
+      const uint64_t expected_generation =
+          (event.type == BackendEventType::voice_mail_playback_ready ||
+           event.type == BackendEventType::voice_mail_playback_finished ||
+           event.type == BackendEventType::voice_mail_failed)
+              ? voice_mail_generation_.load()
+              : media_generation_.load();
+      if (event.session_epoch != session_epoch_.load() ||
+          event.generation != expected_generation) {
+        continue;
+      }
+    } else if (event.scope == BackendEventScope::session) {
+      if (event.type != BackendEventType::disconnected &&
+          event.session_epoch != session_epoch_.load()) {
+        continue;
+      }
+    }
+    return true;
+  }
+  return false;
 }
 
 bool WebSocketVoiceBackend::claim_voice_mail(const VoiceMailMetadata& item,
@@ -1059,6 +1007,7 @@ void WebSocketVoiceBackend::on_event(int32_t event_id,
     tts_active_.store(false);
     taskEXIT_CRITICAL(&turn_id_lock_);
     xQueueReset(outbound_queue_);
+    session_epoch_.fetch_add(1);
     reset_turn_queues();
     clear_voice_mail(true);
     enqueue_event(BackendEventType::disconnected);
@@ -1150,22 +1099,6 @@ void WebSocketVoiceBackend::writer_loop() {
             payload[0] = '\0';
           }
         }
-        break;
-      case CommandType::config_report:
-        type = protocol::ControlType::config_report;
-        std::snprintf(payload, sizeof(payload),
-          "{\"config_version\":%llu,\"applied\":%s,\"config\":{"
-          "\"smart_vad_enabled\":%s,\"vad_threshold\":%lu,\"vad_silence_ms\":%lu,"
-          "\"vad_min_speech_ms\":%lu,\"idle_after_ms\":%lu,\"alarm_visible_ms\":%lu,"
-          "\"ota_poll_interval_s\":%lu}}",
-          static_cast<unsigned long long>(command.config.version), command.applied ? "true" : "false",
-          command.config.smart_vad_enabled ? "true" : "false",
-          static_cast<unsigned long>(command.config.vad_threshold),
-          static_cast<unsigned long>(command.config.vad_silence_ms),
-          static_cast<unsigned long>(command.config.vad_min_speech_ms),
-          static_cast<unsigned long>(command.config.idle_after_ms),
-          static_cast<unsigned long>(command.config.alarm_visible_ms),
-          static_cast<unsigned long>(command.config.ota_poll_interval_s));
         break;
       case CommandType::protocol_error:
         type = protocol::ControlType::protocol_error;
@@ -1551,14 +1484,11 @@ void WebSocketVoiceBackend::handle_text(std::string_view json) {
       enqueue_event(BackendEventType::error, "INVALID SESSION READY");
       return;
     }
+    session_epoch_.fetch_add(1);
+    reset_turn_queues();
     protocol_connected_.store(true);
-    RuntimeConfigPatch config{};
-    if (parse_runtime_config(payload, config)) enqueue_config_event(config);
+    advertise_capabilities();
     enqueue_event(BackendEventType::connected);
-  } else if (type == protocol::ControlType::config_update) {
-    RuntimeConfigPatch config{};
-    if (!parse_runtime_config(payload, config) || !enqueue_config_event(config))
-      enqueue_event(BackendEventType::error, "INVALID CONFIG");
   } else if (type == protocol::ControlType::transcript_final) {
     enqueue_event(BackendEventType::transcript, json_string(payload, "text"));
   } else if (type == protocol::ControlType::tts_lifecycle) {
@@ -1795,6 +1725,9 @@ bool WebSocketVoiceBackend::enqueue_event(BackendEventType type,
                                           std::string_view text) {
   BackendEvent event{};
   event.type = type;
+  event.scope = scope_for_event_type(type);
+  event.session_epoch = session_epoch_.load();
+  event.generation = media_generation_.load();
   event.set_text(text);
   return xQueueSend(event_queue_, &event, 0) == pdPASS;
 }
@@ -1802,6 +1735,9 @@ bool WebSocketVoiceBackend::enqueue_event(BackendEventType type,
 bool WebSocketVoiceBackend::enqueue_card_event(const PresentationCardV1& card) {
   BackendEvent event{};
   event.type = BackendEventType::presentation_card;
+  event.scope = BackendEventScope::generation;
+  event.session_epoch = session_epoch_.load();
+  event.generation = media_generation_.load();
   event.set_card(card);
   return xQueueSend(event_queue_, &event, 0) == pdPASS;
 }
@@ -1809,6 +1745,9 @@ bool WebSocketVoiceBackend::enqueue_card_event(const PresentationCardV1& card) {
 bool WebSocketVoiceBackend::enqueue_hint_event(const PresentationHint& hint) {
   BackendEvent event{};
   event.type = BackendEventType::presentation_hint;
+  event.scope = BackendEventScope::generation;
+  event.session_epoch = session_epoch_.load();
+  event.generation = media_generation_.load();
   event.set_hint(hint);
   return xQueueSend(event_queue_, &event, 0) == pdPASS;
 }
@@ -1817,21 +1756,31 @@ bool WebSocketVoiceBackend::enqueue_agent_status_event(
     const AgentPresentationStatus& status) {
   BackendEvent event{};
   event.type = BackendEventType::agent_status;
+  event.scope = BackendEventScope::generation;
+  event.session_epoch = session_epoch_.load();
+  event.generation = media_generation_.load();
   event.set_agent_status(status);
   return xQueueSend(event_queue_, &event, 0) == pdPASS;
 }
 
-bool WebSocketVoiceBackend::enqueue_config_event(const RuntimeConfigPatch& config) {
+bool WebSocketVoiceBackend::enqueue_settings_event(const SettingsTwin& settings) {
   BackendEvent event{};
-  event.type = BackendEventType::config;
-  event.set_config(config);
+  event.type = BackendEventType::settings;
+  event.scope = BackendEventScope::session;
+  event.session_epoch = session_epoch_.load();
+  event.generation = 0;
+  event.set_settings(settings);
   return xQueueSend(event_queue_, &event, 0) == pdPASS;
 }
+
 
 bool WebSocketVoiceBackend::enqueue_voice_mail_event(
     BackendEventType type, const VoiceMailMetadata& item, std::string_view text) {
   BackendEvent event{};
   event.type = type;
+  event.scope = scope_for_event_type(type);
+  event.session_epoch = session_epoch_.load();
+  event.generation = voice_mail_generation_.load();
   event.set_voice_mail(item);
   event.set_text(text);
   return xQueueSend(event_queue_, &event, 0) == pdPASS;

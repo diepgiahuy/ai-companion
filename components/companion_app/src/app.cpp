@@ -60,9 +60,9 @@ bool VoiceMailMetadata::valid() const {
   return true;
 }
 
-CompanionApp::CompanionApp(AudioEngine& audio, Display& display, Button& button,
+CompanionApp::CompanionApp(AudioEngine& audio, Display& display, InputRouter& input,
                            VoiceBackend& backend, AppConfig config)
-    : audio_(audio), display_(display), button_(button), backend_(backend),
+    : audio_(audio), display_(display), input_(input), backend_(backend),
       config_(config) {}
 
 bool CompanionApp::start(uint64_t now_ms) {
@@ -83,7 +83,7 @@ void CompanionApp::tick(uint64_t now_ms) {
   backend_.tick(now_ms);
   process_backend_events(now_ms);
 
-  const bool pressed = button_.consume_press(now_ms);
+  const bool pressed = input_.consume_primary_action();
   if (pressed) {
     if (state_ == UiState::voice_mail_waiting) {
       begin_voice_mail(now_ms);
@@ -159,6 +159,7 @@ void CompanionApp::tick(uint64_t now_ms) {
 }
 
 void CompanionApp::process_backend_events(uint64_t now_ms) {
+  display_.set_context(backend_.session_epoch(), backend_.media_generation());
   BackendEvent event{};
   for (size_t handled = 0; handled < 8 && backend_.poll_event(event); ++handled) {
     process_backend_event(event, now_ms);
@@ -178,6 +179,8 @@ void CompanionApp::process_backend_event(const BackendEvent& event,
       voice_mail_stream_finished_ = false;
       voice_mail_result_pending_ = false;
     }
+    audio_.stop_playback();
+    stop_capture_if_owned_by_turn();
     fail("DISCONNECTED");
     break;
   case BackendEventType::transcript:
@@ -226,25 +229,9 @@ void CompanionApp::process_backend_event(const BackendEvent& event,
   case BackendEventType::agent_status:
     (void)display_.show_agent_status(state_, event.payload.agent_status);
     break;
-  case BackendEventType::config: {
-    const auto& c = event.payload.config;
-    if (c.version <= runtime_config_version_) break;
-    const bool valid = c.vad_threshold >= 1 && c.vad_threshold <= 65'535 &&
-                       c.vad_silence_ms >= 100 && c.vad_silence_ms <= 5'000 &&
-                       c.vad_min_speech_ms >= 50 && c.vad_min_speech_ms <= 5'000 &&
-                       c.idle_after_ms >= 1'000 && c.idle_after_ms <= 3'600'000 &&
-                       c.alarm_visible_ms >= 1'000 && c.alarm_visible_ms <= 3'600'000 &&
-                       c.ota_poll_interval_s >= 3'600 && c.ota_poll_interval_s <= 604'800;
-    if (!valid) { backend_.report_config(c, false); break; }
-    config_.smart_vad_enabled = c.smart_vad_enabled;
-    config_.vad_mean_abs_threshold = static_cast<uint16_t>(c.vad_threshold);
-    config_.vad_silence_ms = c.vad_silence_ms;
-    config_.vad_min_speech_ms = c.vad_min_speech_ms;
-    config_.idle_after_ms = c.idle_after_ms;
-    config_.alarm_visible_ms = c.alarm_visible_ms;
-    config_.ota_poll_interval_s = c.ota_poll_interval_s;
-    runtime_config_version_ = c.version;
-    backend_.report_config(c, true);
+  case BackendEventType::settings: {
+    const bool applied = apply_settings(event.payload.settings);
+    (void)backend_.report_settings_apply(event.payload.settings, applied);
     break;
   }
   case BackendEventType::voice_mail_available:
@@ -539,7 +526,6 @@ void CompanionApp::begin_listening(uint64_t now_ms) {
       fail("MIC ERROR");
       return;
     }
-    capture_active_ = true;
   }
   recording_started_ms_ = now_ms;
   state_ = UiState::listening;
@@ -654,9 +640,8 @@ bool CompanionApp::current_voice_mail_matches(const VoiceMailMetadata& item) con
 
 void CompanionApp::enter_alarm(uint64_t now_ms, std::string_view message) {
   audio_.stop_playback();
-  if (audio_.frontend_enabled() && capture_active_) {
+  if (audio_.frontend_enabled()) {
     audio_.stop_capture();
-    capture_active_ = false;
     audio_.reset();
   }
   playback_count_ = playback_offset_ = 0;
@@ -692,10 +677,8 @@ bool CompanionApp::frame_has_voice(std::span<const int16_t> pcm) const {
 }
 
 bool CompanionApp::ensure_monitor_capture() {
-  if (!audio_.frontend_enabled() || capture_active_) return true;
-  if (!audio_.start_capture()) return false;
-  capture_active_ = true;
-  return true;
+  if (!audio_.frontend_enabled()) return true;
+  return audio_.start_capture();
 }
 
 void CompanionApp::handle_frontend_event(AudioFrontendEvent event, uint64_t now_ms) {
@@ -710,22 +693,39 @@ void CompanionApp::handle_frontend_event(AudioFrontendEvent event, uint64_t now_
 }
 
 void CompanionApp::stop_capture_if_owned_by_turn() {
-  if (!audio_.frontend_enabled() && capture_active_) {
+  if (!audio_.frontend_enabled()) {
     audio_.stop_capture();
-    capture_active_ = false;
   }
 }
 
 void CompanionApp::fail(std::string_view reason) {
-  if (capture_active_) {
-    audio_.stop_capture();
-    capture_active_ = false;
-  }
+  audio_.stop_capture();
   audio_.reset();
   audio_.stop_playback();
   backend_.cancel_turn();
   state_ = UiState::error;
   display_.show(state_, reason);
+}
+
+bool CompanionApp::apply_settings(const SettingsTwin& twin) {
+  if (twin.version <= runtime_config_version_ || !twin.settings.validate()) {
+    return false;
+  }
+  config_.smart_vad_enabled = twin.settings.smart_vad_enabled;
+  config_.vad_mean_abs_threshold = static_cast<uint16_t>(twin.settings.vad_threshold);
+  config_.vad_silence_ms = twin.settings.vad_silence_ms;
+  config_.vad_min_speech_ms = twin.settings.vad_min_speech_ms;
+  config_.idle_after_ms = twin.settings.idle_after_ms;
+  config_.alarm_visible_ms = twin.settings.alarm_visible_ms;
+  config_.alarm_tone_ms = twin.settings.alarm_tone_ms;
+  config_.alarm_tone_hz = twin.settings.alarm_tone_hz;
+  config_.alarm_tone_amplitude = twin.settings.alarm_tone_amplitude;
+  config_.ota_poll_interval_s = twin.settings.ota_poll_interval_s;
+  config_.volume = twin.settings.volume;
+  config_.wake_threshold = twin.settings.wake_threshold;
+  config_.wake_model = twin.settings.wake_model;
+  runtime_config_version_ = twin.version;
+  return true;
 }
 
 } // namespace companion

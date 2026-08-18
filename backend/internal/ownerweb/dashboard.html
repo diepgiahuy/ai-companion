@@ -712,7 +712,8 @@ async function renderView() {
       </div>
     `;
   } else if (currentView === 'device') {
-    const data = await fetchJSON('/v1/owner/data/device' + (selectedDeviceID ? `?device_id=${selectedDeviceID}` : ''));
+    const data = await fetchJSON('/v1/owner/data/device' + (selectedDeviceID ? `?device_id=${encodeURIComponent(selectedDeviceID)}` : ''));
+    if (!selectedDeviceID && data?.device_id) selectedDeviceID = data.device_id;
     container.innerHTML = `
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.5rem">
         <h1 style="margin-bottom:0">Device Twin & Telemetry</h1>
@@ -721,9 +722,9 @@ async function renderView() {
       <div class="card-grid">
         <div class="block-card">
           <div class="block-title">📶 Hardware Connection</div>
-          <div class="block-metric" style="color:var(--accent-green)">ONLINE</div>
+          <div class="block-metric">${(data?.connection_status || 'unknown').toUpperCase()}</div>
           <div style="font-size:0.85rem;color:var(--text-primary);margin-top:0.4rem;font-weight:600">${data?.name || data?.device_id || 'companion-s3'}</div>
-          <div style="font-size:0.8rem;color:var(--text-muted)">Wi-Fi RSSI: ${data?.wifi_rssi_dbm || -58} dBm</div>
+          <div style="font-size:0.8rem;color:var(--text-muted)">Wi-Fi RSSI: ${data?.wifi_rssi_dbm == null ? 'not reported' : `${data.wifi_rssi_dbm} dBm`}</div>
         </div>
         <div class="block-card">
           <div class="block-title">🧠 Memory Budgets</div>
@@ -733,7 +734,7 @@ async function renderView() {
         <div class="block-card">
           <div class="block-title">🔄 Dynamic OTA Polling</div>
           <div class="block-metric">${data?.ota_poll_interval || '6h'} <span style="font-size:0.9rem;font-weight:400;color:var(--text-muted)">interval</span></div>
-          <div style="font-size:0.8rem;color:var(--text-muted);margin-top:0.4rem">Firmware: ${data?.firmware_version || 'v2.4.0'}</div>
+          <div style="font-size:0.8rem;color:var(--text-muted);margin-top:0.4rem">Firmware: ${data?.firmware_version || 'unknown'}</div>
         </div>
       </div>
 
@@ -758,7 +759,7 @@ async function renderView() {
           </div>
         </div>
         <div id="ota-status-banner" style="font-size:0.85rem;color:var(--text-muted);padding:0.6rem 0.8rem;background:#202020;border-radius:6px">
-          Status: Ready. Last verified signed release: <b>v2.4.0 (Stable)</b>
+          Settings: <b>${data?.settings_status?.state || 'unknown'}</b> • desired ${data?.desired_version ?? 0} • reported ${data?.reported_version ?? 0}
         </div>
       </div>
     `;
@@ -767,11 +768,15 @@ async function renderView() {
 
 async function updateOTAInterval(val) {
   const banner = document.getElementById('ota-status-banner');
+  if (!selectedDeviceID) {
+    banner.textContent = 'No owned device selected';
+    return;
+  }
   banner.textContent = 'Updating device twin configuration...';
   try {
-    const res = await mutate('/v1/owner/data/device/config', 'POST', { device_id: selectedDeviceID || 'companion-s3-01', ota_poll_interval: val });
+    const res = await mutate('/v1/owner/data/device/config', 'POST', { device_id: selectedDeviceID, ota_poll_interval: val });
     const data = await res.json();
-    banner.innerHTML = `✅ Interval updated to <b>${val}</b> for ${selectedDeviceID || 'companion-s3-01'}.`;
+    banner.innerHTML = `✅ Interval updated to <b>${val}</b> for ${selectedDeviceID}.`;
   } catch (e) {
     banner.textContent = 'Failed to update interval';
   }
@@ -787,9 +792,13 @@ async function checkOTA() {
 
 async function triggerOTA() {
   const banner = document.getElementById('ota-status-banner');
+  if (!selectedDeviceID) {
+    banner.textContent = 'No owned device selected';
+    return;
+  }
   banner.textContent = 'Pushing OTA trigger to device twin...';
   try {
-    const res = await mutate('/v1/owner/data/device/ota-trigger', 'POST', { device_id: selectedDeviceID || 'companion-s3-01', target_version: 'v2.4.1' });
+    const res = await mutate('/v1/owner/data/device/ota-trigger', 'POST', { device_id: selectedDeviceID, target_version: 'v2.4.1' });
     const data = await res.json();
     banner.innerHTML = `🚀 <b>Update Command Sent!</b> Device twin will download <code>v2.4.1</code> to inactive partition on next sync.`;
   } catch (e) {

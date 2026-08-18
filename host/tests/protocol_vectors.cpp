@@ -8,7 +8,7 @@
 
 namespace {
 
-constexpr std::array<companion::protocol::ControlType, 31> kTypes{
+constexpr std::array<companion::protocol::ControlType, 29> kTypes{
     companion::protocol::ControlType::session_hello,
     companion::protocol::ControlType::session_ready,
     companion::protocol::ControlType::session_ping,
@@ -24,8 +24,6 @@ constexpr std::array<companion::protocol::ControlType, 31> kTypes{
     companion::protocol::ControlType::alarm_fired,
     companion::protocol::ControlType::alarm_ack,
     companion::protocol::ControlType::schedule_updated,
-    companion::protocol::ControlType::config_update,
-    companion::protocol::ControlType::config_report,
     companion::protocol::ControlType::protocol_error,
     companion::protocol::ControlType::gesture_notification,
     companion::protocol::ControlType::voice_mail_available,

@@ -28,6 +28,27 @@ struct AudioRuntimeStats {
   PlaybackReferenceStats frontend_reference{};
 };
 
+// Board-facing capture port. Only AudioRuntime should compose this into the
+// product runtime; CompanionApp must not own physical audio adapters directly.
+class Microphone {
+public:
+  virtual ~Microphone() = default;
+  virtual bool start_capture() = 0;
+  virtual size_t read_capture(std::span<int16_t> destination) = 0;
+  virtual void stop_capture() = 0;
+};
+
+// Board-facing playback port. Accepted-frame semantics are the authoritative
+// source for the AEC reference owned by AudioRuntime.
+class Speaker {
+public:
+  virtual ~Speaker() = default;
+  virtual bool start_playback(uint32_t sample_rate_hz) = 0;
+  virtual size_t write_playback(std::span<const int16_t> mono_pcm) = 0;
+  virtual bool playback_drained() const = 0;
+  virtual void stop_playback() = 0;
+};
+
 // The only app-facing audio owner. Physical microphone/speaker adapters and the
 // optional vendor AFE remain private implementation details below this boundary.
 // A no-AFE runtime is supported for host/simulator/manual-VAD paths without

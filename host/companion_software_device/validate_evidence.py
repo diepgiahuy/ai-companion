@@ -28,7 +28,7 @@ expected = {
         "providers": adk_fixture,
         "scenarios": {
             "hello_turn_tts", "duplicate_message_id", "barge_in_generation",
-            "reconnect_new_session", "config_update_report", "protocol_v1_rejected",
+            "reconnect_new_session", "settings_update_apply", "protocol_v1_rejected",
         },
     },
     "tool": {

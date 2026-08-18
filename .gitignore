@@ -1,5 +1,7 @@
 /build/
 /build-host/
+/build-*/
+host/build/
 /managed_components/
 /sdkconfig
 /sdkconfig.old
@@ -11,9 +13,5 @@ __pycache__/
 run_aider.sh
 /backend/data/
 /backend/*.db
-.aider*
 .env
-run_aider.sh
-.idea/
-__pycache__/
-*.pyc
+.DS_Store

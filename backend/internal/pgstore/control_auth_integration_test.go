@@ -42,21 +42,45 @@ func TestPostgresConversationControlAndAuthParity(t *testing.T) {
 		t.Fatal(err)
 	}
 	locale := "vi-VN"
-	twin, err := store.SetDesired(ctx, user, device, controlplane.RuntimeConfig{Locale: locale})
+	wakeModel := "hilexin"
+	twin, err := store.SetDesired(ctx, user, device, controlplane.RuntimeConfig{Locale: locale, WakeModel: wakeModel})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if twin.DeviceID != device || twin.UserID != user || twin.Desired.Locale != locale || twin.DesiredVersion <= before {
+	if twin.DeviceID != device || twin.UserID != user || twin.Desired.Locale != locale || twin.Desired.WakeModel != wakeModel || twin.DesiredVersion <= before {
 		t.Fatalf("twin=%+v before=%d", twin, before)
 	}
+	// Wrong owner in GetTwin
 	if _, err := store.GetTwin(ctx, user+"-other", device); err == nil {
-		t.Fatal("device owner mismatch was accepted")
+		t.Fatal("device owner mismatch was accepted in GetTwin")
 	}
-	if err := store.Report(ctx, user, device, twin.DesiredVersion+1, controlplane.RuntimeConfig{Locale: locale}); err == nil {
+	// Wrong owner in SetDesired
+	if _, err := store.SetDesired(ctx, user+"-other", device, controlplane.RuntimeConfig{Locale: locale}); err == nil {
+		t.Fatal("device owner mismatch was accepted in SetDesired")
+	}
+	// Wrong owner in Report
+	if err := store.Report(ctx, user+"-other", device, twin.DesiredVersion, controlplane.RuntimeConfig{Locale: locale}); err == nil {
+		t.Fatal("device owner mismatch was accepted in Report")
+	}
+	// Version ahead of desired rejected
+	if err := store.Report(ctx, user, device, twin.DesiredVersion+1, controlplane.RuntimeConfig{Locale: locale, WakeModel: wakeModel}); err == nil {
 		t.Fatal("reported version ahead of desired was accepted")
 	}
-	if err := store.Report(ctx, user, device, twin.DesiredVersion, controlplane.RuntimeConfig{Locale: locale}); err != nil {
+	// Happy apply
+	if err := store.Report(ctx, user, device, twin.DesiredVersion, controlplane.RuntimeConfig{Locale: locale, WakeModel: wakeModel}); err != nil {
 		t.Fatal(err)
+	}
+	// Stale version rejected
+	if err := store.Report(ctx, user, device, twin.DesiredVersion-1, controlplane.RuntimeConfig{Locale: locale, WakeModel: wakeModel}); err == nil {
+		t.Fatal("stale reported version was accepted")
+	}
+	// Verify reported twin state and status
+	reportedTwin, err := store.GetTwin(ctx, user, device)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reportedTwin.ReportedVersion != twin.DesiredVersion || reportedTwin.Reported.WakeModel != wakeModel || reportedTwin.Status != controlplane.TwinStatusApplied {
+		t.Fatalf("reportedTwin=%+v", reportedTwin)
 	}
 
 	threshold := 500

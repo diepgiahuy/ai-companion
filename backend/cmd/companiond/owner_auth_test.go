@@ -18,7 +18,7 @@ func TestOwnerAuthUnconfiguredFallsThrough(t *testing.T) {
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})
-	handler := ownerAuthFromEnvironment(next, nil, nil, nil)
+	handler := ownerAuthFromEnvironment(next, nil, nil, nil, nil, nil)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 	if response.Code != http.StatusNoContent {
@@ -36,7 +36,7 @@ func TestOwnerAuthInvalidConfigurationFailsClosedOnlyForOwnerSurface(t *testing.
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})
-	handler := ownerAuthFromEnvironment(next, nil, nil, nil)
+	handler := ownerAuthFromEnvironment(next, nil, nil, nil, nil, nil)
 
 	ownerResponse := httptest.NewRecorder()
 	handler.ServeHTTP(ownerResponse, httptest.NewRequest(http.MethodGet, "/v1/owner/session", nil))

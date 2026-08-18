@@ -16,7 +16,6 @@ public:
   bool finish_turn(uint64_t now_ms) override;
   void cancel_turn() override;
   bool poll_event(BackendEvent& event) override;
-  bool report_config(const RuntimeConfigPatch& config, bool applied) override;
   bool claim_voice_mail(const VoiceMailMetadata& item, uint64_t now_ms) override;
   bool report_voice_mail_playback(const VoiceMailMetadata& item, bool succeeded,
                                   std::string_view failure_code,
@@ -28,16 +27,32 @@ public:
   bool playback_empty() const override;
   uint32_t playback_sample_rate_hz() const override { return kAudioSampleRateHz; }
 
+  uint64_t session_epoch() const override { return session_epoch_; }
+  uint64_t media_generation() const override { return media_generation_; }
+  void set_session_epoch(uint64_t epoch) { session_epoch_ = epoch; }
+  void set_media_generation(uint64_t gen) { media_generation_ = gen; }
+  void disconnect();
+
   uint64_t received_samples() const { return received_samples_; }
   bool inject_event(BackendEventType type, std::string_view text = {}) { return push_event(type, text); }
-  bool inject_config(const RuntimeConfigPatch& config);
+  bool inject_card(const PresentationCardV1& card,
+                   BackendEventScope scope = BackendEventScope::generation,
+                   uint64_t session_epoch = 0, uint64_t generation = 0);
+  bool inject_hint(const PresentationHint& hint,
+                   BackendEventScope scope = BackendEventScope::generation,
+                   uint64_t session_epoch = 0, uint64_t generation = 0);
+  bool inject_agent_status(const AgentPresentationStatus& status,
+                           BackendEventScope scope = BackendEventScope::generation,
+                           uint64_t session_epoch = 0, uint64_t generation = 0);
+  bool inject_scoped_event(BackendEventType type, std::string_view text = {},
+                           BackendEventScope scope = BackendEventScope::generation,
+                           uint64_t session_epoch = 0, uint64_t generation = 0);
+  bool inject_settings(const SettingsTwin& settings);
   bool inject_voice_mail(const VoiceMailMetadata& item,
                          BackendEventType type = BackendEventType::voice_mail_available);
   uint32_t voice_mail_claims() const { return voice_mail_claims_; }
   uint32_t voice_mail_successes() const { return voice_mail_successes_; }
   uint32_t voice_mail_failures() const { return voice_mail_failures_; }
-  uint64_t reported_config_version() const { return reported_config_version_; }
-  bool reported_config_applied() const { return reported_config_applied_; }
 
 private:
   static constexpr uint32_t response_delay_ms_{250};
@@ -49,8 +64,8 @@ private:
   uint64_t received_samples_{};
   uint64_t reply_at_ms_{};
   size_t playback_offset_{};
-  uint64_t reported_config_version_{};
-  bool reported_config_applied_{};
+  uint64_t session_epoch_{1};
+  uint64_t media_generation_{1};
   uint32_t voice_mail_claims_{};
   uint32_t voice_mail_successes_{};
   uint32_t voice_mail_failures_{};
@@ -60,7 +75,9 @@ private:
   size_t event_tail_{};
   size_t event_count_{};
 
-  bool push_event(BackendEventType type, std::string_view text = {});
+  bool push_event(BackendEventType type, std::string_view text = {},
+                  BackendEventScope scope = BackendEventScope::global,
+                  uint64_t session_epoch = 0, uint64_t generation = 0);
   void clear_events();
 };
 
