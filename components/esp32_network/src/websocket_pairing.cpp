@@ -217,9 +217,6 @@ bool WebSocketVoiceBackend::enable_pairing_protocol() {
       pairing_event_queue_buffer_.data(), &pairing_event_queue_storage_);
   if (pairing_event_queue_ == nullptr) return false;
 
-  // Pairing and device capabilities share one WebSocket DATA owner. Only the
-  // first optional control plane replaces the base event handler; later planes
-  // reuse the already-installed mux.
   if (!confirmation_protocol_enabled_.load()) {
     if (esp_websocket_unregister_events(client_, WEBSOCKET_EVENT_ANY,
                                         &WebSocketVoiceBackend::event_handler) != ESP_OK) {
@@ -468,13 +465,48 @@ bool WebSocketVoiceBackend::handle_pairing_text(std::string_view json) {
   }
 
   if (capability_control) {
+    const CapabilityRegistry registry =
+        make_capability_registry(confirmation_protocol_enabled_.load());
     const std::string_view capability_name =
         type == protocol::ControlType::capability_call ? json_string(payload, "name") : std::string_view{};
     const std::string_view capability_version =
         type == protocol::ControlType::capability_call ? json_string(payload, "version") : std::string_view{};
-    const CapabilityDispatch dispatch = select_capability_dispatch(
-        type, capability_name, capability_version,
-        confirmation_protocol_enabled_.load());
+
+    CapabilityDispatch dispatch = CapabilityDispatch::ignored_cancel;
+    if (type == protocol::ControlType::capability_call) {
+      dispatch = select_capability_call(registry, capability_name,
+                                        capability_version);
+    } else {
+      const std::string_view correlation = json_string(root, "correlation_id");
+      const std::string_view turn = json_string(root, "turn_id");
+      const cJSON* generation =
+          cJSON_GetObjectItemCaseSensitive(root, "generation_id");
+      uint64_t generation_id = 0;
+      (void)exact_uint64(generation, generation_id);
+
+      UserConfirmationRequest active_confirmation{};
+      bool confirmation_active = false;
+      taskENTER_CRITICAL(&confirmation_lock_);
+      if (confirmation_active_) {
+        active_confirmation = active_confirmation_;
+        confirmation_active = true;
+      }
+      taskEXIT_CRITICAL(&confirmation_lock_);
+
+      const CapabilityDefinition* confirmation = registry.find(
+          kUserConfirmationCapability, kUserConfirmationCapabilityVersion);
+      const PendingCapabilityOperation pending{
+          .active = confirmation_active && confirmation != nullptr,
+          .handler = CapabilityHandler::user_confirmation,
+          .cancelable = confirmation != nullptr && confirmation->cancelable,
+          .correlation_id = active_confirmation.correlation_id_view(),
+          .turn_id = active_confirmation.turn_id_view(),
+          .generation_id = active_confirmation.generation_id,
+      };
+      dispatch =
+          select_capability_cancel(pending, correlation, turn, generation_id);
+    }
+
     switch (dispatch) {
     case CapabilityDispatch::user_confirmation_call:
       (void)handle_confirmation_call(root, payload);
