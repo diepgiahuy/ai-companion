@@ -332,7 +332,11 @@ func (s *session) reconcileSettings(ctx context.Context) {
 	if err != nil {
 		return
 	}
-	if twin.DesiredVersion <= twin.ReportedVersion {
+	// A durable reported_version is evidence about the last successful runtime,
+	// not proof that a newly booted/reconnected process still holds the config.
+	// Reassert every non-zero desired revision on each authenticated session.
+	// Exact-version duplicate apply is idempotent on the device side.
+	if twin.DesiredVersion <= 0 {
 		return
 	}
 	if !s.Supports(devicecap.SettingsName, devicecap.SettingsVersion) {
@@ -364,21 +368,30 @@ func (s *session) reconcileSettings(ctx context.Context) {
 		}
 		return
 	}
-	if !result.Applied {
-		if s.logger != nil {
-			s.logger.Warn("device rejected settings reconciliation", "device_id", s.deviceID, "version", result.Version, "error", result.Error)
-		}
-		return
-	}
 	if result.Version != twin.DesiredVersion {
 		if s.logger != nil {
 			s.logger.Warn("device acknowledged unexpected settings version", "device_id", s.deviceID, "want", twin.DesiredVersion, "got", result.Version)
 		}
 		return
 	}
-	if err := s.controlPlane.Report(ctx, s.userID, s.deviceID, result.Version, twin.Desired); err != nil {
+	failureCode := strings.TrimSpace(result.Error)
+	if !result.Applied && failureCode == "" {
+		failureCode = "device_rejected"
+	}
+	report := controlplane.ConfigReportResult{
+		Version:     result.Version,
+		Applied:     result.Applied,
+		Config:      twin.Desired,
+		FailureCode: failureCode,
+		ReportedAt:  time.Now().UTC(),
+	}
+	if err := s.controlPlane.ReportResult(ctx, s.userID, s.deviceID, report); err != nil {
 		if s.logger != nil {
-			s.logger.Warn("failed to report reconciled settings", "device_id", s.deviceID, "error", err)
+			s.logger.Warn("failed to persist reconciled settings outcome", "device_id", s.deviceID, "version", result.Version, "applied", result.Applied, "error", err)
 		}
+		return
+	}
+	if !result.Applied && s.logger != nil {
+		s.logger.Warn("device rejected settings reconciliation", "device_id", s.deviceID, "version", result.Version, "error", failureCode)
 	}
 }
