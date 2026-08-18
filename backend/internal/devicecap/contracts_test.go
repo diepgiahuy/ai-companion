@@ -47,7 +47,7 @@ func TestDefaultContractCatalogOwnsCurrentContracts(t *testing.T) {
 	}
 
 	if _, ok := catalog.Lookup("device.battery.read", "1"); ok {
-		t.Fatal("reserved read vocabulary was activated without a contract")
+		t.Fatal("Product-v1 read capability unexpectedly activated")
 	}
 }
 
