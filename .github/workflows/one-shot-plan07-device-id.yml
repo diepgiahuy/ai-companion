@@ -1,0 +1,69 @@
+name: one-shot-plan07-device-id
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: feat/phase-03-settings-wake-plan07
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Remove fake device-id fallback
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('backend/internal/ownerweb/dashboard.html')
+          text = p.read_text()
+          replacements = [
+            (
+              "    const data = await fetchJSON('/v1/owner/data/device' + (selectedDeviceID ? `?device_id=${selectedDeviceID}` : ''));\n    container.innerHTML = `",
+              "    const data = await fetchJSON('/v1/owner/data/device' + (selectedDeviceID ? `?device_id=${encodeURIComponent(selectedDeviceID)}` : ''));\n    if (!selectedDeviceID && data?.device_id) selectedDeviceID = data.device_id;\n    container.innerHTML = `",
+            ),
+            (
+              "  banner.textContent = 'Updating device twin configuration...';\n  try {\n    const res = await mutate('/v1/owner/data/device/config', 'POST', { device_id: selectedDeviceID || 'companion-s3-01', ota_poll_interval: val });",
+              "  if (!selectedDeviceID) {\n    banner.textContent = 'No owned device selected';\n    return;\n  }\n  banner.textContent = 'Updating device twin configuration...';\n  try {\n    const res = await mutate('/v1/owner/data/device/config', 'POST', { device_id: selectedDeviceID, ota_poll_interval: val });",
+            ),
+            (
+              "    banner.innerHTML = `✅ Interval updated to <b>${val}</b> for ${selectedDeviceID || 'companion-s3-01'}.`;",
+              "    banner.innerHTML = `✅ Interval updated to <b>${val}</b> for ${selectedDeviceID}.`;",
+            ),
+          ]
+          changed = False
+          for old, new in replacements:
+              count = text.count(old)
+              if count == 1:
+                  text = text.replace(old, new, 1)
+                  changed = True
+              elif count == 0 and new in text:
+                  pass
+              else:
+                  raise SystemExit(f'expected zero(already applied) or one match, got {count}: {old[:80]!r}')
+          if "device_id: selectedDeviceID || 'companion-s3-01'" in text:
+              raise SystemExit('fake settings device-id fallback remains')
+          p.write_text(text)
+          print('changed=', changed)
+          PY
+          git diff --check
+      - name: Commit if needed
+        run: |
+          set -euo pipefail
+          git config user.name "ai-companion-plan07-bot"
+          git config user.email "ai-companion-plan07-bot@users.noreply.github.com"
+          git add backend/internal/ownerweb/dashboard.html
+          if git diff --cached --quiet; then
+            echo already-applied
+            exit 0
+          fi
+          git diff --cached --check
+          git commit -m "fix(settings): remove fake Owner Hub device fallback"
+          git push origin HEAD:feat/phase-03-settings-wake-plan07
