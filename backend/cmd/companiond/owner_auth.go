@@ -18,10 +18,8 @@ const ownerPathPrefix = "/v1/owner/"
 func ownerAuthFromEnvironment(next http.Handler, store *pgstore.Store, control *controlplane.Service, claimRepository controlplane.DeviceClaimRepository, deviceOnline func(string) bool, updateDeviceSettings ownerweb.DeviceSettingsUpdater) http.Handler {
 	recordingsDir := os.Getenv("COMPANION_RECORDINGS_DIR")
 	var claimSessionStore ownerauth.ClaimSessionStore
-	var claimCodeStore ownerauth.ClaimCodeStore
 	if store != nil {
 		claimSessionStore = pgstore.NewPgClaimSessionStore(store)
-		claimCodeStore = pgstore.NewPgClaimCodeStore(store)
 	}
 
 	cfg := ownerauth.Config{
@@ -32,7 +30,6 @@ func ownerAuthFromEnvironment(next http.Handler, store *pgstore.Store, control *
 		ClientSecret:      os.Getenv("COMPANION_OWNER_OIDC_CLIENT_SECRET"),
 		RedirectURL:       strings.TrimSpace(os.Getenv("COMPANION_OWNER_OIDC_REDIRECT_URL")),
 		Scopes:            ownerScopes(os.Getenv("COMPANION_OWNER_OIDC_SCOPES")),
-		ClaimCodeStore:    claimCodeStore,
 		ClaimSessionStore: claimSessionStore,
 		PublicBaseURL:     strings.TrimSpace(os.Getenv("COMPANION_PUBLIC_BASE_URL")),
 	}
