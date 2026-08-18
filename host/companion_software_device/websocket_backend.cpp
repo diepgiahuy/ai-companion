@@ -525,6 +525,9 @@ bool WebSocketVoiceBackend::start(uint64_t) {
     last_begin_wire_.clear();
     turn_active_ = false;
     tts_active_ = false;
+    pending_settings_ = {};
+    pending_settings_correlation_.clear();
+    settings_pending_ = false;
     upload_samples_.clear();
     playback_samples_.clear();
     clear_voice_mail_locked();
@@ -650,6 +653,46 @@ bool WebSocketVoiceBackend::poll_event(BackendEvent& event) {
     return true;
   }
   return false;
+}
+
+bool WebSocketVoiceBackend::report_settings_apply(const SettingsTwin& twin,
+                                                  bool applied) {
+  std::string correlation;
+  bool matched = false;
+  {
+    std::lock_guard lock(state_mutex_);
+    if (settings_pending_ && pending_settings_.version == twin.version &&
+        same_settings(pending_settings_.settings, twin.settings)) {
+      matched = true;
+      correlation = pending_settings_correlation_;
+      if (applied) {
+        current_settings_ = twin.settings;
+        settings_version_ = twin.version;
+        ++stats_.settings_applies;
+      }
+      pending_settings_ = {};
+      pending_settings_correlation_.clear();
+      settings_pending_ = false;
+    }
+  }
+  if (!matched || correlation.empty() || !protocol_connected_.load()) return false;
+  json result;
+  if (applied) {
+    result = {{"ok", true}, {"value", {{"applied", true}, {"version", twin.version}}}};
+  } else {
+    result = {{"ok", true},
+              {"value", {{"applied", false},
+                         {"version", twin.version},
+                         {"error", "apply_failed"}}}};
+  }
+  const bool sent = send_text(encode_control(
+      static_cast<int>(protocol::ControlType::capability_result), result.dump(), {},
+      correlation, true, std::nullopt));
+  if (sent) {
+    std::lock_guard lock(state_mutex_);
+    ++stats_.capability_results;
+  }
+  return sent;
 }
 
 bool WebSocketVoiceBackend::claim_voice_mail(const VoiceMailMetadata& item, uint64_t) {
@@ -944,6 +987,9 @@ void WebSocketVoiceBackend::handle_connection_closed(uint64_t generation,
     std::lock_guard lock(state_mutex_);
     turn_active_ = false;
     tts_active_ = false;
+    pending_settings_ = {};
+    pending_settings_correlation_.clear();
+    settings_pending_ = false;
     media_generation_.fetch_add(1);
     clear_turn_media_locked();
     clear_voice_mail_locked();
@@ -1220,6 +1266,7 @@ void WebSocketVoiceBackend::handle_text(uint64_t generation, const std::string& 
         ++stats_.capability_calls;
       }
       json result;
+      bool defer_result = false;
       const std::string name = json_string(payload, "name");
       const std::string version = json_string(payload, "version");
       const auto arguments = payload.find("arguments");
@@ -1233,39 +1280,57 @@ void WebSocketVoiceBackend::handle_text(uint64_t generation, const std::string& 
         } else {
           DeviceSettings current{};
           uint64_t current_version = 0;
+          bool busy = false;
           {
             std::lock_guard lock(state_mutex_);
             current = current_settings_;
             current_version = settings_version_;
+            busy = settings_pending_;
           }
-          SettingsTwin applied{};
-          bool duplicate = false;
-          if (!parse_settings_arguments(*arguments, current, current_version,
-                                        applied, duplicate)) {
-            uint64_t attempted_version = 0;
-            const auto version_it = arguments->find("version");
-            if (version_it != arguments->end()) (void)exact_uint64(*version_it, attempted_version);
-            result = {{"ok", true},
-                      {"value", {{"applied", false},
-                                 {"version", attempted_version},
-                                 {"error", "invalid_argument"}}}};
+          if (busy) {
+            result = {{"ok", false}, {"error", "busy"}};
           } else {
-            if (!duplicate) {
-              std::lock_guard lock(state_mutex_);
-              if (events_.size() == kMaximumEvents) events_.pop_front();
-              BackendEvent event{};
-              event.type = BackendEventType::settings;
-              event.scope = BackendEventScope::global;
-              event.session_epoch = 0;
-              event.generation = 0;
-              event.set_settings(applied);
-              events_.push_back(event);
-              current_settings_ = applied.settings;
-              settings_version_ = applied.version;
-              ++stats_.settings_applies;
+            SettingsTwin candidate{};
+            bool duplicate = false;
+            if (!parse_settings_arguments(*arguments, current, current_version,
+                                          candidate, duplicate)) {
+              uint64_t attempted_version = 0;
+              const auto version_it = arguments->find("version");
+              if (version_it != arguments->end()) {
+                (void)exact_uint64(*version_it, attempted_version);
+              }
+              result = {{"ok", true},
+                        {"value", {{"applied", false},
+                                   {"version", attempted_version},
+                                   {"error", "invalid_argument"}}}};
+            } else if (duplicate) {
+              result = {{"ok", true},
+                        {"value", {{"applied", true}, {"version", candidate.version}}}};
+            } else {
+              bool queued = false;
+              {
+                std::lock_guard lock(state_mutex_);
+                if (!settings_pending_) {
+                  if (events_.size() == kMaximumEvents) events_.pop_front();
+                  BackendEvent event{};
+                  event.type = BackendEventType::settings;
+                  event.scope = BackendEventScope::session;
+                  event.session_epoch = connection_generation_.load();
+                  event.generation = 0;
+                  event.set_settings(candidate);
+                  events_.push_back(event);
+                  pending_settings_ = candidate;
+                  pending_settings_correlation_ = correlation_id;
+                  settings_pending_ = true;
+                  queued = true;
+                }
+              }
+              if (queued) {
+                defer_result = true;
+              } else {
+                result = {{"ok", false}, {"error", "busy"}};
+              }
             }
-            result = {{"ok", true},
-                      {"value", {{"applied", true}, {"version", applied.version}}}};
           }
         }
       } else if (name == "device.volume.set" && version == "1") {
@@ -1287,6 +1352,7 @@ void WebSocketVoiceBackend::handle_text(uint64_t generation, const std::string& 
       } else {
         result = {{"ok", false}, {"error", "unsupported"}};
       }
+      if (defer_result) break;
       const std::optional<uint64_t> result_generation =
           has_generation ? std::optional<uint64_t>(incoming_generation) : std::nullopt;
       const bool sent = send_text(encode_control(
