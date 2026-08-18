@@ -74,6 +74,8 @@ substitute for a verifiable fact.
 - `wokwi/`: simulator configuration.
 - `ai_development_workflow.md`: canonical implementation, review, delegation, and
   verification lifecycle.
+- `docs/architecture/AI_COMPANION_RESET_EXECUTION_PLANS_V2_CANONICAL_2026-08-17.md`:
+  sole Markdown execution/status ledger for the architecture-reset/release sequence.
 - `.agents/rules/github_issue_generation.md`: issue-type and executable-issue contract.
 - `docs/TEST_EVIDENCE_LADDER.md`: evidence classification and promotion boundaries.
 
@@ -112,15 +114,17 @@ substitute for a verifiable fact.
   actually ran against the identified code and the result is available.
 - Public PR code must never execute automatically on the personal HIL runner.
 
-## Modular Phase Execution & Context Management
+## Context and execution management
 
-To keep agent sessions token-efficient and prevent context bloat:
+Keep agent context small without creating a second status system.
 
-- Consult `docs/plans/README.md` to identify the active phase.
-- Load **only** the single relevant `docs/plans/PHASE_*.md` file for your assigned task.
-- Do not dump monolithic architecture roadmaps into the prompt or load unrelated phase files.
-- When completing a phase slice, update the checklist and status in that phase's markdown file and index.
-- During active development: no backward compatibility wrappers or dual legacy/new paths. Delete replaced internal code immediately after proven cutover.
+- Start from the owning GitHub Issue and exact current `main`.
+- Load only the source, tests, ADR, and external references needed for that issue.
+- Use the canonical execution ledger only when the task belongs to the architecture-reset/release sequence.
+- Do not create or update derived `docs/plans/PHASE_*.md` status snapshots. Those files are retired.
+- Put implementation-specific progress and evidence in the current PR description, not in a parallel Markdown checklist.
+- Keep one small coherent execution lane by default. Follow `ai_development_workflow.md` for risk, delegation, review, and proof.
+- During active development, do not keep permanent backward-compatibility wrappers or dual legacy/new internal paths. Delete the replaced internal path after the cutover is proven.
 
 ## Canonical pointers
 
