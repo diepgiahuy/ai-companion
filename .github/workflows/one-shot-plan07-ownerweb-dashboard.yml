@@ -1,0 +1,235 @@
+name: one-shot-plan07-ownerweb-dashboard
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: feat/phase-03-settings-wake-plan07
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Apply guarded dashboard-only patch
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("backend/internal/ownerweb/dashboard.go")
+          text = p.read_text()
+          if "UpdateDeviceSettings DeviceSettingsUpdater" in text:
+              print("dashboard settings truth patch already applied")
+              raise SystemExit(0)
+
+          before_handlers = text.count("\nfunc (h *Handler) ")
+          before_lines = len(text.splitlines())
+          required_handlers = [
+              "handleCreateExpense", "handleSetBudget", "handleDeleteExpense",
+              "handleGetSavingsGoal", "handleSetSavingsGoal", "handleDeleteSavingsGoal",
+              "handleCreateNote", "handleDeleteNote", "handleDeleteVoiceMemo",
+              "handleCreateJournal", "handleDeleteJournal", "handleCreateReminder",
+              "handleDeleteReminder", "handlePauseTimer", "handleResumeTimer",
+              "handleGetPrivacy", "handleSetPrivacy",
+          ]
+          for name in required_handlers:
+              if f"func (h *Handler) {name}(" not in text:
+                  raise SystemExit(f"precondition missing handler {name}")
+
+          old_deps = '''type Dependencies struct {
+          \tStore         domain.ReadRepositories
+          \tControlPlane  *controlplane.Service
+          \tAuth          *ownerauth.Service
+          \tRecordingsDir string
+          }
+          '''
+          new_deps = '''type DeviceSettingsUpdater func(context.Context, string, string, controlplane.RuntimeConfig) (controlplane.Twin, controlplane.SettingsStatus, error)
+
+          type Dependencies struct {
+          \tStore                domain.ReadRepositories
+          \tControlPlane         *controlplane.Service
+          \tAuth                 *ownerauth.Service
+          \tRecordingsDir        string
+          \tDeviceOnline         func(string) bool
+          \tUpdateDeviceSettings DeviceSettingsUpdater
+          }
+          '''
+          if text.count(old_deps) != 1:
+              raise SystemExit("Dependencies block mismatch")
+          text = text.replace(old_deps, new_deps, 1)
+
+          start = text.index("func (h *Handler) handleDevice(")
+          end = text.index("func (h *Handler) handleClaimDevice", start)
+          new_device = '''func (h *Handler) handleDevice(w http.ResponseWriter, r *http.Request) {
+          \tuserID, ok := h.userID(r)
+          \tif !ok || userID == "" {
+          \t\thttp.Error(w, "unauthorized", http.StatusUnauthorized)
+          \t\treturn
+          \t}
+          \tif h.deps.ControlPlane == nil {
+          \t\thttp.Error(w, "settings control plane unavailable", http.StatusServiceUnavailable)
+          \t\treturn
+          \t}
+          \tdevices, err := h.deps.Store.ListUserDevices(r.Context(), userID)
+          \tif err != nil {
+          \t\thttp.Error(w, "failed to load devices", http.StatusInternalServerError)
+          \t\treturn
+          \t}
+          \trequestedID := strings.TrimSpace(r.URL.Query().Get("device_id"))
+          \tdeviceID := ""
+          \tif requestedID == "" && len(devices) > 0 {
+          \t\tdeviceID = devices[0].DeviceID
+          \t} else {
+          \t\tfor _, device := range devices {
+          \t\t\tif device.DeviceID == requestedID {
+          \t\t\t\tdeviceID = requestedID
+          \t\t\t\tbreak
+          \t\t\t}
+          \t\t}
+          \t}
+          \tif deviceID == "" {
+          \t\tif requestedID != "" {
+          \t\t\thttp.Error(w, "device not found", http.StatusNotFound)
+          \t\t\treturn
+          \t\t}
+          \t\twriteJSON(w, map[string]any{
+          \t\t\t"device_id": "", "connection_status": "offline",
+          \t\t\t"settings_status": controlplane.SettingsStatus{State: controlplane.SettingsUnknown},
+          \t\t})
+          \t\treturn
+          \t}
+          \ttwin, err := h.deps.ControlPlane.Manifest(r.Context(), userID, deviceID)
+          \tif err != nil {
+          \t\thttp.Error(w, "failed to load device settings", http.StatusInternalServerError)
+          \t\treturn
+          \t}
+          \tonline := h.deps.DeviceOnline != nil && h.deps.DeviceOnline(deviceID)
+          \tstatus, err := h.deps.ControlPlane.SettingsStatus(r.Context(), userID, deviceID, online)
+          \tif err != nil {
+          \t\thttp.Error(w, "failed to load settings status", http.StatusInternalServerError)
+          \t\treturn
+          \t}
+          \tinterval := ""
+          \tif twin.Desired.OTAPollIntervalSeconds != nil {
+          \t\tinterval = (time.Duration(*twin.Desired.OTAPollIntervalSeconds) * time.Second).String()
+          \t}
+          \twriteJSON(w, map[string]any{
+          \t\t"device_id": deviceID,
+          \t\t"connection_status": map[bool]string{true: "online", false: "offline"}[online],
+          \t\t"settings_status": status,
+          \t\t"desired_version": twin.DesiredVersion,
+          \t\t"reported_version": twin.ReportedVersion,
+          \t\t"ota_poll_interval": interval,
+          \t\t"firmware_version": "unknown",
+          \t\t"wifi_rssi_dbm": nil,
+          \t})
+          }
+
+          '''
+          text = text[:start] + new_device + text[end:]
+
+          start = text.index("func (h *Handler) handleUpdateDeviceConfig(")
+          end = text.index("func (h *Handler) handleCreateExpense", start)
+          new_update = '''func (h *Handler) handleUpdateDeviceConfig(w http.ResponseWriter, r *http.Request) {
+          \tuserID, ok := h.userID(r)
+          \tif !ok || userID == "" {
+          \t\thttp.Error(w, "unauthorized", http.StatusUnauthorized)
+          \t\treturn
+          \t}
+          \tif h.deps.UpdateDeviceSettings == nil {
+          \t\thttp.Error(w, "settings update unavailable", http.StatusServiceUnavailable)
+          \t\treturn
+          \t}
+          \tvar body struct {
+          \t\tDeviceID        string `json:"device_id"`
+          \t\tOTAPollInterval string `json:"ota_poll_interval"`
+          \t}
+          \tdecoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10))
+          \tdecoder.DisallowUnknownFields()
+          \tif err := decoder.Decode(&body); err != nil {
+          \t\thttp.Error(w, "invalid request", http.StatusBadRequest)
+          \t\treturn
+          \t}
+          \tvar extra any
+          \tif err := decoder.Decode(&extra); err != io.EOF {
+          \t\thttp.Error(w, "request must contain one JSON object", http.StatusBadRequest)
+          \t\treturn
+          \t}
+          \tbody.DeviceID = strings.TrimSpace(body.DeviceID)
+          \tif body.DeviceID == "" {
+          \t\thttp.Error(w, "device_id required", http.StatusBadRequest)
+          \t\treturn
+          \t}
+          \tdevices, err := h.deps.Store.ListUserDevices(r.Context(), userID)
+          \tif err != nil {
+          \t\thttp.Error(w, "failed to verify device ownership", http.StatusInternalServerError)
+          \t\treturn
+          \t}
+          \towned := false
+          \tfor _, device := range devices {
+          \t\tif device.DeviceID == body.DeviceID {
+          \t\t\towned = true
+          \t\t\tbreak
+          \t\t}
+          \t}
+          \tif !owned {
+          \t\thttp.Error(w, "device not found", http.StatusNotFound)
+          \t\treturn
+          \t}
+          \tinterval, err := time.ParseDuration(strings.TrimSpace(body.OTAPollInterval))
+          \tif err != nil || interval <= 0 || interval%time.Second != 0 {
+          \t\thttp.Error(w, "ota_poll_interval must be a whole-second duration", http.StatusBadRequest)
+          \t\treturn
+          \t}
+          \tseconds64 := int64(interval / time.Second)
+          \tif seconds64 > int64(^uint(0)>>1) {
+          \t\thttp.Error(w, "ota_poll_interval is out of range", http.StatusBadRequest)
+          \t\treturn
+          \t}
+          \tseconds := int(seconds64)
+          \tpatch := controlplane.RuntimeConfig{OTAPollIntervalSeconds: &seconds}
+          \ttwin, status, err := h.deps.UpdateDeviceSettings(r.Context(), userID, body.DeviceID, patch)
+          \tif err != nil {
+          \t\thttp.Error(w, err.Error(), http.StatusBadRequest)
+          \t\treturn
+          \t}
+          \twriteJSON(w, map[string]any{"ok": true, "twin": twin, "settings_status": status})
+          }
+
+          '''
+          text = text[:start] + new_update + text[end:]
+
+          after_handlers = text.count("\nfunc (h *Handler) ")
+          after_lines = len(text.splitlines())
+          if after_handlers != before_handlers:
+              raise SystemExit(f"handler count changed: {before_handlers} -> {after_handlers}")
+          if after_lines < before_lines - 40:
+              raise SystemExit(f"unexpected file shrink: {before_lines} -> {after_lines}")
+          for name in required_handlers:
+              if f"func (h *Handler) {name}(" not in text:
+                  raise SystemExit(f"postcondition missing handler {name}")
+          p.write_text(text)
+          PY
+          (cd backend && gofmt -w internal/ownerweb/dashboard.go)
+          git diff --check
+          git diff --stat
+      - name: Commit dashboard patch if needed
+        run: |
+          set -euo pipefail
+          git config user.name "ai-companion-plan07-bot"
+          git config user.email "ai-companion-plan07-bot@users.noreply.github.com"
+          git add backend/internal/ownerweb/dashboard.go
+          git diff --cached --check
+          if git diff --cached --quiet; then
+            echo "guarded dashboard patch already applied"
+            exit 0
+          fi
+          git commit -m "fix(settings): wire Owner Hub through canonical settings path"
+          git push origin HEAD:feat/phase-03-settings-wake-plan07
