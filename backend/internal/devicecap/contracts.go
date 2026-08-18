@@ -127,6 +127,8 @@ func defaultContracts() []Contract {
 			"ota_poll_interval_s": map[string]any{
 				"type": "integer", "minimum": 3600, "maximum": 604800,
 			},
+			"wake_model":     map[string]any{"type": "string", "maxLength": 63},
+			"wake_threshold": map[string]any{"type": "number", "minimum": 0.40, "maximum": 0.9999},
 		},
 		nil,
 	)

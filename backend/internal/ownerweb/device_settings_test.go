@@ -226,4 +226,25 @@ func TestOwnerDeviceConfigUsesCanonicalUpdaterWithCSRFAndOwnership(t *testing.T)
 	if unknownFieldW.Code != http.StatusBadRequest || calls != 1 {
 		t.Fatalf("unknown settings field status=%d calls=%d want 400/no call", unknownFieldW.Code, calls)
 	}
+
+	wakeValid := httptest.NewRequest(http.MethodPost, "/v1/owner/data/device/config", strings.NewReader(`{"device_id":"device-a","wake_model":"disabled","wake_threshold":0.75}`))
+	addOwnerSession(wakeValid, session)
+	wakeValid.Header.Set("X-CSRF-Token", csrf)
+	wakeValidW := httptest.NewRecorder()
+	handler.ServeHTTP(wakeValidW, wakeValid)
+	if wakeValidW.Code != http.StatusOK {
+		t.Fatalf("valid wake mutation status=%d body=%s", wakeValidW.Code, wakeValidW.Body.String())
+	}
+	if calls != 2 || gotPatch.WakeModel != "disabled" || gotPatch.WakeThreshold == nil || *gotPatch.WakeThreshold != 0.75 {
+		t.Fatalf("wake config updater mismatch calls=%d patch=%+v", calls, gotPatch)
+	}
+
+	wakeBadThreshold := httptest.NewRequest(http.MethodPost, "/v1/owner/data/device/config", strings.NewReader(`{"device_id":"device-a","wake_threshold":0.20}`))
+	addOwnerSession(wakeBadThreshold, session)
+	wakeBadThreshold.Header.Set("X-CSRF-Token", csrf)
+	wakeBadThresholdW := httptest.NewRecorder()
+	handler.ServeHTTP(wakeBadThresholdW, wakeBadThreshold)
+	if wakeBadThresholdW.Code != http.StatusBadRequest || calls != 2 {
+		t.Fatalf("bad wake threshold status=%d calls=%d want 400/no call", wakeBadThresholdW.Code, calls)
+	}
 }

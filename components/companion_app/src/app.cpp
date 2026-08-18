@@ -683,6 +683,7 @@ bool CompanionApp::ensure_monitor_capture() {
 
 void CompanionApp::handle_frontend_event(AudioFrontendEvent event, uint64_t now_ms) {
   if (event == AudioFrontendEvent::wake_detected &&
+      config_.wake_enabled() &&
       (state_ == UiState::ready || state_ == UiState::idle)) {
     begin_listening(now_ms);
     return;

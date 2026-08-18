@@ -61,6 +61,21 @@ func TestValidateWakeModel(t *testing.T) {
 	}
 }
 
+func TestValidateWakeThreshold(t *testing.T) {
+	good := 0.60
+	if err := Validate(RuntimeConfig{WakeThreshold: &good}); err != nil {
+		t.Fatalf("expected valid wake_threshold, got: %v", err)
+	}
+	tooLow := 0.39
+	if err := Validate(RuntimeConfig{WakeThreshold: &tooLow}); err == nil {
+		t.Fatalf("expected error for wake_threshold < 0.40")
+	}
+	tooHigh := 1.0
+	if err := Validate(RuntimeConfig{WakeThreshold: &tooHigh}); err == nil {
+		t.Fatalf("expected error for wake_threshold > 0.9999")
+	}
+}
+
 func TestDeriveTwinStatus(t *testing.T) {
 	if got := DeriveTwinStatus(Twin{}, false, false); got != TwinStatusUnknown {
 		t.Fatalf("empty twin status = %v, want %v", got, TwinStatusUnknown)

@@ -532,7 +532,7 @@ bool WebSocketVoiceBackend::handle_settings_call(
       !has_only_fields(settings_obj,
                        {"smart_vad_enabled", "vad_threshold", "vad_silence_ms",
                         "vad_min_speech_ms", "idle_after_ms", "alarm_visible_ms",
-                        "ota_poll_interval_s"})) {
+                        "ota_poll_interval_s", "wake_model", "wake_threshold"})) {
     SettingsTwin rejected{.version = target_version};
     (void)enqueue_settings_result(correlation, {}, 0, false,
                                   false, &rejected, "invalid_argument");
@@ -578,6 +578,24 @@ bool WebSocketVoiceBackend::handle_settings_call(
   PARSE_U32_SETTING("alarm_visible_ms", alarm_visible_ms);
   PARSE_U32_SETTING("ota_poll_interval_s", ota_poll_interval_s);
 #undef PARSE_U32_SETTING
+
+  if (const cJSON* wake_model_item = cJSON_GetObjectItemCaseSensitive(settings_obj, "wake_model");
+      wake_model_item != nullptr) {
+    if (!cJSON_IsString(wake_model_item)) goto invalid_settings;
+    const char* model_str = wake_model_item->valuestring;
+    if (model_str == nullptr || model_str[0] == '\0' || std::strlen(model_str) >= parsed.wake_model.size()) {
+      goto invalid_settings;
+    }
+    parsed.set_wake_model(model_str);
+  }
+
+  if (const cJSON* wake_threshold_item = cJSON_GetObjectItemCaseSensitive(settings_obj, "wake_threshold");
+      wake_threshold_item != nullptr) {
+    if (!cJSON_IsNumber(wake_threshold_item)) goto invalid_settings;
+    const double val = wake_threshold_item->valuedouble;
+    if (val < 0.40 || val > 0.9999) goto invalid_settings;
+    parsed.wake_threshold = static_cast<float>(val);
+  }
 
   if (!parsed.validate()) goto invalid_settings;
 

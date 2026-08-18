@@ -139,7 +139,7 @@ bool parse_settings_arguments(const json& arguments,
       !has_only_fields(*settings_it,
                        {"smart_vad_enabled", "vad_threshold", "vad_silence_ms",
                         "vad_min_speech_ms", "idle_after_ms", "alarm_visible_ms",
-                        "ota_poll_interval_s", "wake_model"})) {
+                        "ota_poll_interval_s", "wake_model", "wake_threshold"})) {
     return false;
   }
   if (version < current_version) return false;
@@ -171,6 +171,12 @@ bool parse_settings_arguments(const json& arguments,
     const std::string model = it->get<std::string>();
     if (model.empty() || model.size() >= parsed.wake_model.size()) return false;
     parsed.set_wake_model(model);
+  }
+  if (const auto it = settings.find("wake_threshold"); it != settings.end()) {
+    if (!it->is_number()) return false;
+    const double threshold = it->get<double>();
+    if (threshold < 0.40 || threshold > 0.9999) return false;
+    parsed.wake_threshold = static_cast<float>(threshold);
   }
   if (!parsed.validate()) return false;
 

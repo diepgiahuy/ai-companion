@@ -739,6 +739,32 @@ async function renderView() {
       </div>
 
       <div class="block-card" style="margin-top:1.5rem">
+        <h3 style="font-size:1.05rem;margin-bottom:0.8rem">🎙️ Voice Wake Word & Sensitivity</h3>
+        <p style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:1.2rem">
+          Configure active ESP-SR WakeNet wake models, threshold sensitivity, or disable hands-free wake to use deterministic Push-To-Talk (PTT).
+        </p>
+        <div style="display:flex;gap:1.5rem;align-items:center;flex-wrap:wrap;margin-bottom:1rem">
+          <div>
+            <label style="font-size:0.75rem;color:var(--text-muted);display:block;margin-bottom:0.3rem">Wake Model / Mode</label>
+            <select id="wake-model-select" class="filter-input" onchange="updateWakeModel(this.value)">
+              <option value="wn9_hiesp" ${data?.wake_model === 'wn9_hiesp' || data?.wake_model === 'default' ? 'selected' : ''}>Hi, ESP (Packaged WakeNet9)</option>
+              <option value="disabled" ${data?.wake_model === 'disabled' || data?.wake_model === 'off' ? 'selected' : ''}>Disabled (Push-To-Talk only)</option>
+            </select>
+          </div>
+          <div>
+            <label style="font-size:0.75rem;color:var(--text-muted);display:block;margin-bottom:0.3rem">Wake Sensitivity Threshold (0.40 - 0.99)</label>
+            <div style="display:flex;gap:0.5rem;align-items:center">
+              <input id="wake-threshold-input" type="number" step="0.05" min="0.40" max="0.99" class="filter-input" style="width:90px" value="${data?.wake_threshold || 0.60}" />
+              <button class="filter-btn" onclick="updateWakeThreshold(parseFloat(document.getElementById('wake-threshold-input').value))">Apply</button>
+            </div>
+          </div>
+        </div>
+        <div id="wake-status-banner" style="font-size:0.85rem;color:var(--text-muted);padding:0.6rem 0.8rem;background:#202020;border-radius:6px">
+          Active Wake: <b>${data?.wake_model || 'wn9_hiesp'}</b> • threshold ${data?.wake_threshold || 0.60} • Settings <b>${data?.settings_status?.state || 'unknown'}</b>
+        </div>
+      </div>
+
+      <div class="block-card" style="margin-top:1.5rem">
         <h3 style="font-size:1.05rem;margin-bottom:0.8rem">📦 Over-The-Air (OTA) Firmware Management</h3>
         <p style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:1.2rem">
           Manage background update intervals and push signed A/B firmware updates directly to your companion device twin.
@@ -763,6 +789,54 @@ async function renderView() {
         </div>
       </div>
     `;
+  }
+}
+
+async function updateWakeModel(val) {
+  const banner = document.getElementById('wake-status-banner');
+  if (!selectedDeviceID) {
+    banner.textContent = 'No owned device selected';
+    return;
+  }
+  banner.textContent = 'Updating wake configuration...';
+  try {
+    const res = await mutate('/v1/owner/data/device/config', 'POST', { device_id: selectedDeviceID, wake_model: val });
+    let data = null;
+    try { data = await res.json(); } catch (_) {}
+    if (!res.ok || !data?.ok) {
+      banner.textContent = data?.error || `Failed to update wake model (${res.status})`;
+      return;
+    }
+    const state = data?.settings_status?.state || 'requested';
+    banner.innerHTML = `Wake model updated to <b>${val}</b> for ${selectedDeviceID} • Settings <b>${state}</b>`;
+  } catch (e) {
+    banner.textContent = 'Failed to update wake model';
+  }
+}
+
+async function updateWakeThreshold(val) {
+  const banner = document.getElementById('wake-status-banner');
+  if (!selectedDeviceID) {
+    banner.textContent = 'No owned device selected';
+    return;
+  }
+  if (isNaN(val) || val < 0.40 || val > 0.9999) {
+    banner.textContent = 'Threshold must be between 0.40 and 0.99';
+    return;
+  }
+  banner.textContent = 'Updating wake sensitivity...';
+  try {
+    const res = await mutate('/v1/owner/data/device/config', 'POST', { device_id: selectedDeviceID, wake_threshold: val });
+    let data = null;
+    try { data = await res.json(); } catch (_) {}
+    if (!res.ok || !data?.ok) {
+      banner.textContent = data?.error || `Failed to update wake threshold (${res.status})`;
+      return;
+    }
+    const state = data?.settings_status?.state || 'requested';
+    banner.innerHTML = `Wake threshold updated to <b>${val}</b> for ${selectedDeviceID} • Settings <b>${state}</b>`;
+  } catch (e) {
+    banner.textContent = 'Failed to update wake threshold';
   }
 }
 
