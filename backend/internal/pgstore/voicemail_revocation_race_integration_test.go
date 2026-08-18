@@ -97,6 +97,8 @@ func TestPostgresVoiceMailCompleteVsRevokeSerializes(t *testing.T) {
 	}()
 	<-started
 
+	// Before the revocation transaction commits, CompleteUpload must not be
+	// able to produce an authoritative result across the locked relationship.
 	select {
 	case r := <-done:
 		t.Fatalf("complete escaped relationship lock before revoke commit: item=%+v err=%v", r.item, r.err)
@@ -128,6 +130,9 @@ func TestPostgresVoiceMailCompleteVsRevokeSerializes(t *testing.T) {
 		t.Fatalf("durable state=%q want=%q", state, voicemail.Rejected)
 	}
 
+	// The rejected result is itself durable/idempotent: retrying the exact
+	// logical complete replays it instead of re-running authorization or
+	// producing an availability event.
 	replayed, err := store.CompleteUpload(ctx, completeReq, sender, senderDevice, item.ID, now.Add(3*time.Second))
 	if !errors.Is(err, voicemail.ErrRelationshipRevoked) {
 		t.Fatalf("replay err=%v want=%v", err, voicemail.ErrRelationshipRevoked)
@@ -144,7 +149,7 @@ func TestPostgresVoiceMailCompleteVsRevokeSerializes(t *testing.T) {
 		t.Fatalf("rejected send emitted %d availability events", available)
 	}
 
-	cleanup, err := store.ClaimCleanup(ctx, now.Add(4*time.Second), 10)
+	cleanup, err := store.ClaimCleanup(ctx, now.Add(4*time.Second), 100)
 	if err != nil {
 		t.Fatal(err)
 	}
