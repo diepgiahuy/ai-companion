@@ -18,7 +18,7 @@ namespace companion::provisioning {
 namespace {
 constexpr size_t kMaximumBodyBytes = 4 * 1024;
 constexpr char kNonceHeader[] = "X-Companion-Setup-Nonce";
-constexpr char kFullHtml[] = R"HTML(<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>Companion Setup</title><style>body{font-family:sans-serif;max-width:34rem;margin:2rem auto;padding:0 1rem}label{display:block;margin:.8rem 0}input{width:100%;padding:.6rem;box-sizing:border-box}button{padding:.7rem 1rem}.ref{padding:.7rem;background:#f4f4f4;overflow-wrap:anywhere}code{font-weight:700}</style><h1>Companion Setup</h1><p>Connect Wi-Fi, then sign in on the owner page and enter the single short claim code here.</p><div class=ref>Device: <code id=device>loading…</code><br>Bootstrap: <code id=bootstrap>loading…</code><br><a id=owner target=_blank rel="noopener noreferrer">Open owner claim page</a></div><form id=f><label>Wi-Fi SSID<input name=wifi_ssid required maxlength=32></label><label>Wi-Fi password<input name=wifi_password type=password maxlength=63></label><label>Companion WSS URL<input id=server name=server_url required placeholder="wss://..." maxlength=512></label><label>Claim code<input name=claim_code required autocomplete=one-time-code maxlength=16 pattern="[A-Za-z2-9 -]{10,16}" placeholder="ABCDE-FGHIJ"></label><button>Save and reboot</button></form><pre id=o></pre><script>let nonce='',info=null;async function setupNonce(){const r=await fetch('/nonce',{cache:'no-store'});if(!r.ok)throw new Error('nonce');nonce=(await r.text()).trim()}async function setupInfo(){const r=await fetch('/setup-info',{cache:'no-store'});if(!r.ok)throw new Error('info');info=await r.json();device.textContent=info.device_id;bootstrap.textContent=info.bootstrap_id;ownerLink()}function ownerLink(){owner.removeAttribute('href');if(!info)return;try{const u=new URL(server.value);if(u.protocol!=='wss:'||u.username||u.password||u.search||u.hash)return;const x=new URL('https://'+u.host+'/v1/owner/device-claim-code');x.searchParams.set('bootstrap_id',info.bootstrap_id);x.searchParams.set('device_id',info.device_id);owner.href=x.toString()}catch(_){}}server.addEventListener('input',ownerLink);Promise.all([setupNonce(),setupInfo()]).catch(()=>o.textContent='Setup session unavailable. Reload this page.');f.onsubmit=async e=>{e.preventDefault();try{if(!nonce)await setupNonce();o.textContent='Saving...';const x=Object.fromEntries(new FormData(f));const r=await fetch('/configure',{method:'POST',headers:{'Content-Type':'application/json','X-Companion-Setup-Nonce':nonce},body:JSON.stringify(x)});o.textContent=r.ok?'Saved. Companion will reboot.':'Invalid setup data or claim code.'}catch(_){o.textContent='Setup session unavailable. Reload this page.'}}</script>)HTML";
+constexpr char kFullHtml[] = R"HTML(<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>Companion Setup</title><style>body{font-family:sans-serif;max-width:34rem;margin:2rem auto;padding:0 1rem}label{display:block;margin:.8rem 0}input{width:100%;padding:.6rem;box-sizing:border-box}button{padding:.7rem 1rem}.ref{padding:.7rem;background:#f4f4f4;overflow-wrap:anywhere}code{font-weight:700}</style><h1>Companion Setup</h1><p>Connect Companion to your Wi-Fi network. After connecting, follow the prompt on your Companion display to complete setup without typing codes.</p><div class=ref>Device: <code id=device>loading…</code></div><form id=f><label>Wi-Fi SSID<input name=wifi_ssid required maxlength=32></label><label>Wi-Fi password<input name=wifi_password type=password maxlength=63></label><label>Companion WSS URL<input id=server name=server_url required placeholder="wss://..." maxlength=512></label><button>Connect and Continue</button></form><pre id=o></pre><script>let nonce='',info=null;async function setupNonce(){const r=await fetch('/nonce',{cache:'no-store'});if(!r.ok)throw new Error('nonce');nonce=(await r.text()).trim()}async function setupInfo(){const r=await fetch('/setup-info',{cache:'no-store'});if(!r.ok)throw new Error('info');info=await r.json();device.textContent=info.device_id;}Promise.all([setupNonce(),setupInfo()]).catch(()=>o.textContent='Setup session unavailable. Reload this page.');f.onsubmit=async e=>{e.preventDefault();try{if(!nonce)await setupNonce();o.textContent='Connecting...';const x=Object.fromEntries(new FormData(f));const r=await fetch('/configure',{method:'POST',headers:{'Content-Type':'application/json','X-Companion-Setup-Nonce':nonce},body:JSON.stringify(x)});o.textContent=r.ok?'Saved. Connecting to Wi-Fi...':'Invalid setup data.'}catch(_){o.textContent='Setup session unavailable. Reload this page.'}}</script>)HTML";
 constexpr char kWifiHtml[] = R"HTML(<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>Companion Wi-Fi</title><style>body{font-family:sans-serif;max-width:34rem;margin:2rem auto;padding:0 1rem}label{display:block;margin:.8rem 0}input{width:100%;padding:.6rem;box-sizing:border-box}button{padding:.7rem 1rem}</style><h1>Change Companion Wi-Fi</h1><p>Backend identity and device credential will be preserved.</p><form id=f><label>Wi-Fi SSID<input name=wifi_ssid required maxlength=32></label><label>Wi-Fi password<input name=wifi_password type=password maxlength=63></label><button>Save Wi-Fi and reboot</button></form><pre id=o></pre><script>let nonce='';async function setupNonce(){const r=await fetch('/nonce',{cache:'no-store'});if(!r.ok)throw new Error('nonce');nonce=(await r.text()).trim()}setupNonce().catch(()=>o.textContent='Setup session unavailable. Reload this page.');f.onsubmit=async e=>{e.preventDefault();try{if(!nonce)await setupNonce();o.textContent='Saving...';const x=Object.fromEntries(new FormData(f));const r=await fetch('/configure',{method:'POST',headers:{'Content-Type':'application/json','X-Companion-Setup-Nonce':nonce},body:JSON.stringify(x)});o.textContent=r.ok?'Saved. Companion will reboot.':'Invalid or expired setup session.'}catch(_){o.textContent='Setup session unavailable. Reload this page.'}}</script>)HTML";
 
 template <size_t N>
@@ -30,20 +30,6 @@ bool copy_json_string(const cJSON* root, const char* name, FixedSecret<N>& outpu
   output.value.fill('\0');
   std::memcpy(output.value.data(), value.data(), value.size());
   return true;
-}
-
-bool copy_claim_code(const cJSON* root, FixedSecret<17>& output) {
-  const cJSON* item = cJSON_GetObjectItemCaseSensitive(root, "claim_code");
-  if (!cJSON_IsString(item) || item->valuestring == nullptr) return false;
-  output.value.fill('\0');
-  size_t written = 0;
-  for (const char raw : std::string_view(item->valuestring)) {
-    if (raw == '-' || raw == ' ' || raw == '\t' || raw == '\n' || raw == '\r') continue;
-    if (written >= 10) return false;
-    const char upper = static_cast<char>(std::toupper(static_cast<unsigned char>(raw)));
-    output.value[written++] = upper;
-  }
-  return written == 10 && valid_human_claim_code(output.view());
 }
 
 bool copy_value(std::string_view value, char* destination, size_t capacity) {
@@ -61,9 +47,9 @@ bool copy_value(std::string_view value, FixedSecret<N>& destination) {
 bool validate_pending(const PendingConfig& pending) {
   return valid_wifi(pending.wifi_ssid.view(), pending.wifi_password.view()) &&
          valid_pending_claim(PendingClaimView{
-             pending.bootstrap_id.view(), pending.claim_code.view(),
-             pending.claim_authorization.view(), pending.idempotency_key.view(),
-             pending.server_url.view()});
+             pending.bootstrap_id.view(), pending.device_code.view(),
+             pending.user_code.view(), pending.claim_authorization.view(),
+             pending.idempotency_key.view(), pending.server_url.view()});
 }
 
 bool validate_wifi(const WifiConfig& wifi) {
@@ -299,7 +285,6 @@ esp_err_t SetupPortal::configure(httpd_req_t* request) {
     ok = copy_json_string(root, "wifi_ssid", candidate.wifi_ssid) &&
          copy_json_string(root, "wifi_password", candidate.wifi_password) &&
          copy_json_string(root, "server_url", candidate.server_url) &&
-         copy_claim_code(root, candidate.claim_code) &&
          validate_pending(candidate);
     if (ok) pending_ = candidate;
   }

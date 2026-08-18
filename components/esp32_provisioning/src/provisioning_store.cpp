@@ -16,7 +16,8 @@ constexpr char kWifiPass[] = "wifi_pass";
 constexpr char kServerUrl[] = "server_url";
 constexpr char kDeviceCred[] = "device_cred";
 constexpr char kBootstrap[] = "bootstrap";
-constexpr char kClaimCode[] = "claim_code";
+constexpr char kDeviceCode[] = "device_code";
+constexpr char kUserCode[] = "user_code";
 constexpr char kClaimAuth[] = "claim_auth";
 constexpr char kIdemKey[] = "idem_key";
 
@@ -77,9 +78,9 @@ PersistedState parse_state(const char* raw) {
 bool valid_pending_config(const PendingConfig& pending) {
   return valid_wifi(pending.wifi_ssid.view(), pending.wifi_password.view()) &&
          valid_pending_claim(PendingClaimView{
-             pending.bootstrap_id.view(), pending.claim_code.view(),
-             pending.claim_authorization.view(), pending.idempotency_key.view(),
-             pending.server_url.view()});
+             pending.bootstrap_id.view(), pending.device_code.view(),
+             pending.user_code.view(), pending.claim_authorization.view(),
+             pending.idempotency_key.view(), pending.server_url.view()});
 }
 
 bool valid_runtime(const RuntimeConfig& runtime) {
@@ -114,7 +115,8 @@ bool ProvisioningStore::load_pending(PendingConfig& out) const {
                   get_fixed(handle, kWifiPass, out.wifi_password) &&
                   get_fixed(handle, kServerUrl, out.server_url) &&
                   get_fixed(handle, kBootstrap, out.bootstrap_id) &&
-                  get_optional_fixed(handle, kClaimCode, out.claim_code) &&
+                  get_optional_fixed(handle, kDeviceCode, out.device_code) &&
+                  get_optional_fixed(handle, kUserCode, out.user_code) &&
                   get_optional_fixed(handle, kClaimAuth, out.claim_authorization) &&
                   get_fixed(handle, kIdemKey, out.idempotency_key);
   nvs_close(handle);
@@ -141,7 +143,8 @@ bool ProvisioningStore::save_pending(const PendingConfig& pending) const {
                   set_string(handle, kWifiPass, pending.wifi_password.view()) &&
                   set_string(handle, kServerUrl, pending.server_url.view()) &&
                   set_string(handle, kBootstrap, pending.bootstrap_id.view()) &&
-                  write_optional(handle, kClaimCode, pending.claim_code.view()) &&
+                  write_optional(handle, kDeviceCode, pending.device_code.view()) &&
+                  write_optional(handle, kUserCode, pending.user_code.view()) &&
                   write_optional(handle, kClaimAuth, pending.claim_authorization.view()) &&
                   set_string(handle, kIdemKey, pending.idempotency_key.view()) &&
                   erase_optional(handle, kDeviceCred) &&
@@ -171,7 +174,8 @@ bool ProvisioningStore::commit_runtime(const PendingConfig& pending,
                   set_string(handle, kWifiPass, runtime.wifi_password.view()) &&
                   set_string(handle, kServerUrl, runtime.server_url.view()) &&
                   set_string(handle, kDeviceCred, runtime.device_credential.view()) &&
-                  erase_optional(handle, kBootstrap) && erase_optional(handle, kClaimCode) &&
+                  erase_optional(handle, kBootstrap) && erase_optional(handle, kDeviceCode) &&
+                  erase_optional(handle, kUserCode) &&
                   erase_optional(handle, kClaimAuth) && erase_optional(handle, kIdemKey) &&
                   set_string(handle, kState, "validating") && nvs_commit(handle) == ESP_OK;
   nvs_close(handle);

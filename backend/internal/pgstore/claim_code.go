@@ -2,6 +2,8 @@ package pgstore
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"time"
 
 	"companion-server/internal/ownerauth"
@@ -21,12 +23,45 @@ func NewPgClaimCodeStore(s *Store) *PgClaimCodeStore {
 	}
 }
 
-// AllowAttempt implements rate limiting for claim code generation attempts.
+// AllowAttempt implements durable rate limiting for claim code attempts in PostgreSQL.
 func (p *PgClaimCodeStore) AllowAttempt(ctx context.Context, host string, limit int, window time.Duration) (bool, error) {
-	if p.fallback != nil {
-		return p.fallback.AllowAttempt(ctx, host, limit, window)
+	if p.store == nil || p.store.pool == nil {
+		if p.fallback != nil {
+			return p.fallback.AllowAttempt(ctx, host, limit, window)
+		}
+		return true, nil
 	}
-	return true, nil
+	rateKey := strings.TrimSpace(host)
+	if rateKey == "" {
+		rateKey = "unknown"
+	}
+	if len(rateKey) > 256 {
+		rateKey = rateKey[:256]
+	}
+	var count int
+	intervalStr := fmt.Sprintf("%d milliseconds", window.Milliseconds())
+	err := p.store.pool.QueryRow(ctx, `
+		INSERT INTO claim_rate_limits (rate_key, attempt_count, window_started_at)
+		VALUES ($1, 1, now())
+		ON CONFLICT (rate_key) DO UPDATE
+		SET attempt_count = CASE
+		        WHEN now() - claim_rate_limits.window_started_at >= $2::interval THEN 1
+		        ELSE claim_rate_limits.attempt_count + 1
+		    END,
+		    window_started_at = CASE
+		        WHEN now() - claim_rate_limits.window_started_at >= $2::interval THEN now()
+		        ELSE claim_rate_limits.window_started_at
+		    END
+		RETURNING attempt_count`,
+		rateKey, intervalStr,
+	).Scan(&count)
+	if err != nil {
+		if p.fallback != nil {
+			return p.fallback.AllowAttempt(ctx, host, limit, window)
+		}
+		return false, err
+	}
+	return count <= limit, nil
 }
 
 // GetRedemption retrieves a previously stored redemption record.

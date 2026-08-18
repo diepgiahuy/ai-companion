@@ -149,7 +149,7 @@ func TestPostgresVoiceMailCompleteVsRevokeSerializes(t *testing.T) {
 		t.Fatalf("rejected send emitted %d availability events", available)
 	}
 
-	cleanup, err := store.ClaimCleanup(ctx, now.Add(4*time.Second), 10)
+	cleanup, err := store.ClaimCleanup(ctx, now.Add(4*time.Second), 100)
 	if err != nil {
 		t.Fatal(err)
 	}

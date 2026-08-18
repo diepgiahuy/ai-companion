@@ -39,7 +39,8 @@ struct PendingConfig {
   FixedSecret<64> wifi_password;
   FixedSecret<513> server_url;
   FixedSecret<129> bootstrap_id;
-  FixedSecret<17> claim_code;
+  FixedSecret<129> device_code;
+  FixedSecret<33> user_code;
   FixedSecret<1025> claim_authorization;
   FixedSecret<129> idempotency_key;
 };
