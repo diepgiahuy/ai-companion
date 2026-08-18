@@ -48,7 +48,6 @@ public:
                            BackendEventScope scope = BackendEventScope::generation,
                            uint64_t session_epoch = 0, uint64_t generation = 0);
   bool inject_settings(const SettingsTwin& settings);
-  bool inject_config(const RuntimeConfigPatch& config);
   bool inject_voice_mail(const VoiceMailMetadata& item,
                          BackendEventType type = BackendEventType::voice_mail_available);
   uint32_t voice_mail_claims() const { return voice_mail_claims_; }
