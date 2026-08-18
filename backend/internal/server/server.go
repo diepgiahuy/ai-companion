@@ -1118,6 +1118,24 @@ func (s *Server) isDeviceOnline(deviceID string) bool {
 	}
 	return s.hub.get(deviceID) != nil
 }
+func (s *Server) DeviceOnline(deviceID string) bool { return s.isDeviceOnline(deviceID) }
+
+func (s *Server) UpdateDeviceSettings(ctx context.Context, userID, deviceID string, patch controlplane.RuntimeConfig) (controlplane.Twin, controlplane.SettingsStatus, error) {
+	if s == nil || s.controlPlane == nil {
+		return controlplane.Twin{}, controlplane.SettingsStatus{}, fmt.Errorf("settings control plane unavailable")
+	}
+	twin, err := s.controlPlane.SetDesired(ctx, userID, deviceID, patch)
+	if err != nil {
+		return controlplane.Twin{}, controlplane.SettingsStatus{}, err
+	}
+	twin = s.dispatchSettingsUpdate(ctx, userID, deviceID, twin)
+	status, err := s.controlPlane.SettingsStatus(ctx, userID, deviceID, s.isDeviceOnline(deviceID))
+	if err != nil {
+		return controlplane.Twin{}, controlplane.SettingsStatus{}, err
+	}
+	twin.Status = controlplane.TwinStatus(status.State)
+	return twin, status, nil
+}
 func (s *Server) dispatchSettingsUpdate(ctx context.Context, userID, deviceID string, twin controlplane.Twin) controlplane.Twin {
 	online := s.isDeviceOnline(deviceID)
 	if !online {
@@ -1246,20 +1264,21 @@ func (s *Server) handleTwinPatch(w http.ResponseWriter, r *http.Request) {
 	if user == "" {
 		user = "default"
 	}
-	var c controlplane.RuntimeConfig
-	if e := decodeStrictJSON(w, r, 32<<10, &c); e != nil {
-		http.Error(w, e.Error(), http.StatusBadRequest)
+	var patch controlplane.RuntimeConfig
+	if err := decodeStrictJSON(w, r, 32<<10, &patch); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	deviceID := r.PathValue("deviceID")
-	t, e := s.controlPlane.SetDesired(r.Context(), user, deviceID, c)
-	if e != nil {
-		http.Error(w, e.Error(), http.StatusBadRequest)
+	twin, status, err := s.UpdateDeviceSettings(r.Context(), user, r.PathValue("deviceID"), patch)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	t = s.dispatchSettingsUpdate(r.Context(), user, deviceID, t)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(t)
+	_ = json.NewEncoder(w).Encode(struct {
+		controlplane.Twin
+		SettingsStatus controlplane.SettingsStatus `json:"settings_status"`
+	}{Twin: twin, SettingsStatus: status})
 }
 
 func (s *Server) handleConfigSchema(w http.ResponseWriter, r *http.Request) {

@@ -721,9 +721,9 @@ async function renderView() {
       <div class="card-grid">
         <div class="block-card">
           <div class="block-title">📶 Hardware Connection</div>
-          <div class="block-metric" style="color:var(--accent-green)">ONLINE</div>
+          <div class="block-metric">${(data?.connection_status || 'unknown').toUpperCase()}</div>
           <div style="font-size:0.85rem;color:var(--text-primary);margin-top:0.4rem;font-weight:600">${data?.name || data?.device_id || 'companion-s3'}</div>
-          <div style="font-size:0.8rem;color:var(--text-muted)">Wi-Fi RSSI: ${data?.wifi_rssi_dbm || -58} dBm</div>
+          <div style="font-size:0.8rem;color:var(--text-muted)">Wi-Fi RSSI: ${data?.wifi_rssi_dbm == null ? 'not reported' : `${data.wifi_rssi_dbm} dBm`}</div>
         </div>
         <div class="block-card">
           <div class="block-title">🧠 Memory Budgets</div>
@@ -733,7 +733,7 @@ async function renderView() {
         <div class="block-card">
           <div class="block-title">🔄 Dynamic OTA Polling</div>
           <div class="block-metric">${data?.ota_poll_interval || '6h'} <span style="font-size:0.9rem;font-weight:400;color:var(--text-muted)">interval</span></div>
-          <div style="font-size:0.8rem;color:var(--text-muted);margin-top:0.4rem">Firmware: ${data?.firmware_version || 'v2.4.0'}</div>
+          <div style="font-size:0.8rem;color:var(--text-muted);margin-top:0.4rem">Firmware: ${data?.firmware_version || 'unknown'}</div>
         </div>
       </div>
 
@@ -758,7 +758,7 @@ async function renderView() {
           </div>
         </div>
         <div id="ota-status-banner" style="font-size:0.85rem;color:var(--text-muted);padding:0.6rem 0.8rem;background:#202020;border-radius:6px">
-          Status: Ready. Last verified signed release: <b>v2.4.0 (Stable)</b>
+          Settings: <b>${data?.settings_status?.state || 'unknown'}</b> • desired ${data?.desired_version ?? 0} • reported ${data?.reported_version ?? 0}
         </div>
       </div>
     `;

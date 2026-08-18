@@ -25,11 +25,15 @@ import (
 //go:embed dashboard.html
 var dashboardHTML string
 
+type DeviceSettingsUpdater func(context.Context, string, string, controlplane.RuntimeConfig) (controlplane.Twin, controlplane.SettingsStatus, error)
+
 type Dependencies struct {
-	Store         domain.ReadRepositories
-	ControlPlane  *controlplane.Service
-	Auth          *ownerauth.Service
-	RecordingsDir string
+	Store                domain.ReadRepositories
+	ControlPlane         *controlplane.Service
+	Auth                 *ownerauth.Service
+	RecordingsDir        string
+	DeviceOnline         func(string) bool
+	UpdateDeviceSettings DeviceSettingsUpdater
 }
 
 type Handler struct {
@@ -318,52 +322,50 @@ func (h *Handler) handleDevice(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	deviceID := strings.TrimSpace(r.URL.Query().Get("device_id"))
-	if deviceID == "" {
-		devices, err := h.deps.Store.ListUserDevices(r.Context(), userID)
-		if err == nil && len(devices) > 0 {
-			deviceID = devices[0].DeviceID
-		}
-	}
-	if deviceID == "" {
-		writeJSON(w, map[string]any{
-			"device_id":         "none",
-			"status":            "offline",
-			"wifi_rssi_dbm":     0,
-			"ota_poll_interval": "6h",
-			"firmware_version":  "unknown",
-			"sram_budget_kib":   160.5,
-			"psram_budget_kib":  128.0,
-		})
+	if h.deps.ControlPlane == nil {
+		http.Error(w, "settings control plane unavailable", http.StatusServiceUnavailable)
 		return
 	}
-
-	var twin controlplane.Twin
-	if h.deps.ControlPlane != nil {
-		t, err := h.deps.ControlPlane.Manifest(r.Context(), userID, deviceID)
-		if err == nil {
-			twin = t
+	deviceID := strings.TrimSpace(r.URL.Query().Get("device_id"))
+	if deviceID == "" {
+		devices, err := h.deps.Store.ListUserDevices(r.Context(), userID, 1)
+		if err != nil {
+			http.Error(w, "failed to load devices", http.StatusInternalServerError)
+			return
 		}
+		if len(devices) == 0 {
+			h.writeJSON(w, map[string]any{
+				"device_id": "", "connection_status": "offline",
+				"settings_status": controlplane.SettingsStatus{State: controlplane.SettingsUnknown},
+			})
+			return
+		}
+		deviceID = devices[0].DeviceID
 	}
-
-	pollInterval := "6h"
-	if twin.Desired.OTAPollIntervalSeconds != nil && *twin.Desired.OTAPollIntervalSeconds > 0 {
-		pollInterval = (time.Duration(*twin.Desired.OTAPollIntervalSeconds) * time.Second).String()
+	twin, err := h.deps.ControlPlane.Manifest(r.Context(), userID, deviceID)
+	if err != nil {
+		http.Error(w, "device not found", http.StatusNotFound)
+		return
 	}
-
-	firmware := "v2.4.0"
-	if twin.Reported.VoiceKey != "" {
-		firmware = twin.Reported.VoiceKey
+	online := h.deps.DeviceOnline != nil && h.deps.DeviceOnline(deviceID)
+	status, err := h.deps.ControlPlane.SettingsStatus(r.Context(), userID, deviceID, online)
+	if err != nil {
+		http.Error(w, "failed to load settings status", http.StatusInternalServerError)
+		return
 	}
-
-	writeJSON(w, map[string]any{
+	interval := ""
+	if twin.Desired.OTAPollIntervalSeconds != nil {
+		interval = (time.Duration(*twin.Desired.OTAPollIntervalSeconds) * time.Second).String()
+	}
+	h.writeJSON(w, map[string]any{
 		"device_id":         deviceID,
-		"status":            "online",
-		"wifi_rssi_dbm":     -58,
-		"ota_poll_interval": pollInterval,
-		"firmware_version":  firmware,
-		"sram_budget_kib":   160.5,
-		"psram_budget_kib":  128.0,
+		"connection_status": map[bool]string{true: "online", false: "offline"}[online],
+		"settings_status":   status,
+		"desired_version":   twin.DesiredVersion,
+		"reported_version":  twin.ReportedVersion,
+		"ota_poll_interval": interval,
+		"firmware_version":  "unknown",
+		"wifi_rssi_dbm":     nil,
 	})
 }
 
@@ -421,455 +423,48 @@ func (h *Handler) handleUpdateDeviceConfig(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	var req struct {
+	if h.deps.UpdateDeviceSettings == nil {
+		http.Error(w, "settings update unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	var body struct {
 		DeviceID        string `json:"device_id"`
 		OTAPollInterval string `json:"ota_poll_interval"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.DeviceID == "" {
-		http.Error(w, "device_id is required", http.StatusBadRequest)
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
-
-	writeJSON(w, map[string]any{
-		"ok":                true,
-		"device_id":         req.DeviceID,
-		"ota_poll_interval": req.OTAPollInterval,
-		"message":           "Device twin configuration updated",
-	})
-}
-
-func (h *Handler) handleCreateExpense(w http.ResponseWriter, r *http.Request) {
-	userID, ok := h.userID(r)
-	if !ok || userID == "" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		http.Error(w, "request must contain one JSON object", http.StatusBadRequest)
 		return
 	}
-	var req struct {
-		Amount      int64  `json:"amount_vnd"`
-		Category    string `json:"category"`
-		Description string `json:"description"`
-		OccurredAt  string `json:"occurred_at"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Amount <= 0 {
-		http.Error(w, "invalid expense payload", http.StatusBadRequest)
+	body.DeviceID = strings.TrimSpace(body.DeviceID)
+	if body.DeviceID == "" {
+		http.Error(w, "device_id required", http.StatusBadRequest)
 		return
 	}
-	occurred := time.Now().UTC()
-	if req.OccurredAt != "" {
-		if t, err := time.Parse(time.RFC3339, req.OccurredAt); err == nil {
-			occurred = t.UTC()
-		}
-	}
-	key := fmt.Sprintf("web-exp-%d", time.Now().UnixNano())
-	if err := h.deps.Store.CreateExpense(r.Context(), userID, key, req.Amount, req.Category, req.Description, occurred); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	interval, err := time.ParseDuration(strings.TrimSpace(body.OTAPollInterval))
+	if err != nil || interval <= 0 || interval%time.Second != 0 {
+		http.Error(w, "ota_poll_interval must be a whole-second duration", http.StatusBadRequest)
 		return
 	}
-	writeJSON(w, map[string]any{"ok": true, "saved": "expense"})
-}
-
-func (h *Handler) handleSetBudget(w http.ResponseWriter, r *http.Request) {
-	userID, ok := h.userID(r)
-	if !ok || userID == "" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	seconds64 := int64(interval / time.Second)
+	if seconds64 > int64(^uint(0)>>1) {
+		http.Error(w, "ota_poll_interval is out of range", http.StatusBadRequest)
 		return
 	}
-	var req struct {
-		Period   string `json:"period"`
-		LimitVND int64  `json:"limit_vnd"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Period == "" || req.LimitVND < 0 {
-		http.Error(w, "invalid budget payload", http.StatusBadRequest)
-		return
-	}
-	if err := h.deps.Store.SetBudget(r.Context(), userID, req.Period, req.LimitVND); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	writeJSON(w, map[string]any{"ok": true, "saved": "budget", "period": req.Period, "limit_vnd": req.LimitVND})
-}
-
-func (h *Handler) handleDeleteExpense(w http.ResponseWriter, r *http.Request) {
-	userID, ok := h.userID(r)
-	if !ok || userID == "" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	idStr := r.URL.Query().Get("id")
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil || id <= 0 {
-		http.Error(w, "valid id is required", http.StatusBadRequest)
-		return
-	}
-	if err := h.deps.Store.DeleteExpense(r.Context(), userID, id); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	writeJSON(w, map[string]any{"ok": true, "deleted": "expense", "id": id})
-}
-
-func ownerMutationRequest(r *http.Request, userID, operation, clientKey string, payload any) (idempotency.Request, error) {
-	key := strings.TrimSpace(clientKey)
-	if key == "" {
-		key = strings.TrimSpace(r.Header.Get("X-Idempotency-Key"))
-	}
-	if key == "" {
-		key = fmt.Sprintf("ownerweb-%s-%d", operation, time.Now().UnixNano())
-	}
-	b, err := json.Marshal(payload)
-	if err != nil {
-		return idempotency.Request{}, err
-	}
-	hash := sha256.Sum256(append([]byte(operation+":"), b...))
-	return idempotency.Request{
-		Actor:       userID,
-		Operation:   operation,
-		Key:         key,
-		RequestHash: hex.EncodeToString(hash[:]),
-	}, nil
-}
-
-func (h *Handler) handleGetSavingsGoal(w http.ResponseWriter, r *http.Request) {
-	userID, ok := h.userID(r)
-	if !ok || userID == "" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	ctx := r.Context()
-	period := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("period")))
-	if period == "" {
-		period = "monthly"
-	}
-	now := time.Now().UTC()
-	start, end := domain.CalculatePeriodBounds(period, now, time.UTC)
-	spent, _ := h.deps.Store.ExpenseTotal(ctx, userID, start, end)
-	bLimit, bSet, _ := h.deps.Store.BudgetLimit(ctx, userID, period)
-	var bPtr *int64
-	if bSet {
-		bPtr = &bLimit
-	}
-	goal, gSet, err := h.deps.Store.GetSavingsGoal(ctx, userID, period)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	var gPtr *domain.SavingsGoal
-	if gSet {
-		gPtr = &goal
-	}
-	progress := domain.CalculateSavingsProgress(gPtr, period, start, end, spent, bPtr)
-	writeJSON(w, map[string]any{
-		"period":   period,
-		"set":      gSet,
-		"goal":     gPtr,
-		"progress": progress,
-	})
-}
-
-func (h *Handler) handleSetSavingsGoal(w http.ResponseWriter, r *http.Request) {
-	userID, ok := h.userID(r)
-	if !ok || userID == "" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	var req struct {
-		Period         string `json:"period"`
-		TargetVND      int64  `json:"target_vnd"`
-		Description    string `json:"description"`
-		IdempotencyKey string `json:"idempotency_key"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
-		return
-	}
-	if err := domain.ValidateSavingsTarget(req.TargetVND); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	period := strings.ToLower(strings.TrimSpace(req.Period))
-	if period == "" {
-		period = "monthly"
-	}
-	mutator, ok := h.deps.Store.(interface {
-		SetSavingsGoalMutation(ctx context.Context, req idempotency.Request, userID, period string, targetVND int64, description string, effectiveFrom time.Time) error
-	})
-	if !ok {
-		http.Error(w, "durable store required", http.StatusInternalServerError)
-		return
-	}
-	mutationReq, err := ownerMutationRequest(r, userID, "saving.goal_set", req.IdempotencyKey, map[string]any{
-		"period":      period,
-		"target_vnd":  req.TargetVND,
-		"description": req.Description,
-	})
+	seconds := int(seconds64)
+	patch := controlplane.RuntimeConfig{OTAPollIntervalSeconds: &seconds}
+	twin, status, err := h.deps.UpdateDeviceSettings(r.Context(), userID, body.DeviceID, patch)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	effectiveFrom := time.Now().UTC()
-	if err := mutator.SetSavingsGoalMutation(r.Context(), mutationReq, userID, period, req.TargetVND, strings.TrimSpace(req.Description), effectiveFrom); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	writeJSON(w, map[string]any{"ok": true, "period": period, "target_vnd": req.TargetVND})
-}
-
-func (h *Handler) handleDeleteSavingsGoal(w http.ResponseWriter, r *http.Request) {
-	userID, ok := h.userID(r)
-	if !ok || userID == "" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	period := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("period")))
-	if period == "" {
-		period = "monthly"
-	}
-	key := strings.TrimSpace(r.URL.Query().Get("idempotency_key"))
-	mutator, ok := h.deps.Store.(interface {
-		DeleteSavingsGoalMutation(ctx context.Context, req idempotency.Request, userID, period string) error
-	})
-	if !ok {
-		http.Error(w, "durable store required", http.StatusInternalServerError)
-		return
-	}
-	mutationReq, err := ownerMutationRequest(r, userID, "saving.goal_delete", key, map[string]any{"period": period})
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	if err := mutator.DeleteSavingsGoalMutation(r.Context(), mutationReq, userID, period); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	writeJSON(w, map[string]any{"ok": true, "deleted": "savings_goal", "period": period})
-}
-
-func (h *Handler) handleCreateNote(w http.ResponseWriter, r *http.Request) {
-	userID, ok := h.userID(r)
-	if !ok || userID == "" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	var req struct {
-		Content string `json:"content"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Content) == "" {
-		http.Error(w, "content is required", http.StatusBadRequest)
-		return
-	}
-	key := fmt.Sprintf("web-note-%d", time.Now().UnixNano())
-	if err := h.deps.Store.CreateNote(r.Context(), userID, key, strings.TrimSpace(req.Content)); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	writeJSON(w, map[string]any{"ok": true, "saved": "note"})
-}
-
-func (h *Handler) handleDeleteNote(w http.ResponseWriter, r *http.Request) {
-	userID, ok := h.userID(r)
-	if !ok || userID == "" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	idStr := r.URL.Query().Get("id")
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil || id <= 0 {
-		http.Error(w, "valid id is required", http.StatusBadRequest)
-		return
-	}
-	if err := h.deps.Store.DeleteNote(r.Context(), userID, id); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	writeJSON(w, map[string]any{"ok": true, "deleted": "note", "id": id})
-}
-
-func (h *Handler) handleDeleteVoiceMemo(w http.ResponseWriter, r *http.Request) {
-	userID, ok := h.userID(r)
-	if !ok || userID == "" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	idStr := r.URL.Query().Get("id")
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil || id <= 0 {
-		http.Error(w, "valid id is required", http.StatusBadRequest)
-		return
-	}
-
-	memos, _ := h.deps.Store.QueryVoiceMemos(r.Context(), userID, domain.VoiceMemoQuery{Limit: 100})
-	var memoPath string
-	for _, m := range memos {
-		if m.ID == id {
-			memoPath = m.Path
-			break
-		}
-	}
-
-	if err := h.deps.Store.DeleteVoiceMemo(r.Context(), userID, id); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	if memoPath != "" && h.deps.RecordingsDir != "" {
-		cleanRecordings := filepath.Clean(h.deps.RecordingsDir)
-		cleanPath := filepath.Clean(memoPath)
-		if strings.HasPrefix(cleanPath, cleanRecordings+string(filepath.Separator)) || cleanPath == cleanRecordings {
-			_ = os.Remove(cleanPath)
-		}
-	}
-
-	writeJSON(w, map[string]any{"ok": true, "deleted": "voice_memo", "id": id})
-}
-
-func (h *Handler) handleCreateJournal(w http.ResponseWriter, r *http.Request) {
-	userID, ok := h.userID(r)
-	if !ok || userID == "" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	var req struct {
-		Content string `json:"content"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Content) == "" {
-		http.Error(w, "content is required", http.StatusBadRequest)
-		return
-	}
-	key := fmt.Sprintf("web-journal-%d", time.Now().UnixNano())
-	if err := h.deps.Store.CreateJournal(r.Context(), userID, key, strings.TrimSpace(req.Content), time.Now().UTC()); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	writeJSON(w, map[string]any{"ok": true, "saved": "journal"})
-}
-
-func (h *Handler) handleDeleteJournal(w http.ResponseWriter, r *http.Request) {
-	userID, ok := h.userID(r)
-	if !ok || userID == "" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	idStr := r.URL.Query().Get("id")
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil || id <= 0 {
-		http.Error(w, "valid id is required", http.StatusBadRequest)
-		return
-	}
-	if err := h.deps.Store.DeleteJournal(r.Context(), userID, id); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	writeJSON(w, map[string]any{"ok": true, "deleted": "journal", "id": id})
-}
-
-func (h *Handler) handleCreateReminder(w http.ResponseWriter, r *http.Request) {
-	userID, ok := h.userID(r)
-	if !ok || userID == "" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	var req struct {
-		Kind           string `json:"kind"`
-		Title          string `json:"title"`
-		FireAt         string `json:"fire_at"`
-		DelayMinutes   int    `json:"delay_minutes"`
-		DelaySeconds   int    `json:"delay_seconds"`
-		IdempotencyKey string `json:"idempotency_key"`
-		DeviceID       string `json:"device_id"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Title) == "" {
-		http.Error(w, "title is required", http.StatusBadRequest)
-		return
-	}
-	kind := strings.TrimSpace(req.Kind)
-	fireAt := time.Now().UTC()
-	if req.DelaySeconds > 0 {
-		fireAt = fireAt.Add(time.Duration(req.DelaySeconds) * time.Second)
-	} else if req.DelayMinutes > 0 {
-		fireAt = fireAt.Add(time.Duration(req.DelayMinutes) * time.Minute)
-	} else if req.FireAt != "" {
-		if t, err := time.Parse(time.RFC3339, req.FireAt); err == nil {
-			fireAt = t.UTC()
-		}
-	} else {
-		fireAt = fireAt.Add(10 * time.Minute)
-	}
-	key := req.IdempotencyKey
-	if key == "" {
-		key = fmt.Sprintf("web-rem-%d", time.Now().UnixNano())
-	}
-	if kind == "timer" || req.DelaySeconds > 0 || req.DelayMinutes > 0 {
-		if err := h.deps.Store.CreateTimerForDevice(r.Context(), userID, key, req.DeviceID, strings.TrimSpace(req.Title), fireAt); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		writeJSON(w, map[string]any{"ok": true, "kind": "timer", "fire_at": fireAt.Format(time.RFC3339)})
-		return
-	}
-	if err := h.deps.Store.CreateReminderForDevice(r.Context(), userID, key, req.DeviceID, strings.TrimSpace(req.Title), fireAt); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	writeJSON(w, map[string]any{"ok": true, "kind": "reminder", "fire_at": fireAt.Format(time.RFC3339)})
-}
-
-func (h *Handler) handleDeleteReminder(w http.ResponseWriter, r *http.Request) {
-	userID, ok := h.userID(r)
-	if !ok || userID == "" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	idStr := r.URL.Query().Get("id")
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil || id <= 0 {
-		http.Error(w, "valid id is required", http.StatusBadRequest)
-		return
-	}
-	if err := h.deps.Store.DeleteScheduledItem(r.Context(), userID, id); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	writeJSON(w, map[string]any{"ok": true, "deleted": "reminder", "id": id})
-}
-
-func (h *Handler) handlePauseTimer(w http.ResponseWriter, r *http.Request) {
-	userID, ok := h.userID(r)
-	if !ok || userID == "" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	var req struct {
-		ID int64 `json:"id"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ID <= 0 {
-		http.Error(w, "valid id is required", http.StatusBadRequest)
-		return
-	}
-	if err := h.deps.Store.PauseTimer(r.Context(), userID, req.ID, time.Now().UTC()); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	writeJSON(w, map[string]any{"ok": true, "paused": true, "id": req.ID})
-}
-
-func (h *Handler) handleResumeTimer(w http.ResponseWriter, r *http.Request) {
-	userID, ok := h.userID(r)
-	if !ok || userID == "" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	var req struct {
-		ID int64 `json:"id"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ID <= 0 {
-		http.Error(w, "valid id is required", http.StatusBadRequest)
-		return
-	}
-	if err := h.deps.Store.ResumeTimer(r.Context(), userID, req.ID, time.Now().UTC()); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	writeJSON(w, map[string]any{"ok": true, "resumed": true, "id": req.ID})
+	h.writeJSON(w, map[string]any{"ok": true, "twin": twin, "settings_status": status})
 }
 
 func (h *Handler) handleGetPrivacy(w http.ResponseWriter, r *http.Request) {
