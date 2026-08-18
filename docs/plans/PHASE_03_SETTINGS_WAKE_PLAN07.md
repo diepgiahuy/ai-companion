@@ -1,55 +1,56 @@
-# Phase 3: Settings & Wake Configuration Rebase (PLAN 07)
+# Phase 03 — Settings Twin Cutover (PLAN 07A)
 
-**Status:** COMPLETE  
-**Primary Owners:** Issue `#197` (PLAN 07A), Issue `#198` (PLAN 07B)  
-**Core Components:** [`backend/internal/controlplane/`](file:///Users/huydiepgia/Documents/GitHub/iot-cp-sw2.2/backend/internal/controlplane), [`backend/internal/pgstore/`](file:///Users/huydiepgia/Documents/GitHub/iot-cp-sw2.2/backend/internal/pgstore), [`components/companion_app/`](file:///Users/huydiepgia/Documents/GitHub/iot-cp-sw2.2/components/companion_app)
+**Status:** IN REVIEW — software settings cutover implemented; exact-head acceptance pending  
+**Primary owner:** Issue `#197`
 
----
+## Goal
 
-## 1. Goal
+Establish one authoritative desired/reported settings path on the selected Typed Companion Capability RPC boundary (`device.settings_v1`) and remove the legacy settings transport.
 
-Rebase device settings desired/reported twin and wake configuration onto the canonical `capability.*` RPC plane, completely deleting legacy `config.update` and `config.report` transports.
+## Verified implementation scope
 
----
+- PostgreSQL is authoritative for desired/reported settings state.
+- Desired revisions are monotonic and owner/device scoped.
+- Requested state is distinct from applied/rejected device outcome.
+- Applied/rejected metadata is durable.
+- Device delivery uses `capability.call` / `capability.result` only.
+- Legacy `config.update` / `config.report` wire types and handlers are removed from active product source.
+- Settings reconciliation is session-scoped and reasserts each non-zero desired revision on a newly authenticated session. A previous durable report is not treated as proof that a restarted runtime still holds the revision.
+- Firmware and Tier-1 software-device acknowledge a new settings revision only after `CompanionApp` accepts it.
+- Owner Hub backend projection uses owned device IDs and authoritative settings status instead of fabricated online/RSSI/firmware telemetry.
 
-## 2. Invariants & Architecture Boundaries
+## Evidence boundary
 
-1. **Storage Authority:** PostgreSQL is the sole durable truth for desired and reported twin state.
-2. **Version Monotonicity:** Monotonic integer versions; stale or out-of-order patches are rejected.
-3. **No Parallel Transports:** Legacy `config.update` / `config.report` wire types are deleted, leaving only `capability.call` / `capability.advertise`.
-4. **Wake Configuration:** Expose only wake models physically packaged in ESP-SR inside firmware.
-5. **Two-Stage Dependency Rule:**
-   * Stabilize Phase 2 (06A–06E) -> execute **#228 Pre-Gate**.
-   * Execute **PLAN 07A (#197)**.
-   * Execute **Final #228 A4/A8 Review** and close `#228`.
-   * Execute **PLAN 07B (#198)**.
+The software Tier-1 scenario proves settings delivery, apply acknowledgement, reconnect behavior and protocol rejection. It does **not** prove physical acoustic quality, wake-word effectiveness, physical HIL, OTA promotion, or provider quality.
 
----
+## PLAN 07B / #198 is not complete in this PR
 
-## 3. Slice Breakdown & Live Status
+The branch carries the canonical `wake_model` settings field as groundwork, but #198 requires more than transport plumbing. Before #198 can close it still needs:
 
-* [x] **07A (#197) Desired/Reported Settings Twin:**
-  * Rebase desired/reported device state on PostgreSQL store.
-  * Wire settings dispatch over `capability.call`.
-  * Add reboot/reconnect reconciliation.
-  * Delete `config.update` and `config.report`.
-* [x] **Final #228 A4/A8 Closure:**
-  * Confirm `capability.*` is the sole device capability path (A4 PASS).
-  * Confirm all legacy settings code is deleted (A8 PASS).
-  * Close Issue `#228`.
-* [x] **07B (#198) Wake Model Configuration:**
-  * Discover supported wake models from ESP-SR artifact.
-  * Route wake configuration through canonical settings twin.
-  * Apply dynamically in `AudioEngine` with fallback.
+- discovery/exposure of only wake modes/models actually packaged in the exact firmware artifact;
+- deterministic wake-disabled -> PTT fallback;
+- safe ESP-SR model/threshold reconfiguration inside the selected Audio owner;
+- previous-good or disabled fallback when model initialization fails;
+- truthful applied/rejected reporting for the **actual active** wake configuration;
+- deterministic speaking/listening/reconnect/reboot behavior;
+- exact resource and model provenance evidence;
+- physical acoustic promotion only through #17.
 
----
+Do not cite the presence of `wake_model` in the settings schema or a successful capability acknowledgement as proof that the active ESP-SR WakeNet model changed.
 
-## 4. Verification Oracle
+## #228 status
 
-```bash
-# PostgreSQL twin integration:
-go test -tags "adk,mcp,nolibopusfile" ./backend/internal/pgstore/... ./backend/internal/controlplane/...
+This PR can satisfy the settings-related portion of #228 A4/A8 by deleting the parallel settings transport, but #228 remains open until its complete A1–A8 final review passes. This plan must not close #228 by assertion.
 
-# Single path check:
-python3 scripts/check_single_path.py
-```
+## Remaining acceptance before #197 merge
+
+1. Fresh #197 semantic review against exact source.
+2. Exact-head evidence/single-path gate.
+3. Host component tests.
+4. Go backend quality.
+5. ESP32-S3 firmware compile.
+6. PostgreSQL integration/recovery.
+7. Tier-1 software-device orchestration using the canonical `settings_update_apply` scenario.
+8. No temporary mutation workflow or legacy settings compatibility path in the final tree.
+
+#197 may close only when those exact-head checks and the fresh semantic review pass. #198 remains open for PLAN 07B.
