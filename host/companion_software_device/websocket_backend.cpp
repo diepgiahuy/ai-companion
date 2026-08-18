@@ -1356,8 +1356,8 @@ void WebSocketVoiceBackend::handle_text(uint64_t generation, const std::string& 
       const std::optional<uint64_t> result_generation =
           has_generation ? std::optional<uint64_t>(incoming_generation) : std::nullopt;
       const bool sent = send_text(encode_control(
-          static_cast<int>(protocol::ControlType::capability_result), result.dump(), {},
-          correlation_id, true, result_generation));
+          static_cast<int>(protocol::ControlType::capability_result), result.dump(),
+          incoming_turn, correlation_id, true, result_generation));
       if (sent) {
         std::lock_guard lock(state_mutex_);
         ++stats_.capability_results;
