@@ -25,11 +25,15 @@ import (
 //go:embed dashboard.html
 var dashboardHTML string
 
+type DeviceSettingsUpdater func(context.Context, string, string, controlplane.RuntimeConfig) (controlplane.Twin, controlplane.SettingsStatus, error)
+
 type Dependencies struct {
-	Store         domain.ReadRepositories
-	ControlPlane  *controlplane.Service
-	Auth          *ownerauth.Service
-	RecordingsDir string
+	Store                domain.ReadRepositories
+	ControlPlane         *controlplane.Service
+	Auth                 *ownerauth.Service
+	RecordingsDir        string
+	DeviceOnline         func(string) bool
+	UpdateDeviceSettings DeviceSettingsUpdater
 }
 
 type Handler struct {
@@ -318,52 +322,62 @@ func (h *Handler) handleDevice(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	deviceID := strings.TrimSpace(r.URL.Query().Get("device_id"))
-	if deviceID == "" {
-		devices, err := h.deps.Store.ListUserDevices(r.Context(), userID)
-		if err == nil && len(devices) > 0 {
-			deviceID = devices[0].DeviceID
+	if h.deps.ControlPlane == nil {
+		http.Error(w, "settings control plane unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	devices, err := h.deps.Store.ListUserDevices(r.Context(), userID)
+	if err != nil {
+		http.Error(w, "failed to load devices", http.StatusInternalServerError)
+		return
+	}
+	requestedID := strings.TrimSpace(r.URL.Query().Get("device_id"))
+	deviceID := ""
+	if requestedID == "" && len(devices) > 0 {
+		deviceID = devices[0].DeviceID
+	} else {
+		for _, device := range devices {
+			if device.DeviceID == requestedID {
+				deviceID = requestedID
+				break
+			}
 		}
 	}
 	if deviceID == "" {
+		if requestedID != "" {
+			http.Error(w, "device not found", http.StatusNotFound)
+			return
+		}
 		writeJSON(w, map[string]any{
-			"device_id":         "none",
-			"status":            "offline",
-			"wifi_rssi_dbm":     0,
-			"ota_poll_interval": "6h",
-			"firmware_version":  "unknown",
-			"sram_budget_kib":   160.5,
-			"psram_budget_kib":  128.0,
+			"device_id": "", "connection_status": "offline",
+			"settings_status": controlplane.SettingsStatus{State: controlplane.SettingsUnknown},
 		})
 		return
 	}
-
-	var twin controlplane.Twin
-	if h.deps.ControlPlane != nil {
-		t, err := h.deps.ControlPlane.Manifest(r.Context(), userID, deviceID)
-		if err == nil {
-			twin = t
-		}
+	twin, err := h.deps.ControlPlane.Manifest(r.Context(), userID, deviceID)
+	if err != nil {
+		http.Error(w, "failed to load device settings", http.StatusInternalServerError)
+		return
 	}
-
-	pollInterval := "6h"
-	if twin.Desired.OTAPollIntervalSeconds != nil && *twin.Desired.OTAPollIntervalSeconds > 0 {
-		pollInterval = (time.Duration(*twin.Desired.OTAPollIntervalSeconds) * time.Second).String()
+	online := h.deps.DeviceOnline != nil && h.deps.DeviceOnline(deviceID)
+	status, err := h.deps.ControlPlane.SettingsStatus(r.Context(), userID, deviceID, online)
+	if err != nil {
+		http.Error(w, "failed to load settings status", http.StatusInternalServerError)
+		return
 	}
-
-	firmware := "v2.4.0"
-	if twin.Reported.VoiceKey != "" {
-		firmware = twin.Reported.VoiceKey
+	interval := ""
+	if twin.Desired.OTAPollIntervalSeconds != nil {
+		interval = (time.Duration(*twin.Desired.OTAPollIntervalSeconds) * time.Second).String()
 	}
-
 	writeJSON(w, map[string]any{
 		"device_id":         deviceID,
-		"status":            "online",
-		"wifi_rssi_dbm":     -58,
-		"ota_poll_interval": pollInterval,
-		"firmware_version":  firmware,
-		"sram_budget_kib":   160.5,
-		"psram_budget_kib":  128.0,
+		"connection_status": map[bool]string{true: "online", false: "offline"}[online],
+		"settings_status":   status,
+		"desired_version":   twin.DesiredVersion,
+		"reported_version":  twin.ReportedVersion,
+		"ota_poll_interval": interval,
+		"firmware_version":  "unknown",
+		"wifi_rssi_dbm":     nil,
 	})
 }
 
@@ -421,21 +435,64 @@ func (h *Handler) handleUpdateDeviceConfig(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	var req struct {
+	if h.deps.UpdateDeviceSettings == nil {
+		http.Error(w, "settings update unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	var body struct {
 		DeviceID        string `json:"device_id"`
 		OTAPollInterval string `json:"ota_poll_interval"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.DeviceID == "" {
-		http.Error(w, "device_id is required", http.StatusBadRequest)
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
-
-	writeJSON(w, map[string]any{
-		"ok":                true,
-		"device_id":         req.DeviceID,
-		"ota_poll_interval": req.OTAPollInterval,
-		"message":           "Device twin configuration updated",
-	})
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		http.Error(w, "request must contain one JSON object", http.StatusBadRequest)
+		return
+	}
+	body.DeviceID = strings.TrimSpace(body.DeviceID)
+	if body.DeviceID == "" {
+		http.Error(w, "device_id required", http.StatusBadRequest)
+		return
+	}
+	devices, err := h.deps.Store.ListUserDevices(r.Context(), userID)
+	if err != nil {
+		http.Error(w, "failed to verify device ownership", http.StatusInternalServerError)
+		return
+	}
+	owned := false
+	for _, device := range devices {
+		if device.DeviceID == body.DeviceID {
+			owned = true
+			break
+		}
+	}
+	if !owned {
+		http.Error(w, "device not found", http.StatusNotFound)
+		return
+	}
+	interval, err := time.ParseDuration(strings.TrimSpace(body.OTAPollInterval))
+	if err != nil || interval <= 0 || interval%time.Second != 0 {
+		http.Error(w, "ota_poll_interval must be a whole-second duration", http.StatusBadRequest)
+		return
+	}
+	seconds64 := int64(interval / time.Second)
+	if seconds64 > int64(^uint(0)>>1) {
+		http.Error(w, "ota_poll_interval is out of range", http.StatusBadRequest)
+		return
+	}
+	seconds := int(seconds64)
+	patch := controlplane.RuntimeConfig{OTAPollIntervalSeconds: &seconds}
+	twin, status, err := h.deps.UpdateDeviceSettings(r.Context(), userID, body.DeviceID, patch)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "twin": twin, "settings_status": status})
 }
 
 func (h *Handler) handleCreateExpense(w http.ResponseWriter, r *http.Request) {
