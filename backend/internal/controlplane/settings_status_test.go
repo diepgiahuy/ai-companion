@@ -31,3 +31,21 @@ func TestDeriveSettingsState(t *testing.T) {
 		})
 	}
 }
+
+func TestDeviceReportedConfigExcludesBackendAndPendingWakeFields(t *testing.T) {
+	threshold := 700
+	desired := RuntimeConfig{
+		VADThreshold: &threshold,
+		Locale:       "vi-VN",
+		Timezone:     "Asia/Ho_Chi_Minh",
+		VoiceKey:     "voice-a",
+		WakeModel:    "pending-plan07b-model",
+	}
+	reported := DeviceReportedConfig(desired)
+	if reported.VADThreshold == nil || *reported.VADThreshold != threshold {
+		t.Fatalf("device-owned threshold lost: %+v", reported)
+	}
+	if reported.Locale != "" || reported.Timezone != "" || reported.VoiceKey != "" || reported.WakeModel != "" {
+		t.Fatalf("non-device-applied fields leaked into reported config: %+v", reported)
+	}
+}
