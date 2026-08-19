@@ -83,9 +83,9 @@ func (s *Segmenter) findBoundary(text string) int {
 	runes := 0
 	for i, r := range text {
 		runes++
-		strong := strings.ContainsRune(".!?。！？\n", r)
-		medium := strings.ContainsRune(";；:：", r)
-		comma := strings.ContainsRune(",，", r)
+		strong := isStrongPunctuation(r)
+		medium := isMediumPunctuation(r)
+		comma := isCommaPunctuation(r)
 		min := s.minRunes
 		if s.first {
 			min = s.minFirstRunes
@@ -99,9 +99,36 @@ func (s *Segmenter) findBoundary(text string) int {
 		if s.first && comma && runes >= s.minFirstRunes {
 			return i + utf8.RuneLen(r)
 		}
-		if runes >= s.maxRunes {
+		if runes >= s.maxRunes && (r == ' ' || strong || medium || comma) {
 			return i + utf8.RuneLen(r)
 		}
 	}
 	return 0
+}
+
+func isStrongPunctuation(r rune) bool {
+	switch r {
+	case '.', '!', '?', '。', '！', '？', '\n':
+		return true
+	default:
+		return false
+	}
+}
+
+func isMediumPunctuation(r rune) bool {
+	switch r {
+	case ';', '；', ':', '：':
+		return true
+	default:
+		return false
+	}
+}
+
+func isCommaPunctuation(r rune) bool {
+	switch r {
+	case ',', '，':
+		return true
+	default:
+		return false
+	}
 }

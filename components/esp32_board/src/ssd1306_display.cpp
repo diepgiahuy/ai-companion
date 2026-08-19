@@ -115,15 +115,10 @@ bool Ssd1306Display::command(std::span<const uint8_t> bytes) {
 bool Ssd1306Display::flush() {
   constexpr std::array<uint8_t, 6> window{0x21, 0, 127, 0x22, 0, 3};
   if (!command(window)) return false;
-  std::array<uint8_t, 17> packet{};
+  std::array<uint8_t, 513> packet{};
   packet[0] = 0x40;
-  for (size_t offset = 0; offset < pixels_.size(); offset += 16) {
-    std::copy_n(pixels_.data() + offset, 16, packet.data() + 1);
-    if (i2c_master_transmit(device_, packet.data(), packet.size(), 100) != ESP_OK) {
-      return false;
-    }
-  }
-  return true;
+  std::copy(pixels_.begin(), pixels_.end(), packet.begin() + 1);
+  return i2c_master_transmit(device_, packet.data(), packet.size(), 100) == ESP_OK;
 }
 
 void Ssd1306Display::clear() { pixels_.fill(0); }

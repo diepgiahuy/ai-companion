@@ -8,6 +8,7 @@ import "strings"
 // to equal a suffix emitted earlier. A later non-partial response may contain
 // the complete text, so only its not-yet-emitted suffix is forwarded.
 type textDeltaTracker struct {
+	builder strings.Builder
 	emitted string
 }
 
@@ -16,18 +17,22 @@ func (t *textDeltaTracker) Delta(candidate string, partial bool) string {
 		return ""
 	}
 	if partial {
-		t.emitted += candidate
+		t.builder.WriteString(candidate)
+		t.emitted = ""
 		return candidate
 	}
-	if t.emitted == "" {
+	if t.builder.Len() == 0 {
+		t.builder.WriteString(candidate)
 		t.emitted = candidate
 		return candidate
 	}
-	if candidate == t.emitted || strings.HasPrefix(t.emitted, candidate) {
+	current := t.current()
+	if candidate == current || strings.HasPrefix(current, candidate) {
 		return ""
 	}
-	if strings.HasPrefix(candidate, t.emitted) {
-		delta := candidate[len(t.emitted):]
+	if strings.HasPrefix(candidate, current) {
+		delta := candidate[len(current):]
+		t.builder.WriteString(delta)
 		t.emitted = candidate
 		return delta
 	}
@@ -37,4 +42,11 @@ func (t *textDeltaTracker) Delta(candidate string, partial bool) string {
 	// snapshot, suppress it rather than speaking duplicate/contradictory text.
 	// Provider-parity tests in CP-SW4 will surface such mismatches explicitly.
 	return ""
+}
+
+func (t *textDeltaTracker) current() string {
+	if t.emitted == "" && t.builder.Len() > 0 {
+		t.emitted = t.builder.String()
+	}
+	return t.emitted
 }
