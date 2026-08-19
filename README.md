@@ -72,12 +72,13 @@ The product is intentionally a **modular monolith + firmware**, not a microservi
 
 ### Provisioning and owner recovery
 
-- An unprovisioned Companion uses the local WPA2 setup portal. The device generates its bootstrap reference and idempotency key; the human supplies only normal Wi-Fi/backend settings plus one short claim code.
-- The owner claim page uses the existing OIDC/PKCE session and CSRF boundary. A human claim code is short-lived, bounded to the exact `(bootstrap_id, device_id)` intent, and is never a device credential.
-- Firmware redeems that code through the canonical short-lived claim-authorization boundary and obtains the long-lived per-device credential only through `/v1/owner/device-claims`. The human-facing browser pages never render that long-lived credential.
-- Code redemption is retry-safe for response loss/concurrent retry; the human code itself is not promoted into a long-lived bearer secret.
-- Local factory reset does not transfer backend ownership. The same authenticated owner may atomically rotate the lost/revoked device credential; a different owner remains a deterministic conflict.
-- These are software/security-contract facts. Physical captive-portal usability, reset/reboot/radio recovery and end-to-end consumer timing remain separate HIL evidence.
+- An unprovisioned Companion uses the local WPA2 setup portal to configure Wi-Fi and the backend URL.
+- Upon Wi-Fi connection, the device automatically creates a device claim session (`POST /v1/device-claim-sessions`), receives a short user verification code, and displays the verification QR code URL (`/v1/owner/device-claim?s=...&user_code=...`) along with the code (`CODE AB12-CD`) on the OLED display.
+- The owner scans the QR code or opens the verification link, authenticates via OIDC, and confirms device pairing with zero manual typing required.
+- The device polls (`POST /v1/device-claim-sessions/token`) until approved, receives a short-lived `claim_authorization` token, and completes the credential issuance transaction at `/v1/owner/device-claims` to obtain its long-lived runtime credential.
+- Device secrets (`device_code`, `user_code`) in firmware NVS are securely erased upon successful credential commit. The browser never receives or stores the long-lived device credential, and PostgreSQL never stores the human code in plaintext.
+- Local factory reset does not transfer backend ownership. The same authenticated owner may atomically rotate the lost/revoked device credential; claiming by a different owner remains a deterministic conflict.
+- These are software/security-contract facts. Physical captive-portal usability, QR optical scanning at distance, reset/reboot/radio recovery, and end-to-end consumer timing remain separate HIL evidence.
 
 ### Voice mail
 
