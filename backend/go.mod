@@ -11,7 +11,7 @@ require (
 	github.com/riverqueue/river/riverdriver/riverpgxv5 v0.43.0
 	github.com/riverqueue/river/rivertype v0.43.0
 	google.golang.org/adk/v2 v2.2.0
-	google.golang.org/genai v1.67.0
+	google.golang.org/genai v1.68.0
 	gopkg.in/hraban/opus.v2 v2.0.0-20230925203106-0188a62cb302
 	modernc.org/sqlite v1.56.0
 )
