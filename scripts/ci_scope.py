@@ -102,8 +102,8 @@ def classify(event: str, paths: Iterable[str] = (), *, unknown_changes: bool = F
         # The Tier-1 logical device directly compiles CompanionApp. App/API
         # changes therefore need this cheap compile oracle on the PR itself even
         # when full PostgreSQL/backend orchestration is intentionally deferred to
-        # promotion. This closes the #233 blind spot without making every
-        # firmware PR run the full Tier-1 scenario suite.
+        # promotion. Provisioning changes additionally require the real firmware
+        # compile below because they execute before CompanionApp starts.
         if _starts(path, "components/companion_app/", "host/companion_software_device/"):
             software_device_compile = True
 
@@ -135,6 +135,7 @@ def classify(event: str, paths: Iterable[str] = (), *, unknown_changes: bool = F
                 "backend/internal/server/",
                 "components/companion_app/",
                 "components/esp32_network/",
+                "components/esp32_provisioning/",
                 "testdata/protocol/",
                 "main/",
             )
@@ -155,6 +156,7 @@ def classify(event: str, paths: Iterable[str] = (), *, unknown_changes: bool = F
             path,
             "components/companion_app/",
             "components/esp32_network/",
+            "components/esp32_provisioning/",
             "host/companion_software_device/",
             "main/",
         ):

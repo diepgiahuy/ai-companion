@@ -69,22 +69,33 @@ func (p *PgClaimSessionStore) PollSession(
 	return p.store.PollClaimSession(ctx, deviceCodeHash, minInterval, now, mintAuthFn)
 }
 
+func (p *PgClaimSessionStore) AuthorizeClaim(ctx context.Context, rawAuthorization, bootstrapID, deviceID string, now time.Time) (string, error) {
+	if p.store == nil || p.store.pool == nil {
+		return "", fmt.Errorf("postgres store not available")
+	}
+	return p.store.AuthorizeClaimSession(ctx, rawAuthorization, bootstrapID, deviceID, now)
+}
+
 func (s *Store) CreateClaimSession(ctx context.Context, session ownerauth.ClaimSessionRecord) error {
 	session.SessionID = strings.TrimSpace(session.SessionID)
 	session.DeviceID = strings.TrimSpace(session.DeviceID)
 	session.BootstrapID = strings.TrimSpace(session.BootstrapID)
 	session.DeviceCodeHash = strings.TrimSpace(session.DeviceCodeHash)
 	session.UserCodeHash = strings.TrimSpace(session.UserCodeHash)
-	session.UserCodePlain = strings.TrimSpace(session.UserCodePlain)
 
 	if session.SessionID == "" || session.DeviceID == "" || session.BootstrapID == "" ||
-		len(session.DeviceCodeHash) != 64 || len(session.UserCodeHash) != 64 || session.UserCodePlain == "" {
+		len(session.DeviceCodeHash) != 64 || len(session.UserCodeHash) != 64 {
 		return errors.New("invalid claim session record")
 	}
 	if session.Status == "" {
 		session.Status = ownerauth.ClaimSessionPending
 	}
 
+	// The first merged migration included a legacy user_code_plain NOT NULL column.
+	// Never place the human verification secret in it. Store only a non-secret
+	// verifier derived from the SHA-256 digest until a later schema cleanup drops
+	// the compatibility column.
+	userCodeVerifier := session.UserCodeHash[:32]
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO device_claim_sessions (
 			session_id, device_id, bootstrap_id, device_code_hash, user_code_hash, user_code_plain,
@@ -95,7 +106,7 @@ func (s *Store) CreateClaimSession(ctx context.Context, session ownerauth.ClaimS
 		session.BootstrapID,
 		session.DeviceCodeHash,
 		session.UserCodeHash,
-		session.UserCodePlain,
+		userCodeVerifier,
 		string(session.Status),
 		session.ExpiresAt,
 	)
@@ -108,17 +119,17 @@ func (s *Store) GetClaimSessionByID(ctx context.Context, sessionID string) (owne
 		return ownerauth.ClaimSessionRecord{}, ownerauth.ErrSessionNotFound
 	}
 	var (
-		rec             ownerauth.ClaimSessionRecord
-		rawStatus       string
-		ownerUserID     *string
-		claimAuth       *string
-		claimAuthExp    *time.Time
-		approvedAt      *time.Time
-		consumedAt      *time.Time
-		lastPollAt      *time.Time
+		rec          ownerauth.ClaimSessionRecord
+		rawStatus    string
+		ownerUserID  *string
+		claimAuth    *string
+		claimAuthExp *time.Time
+		approvedAt   *time.Time
+		consumedAt   *time.Time
+		lastPollAt   *time.Time
 	)
 	err := s.pool.QueryRow(ctx, `
-		SELECT session_id, device_id, bootstrap_id, device_code_hash, user_code_hash, user_code_plain,
+		SELECT session_id, device_id, bootstrap_id, device_code_hash, user_code_hash,
 		       owner_user_id, status, claim_authorization, claim_auth_expires_at, expires_at,
 		       approved_at, consumed_at, last_poll_at, poll_count, created_at
 		FROM device_claim_sessions
@@ -128,7 +139,6 @@ func (s *Store) GetClaimSessionByID(ctx context.Context, sessionID string) (owne
 		&rec.BootstrapID,
 		&rec.DeviceCodeHash,
 		&rec.UserCodeHash,
-		&rec.UserCodePlain,
 		&ownerUserID,
 		&rawStatus,
 		&claimAuth,
@@ -159,7 +169,7 @@ func (s *Store) GetClaimSessionByID(ctx context.Context, sessionID string) (owne
 	rec.ConsumedAt = consumedAt
 	rec.LastPollAt = lastPollAt
 
-	if rec.Status == ownerauth.ClaimSessionPending && !rec.ExpiresAt.After(time.Now().UTC()) {
+	if (rec.Status == ownerauth.ClaimSessionPending || rec.Status == ownerauth.ClaimSessionApproved) && !rec.ExpiresAt.After(time.Now().UTC()) {
 		rec.Status = ownerauth.ClaimSessionExpired
 	}
 	return rec, nil
@@ -181,7 +191,7 @@ func (s *Store) GetClaimSessionByDeviceCodeHash(ctx context.Context, deviceCodeH
 		lastPollAt   *time.Time
 	)
 	err := s.pool.QueryRow(ctx, `
-		SELECT session_id, device_id, bootstrap_id, device_code_hash, user_code_hash, user_code_plain,
+		SELECT session_id, device_id, bootstrap_id, device_code_hash, user_code_hash,
 		       owner_user_id, status, claim_authorization, claim_auth_expires_at, expires_at,
 		       approved_at, consumed_at, last_poll_at, poll_count, created_at
 		FROM device_claim_sessions
@@ -191,7 +201,6 @@ func (s *Store) GetClaimSessionByDeviceCodeHash(ctx context.Context, deviceCodeH
 		&rec.BootstrapID,
 		&rec.DeviceCodeHash,
 		&rec.UserCodeHash,
-		&rec.UserCodePlain,
 		&ownerUserID,
 		&rawStatus,
 		&claimAuth,
@@ -222,7 +231,7 @@ func (s *Store) GetClaimSessionByDeviceCodeHash(ctx context.Context, deviceCodeH
 	rec.ConsumedAt = consumedAt
 	rec.LastPollAt = lastPollAt
 
-	if rec.Status == ownerauth.ClaimSessionPending && !rec.ExpiresAt.After(time.Now().UTC()) {
+	if (rec.Status == ownerauth.ClaimSessionPending || rec.Status == ownerauth.ClaimSessionApproved) && !rec.ExpiresAt.After(time.Now().UTC()) {
 		rec.Status = ownerauth.ClaimSessionExpired
 	}
 	return rec, nil
@@ -248,7 +257,6 @@ func (s *Store) ApproveClaimSession(ctx context.Context, sessionID, ownerUserID 
 		return nil
 	}
 
-	// Diagnose failure cause
 	current, err := s.GetClaimSessionByID(ctx, sessionID)
 	if err != nil {
 		return err
@@ -348,25 +356,32 @@ func (s *Store) PollClaimSession(
 		return ownerauth.PollOutcome{}, err
 	}
 
-	if !expiresAt.After(now) {
-		if status == "pending" {
-			_, _ = tx.Exec(ctx, `UPDATE device_claim_sessions SET status = 'expired', last_poll_at = $1, poll_count = poll_count + 1 WHERE session_id = $2`, now, sessionID)
-			_ = tx.Commit(ctx)
+	if status != "consumed" && !expiresAt.After(now) {
+		if status == "pending" || status == "approved" {
+			if _, err := tx.Exec(ctx, `UPDATE device_claim_sessions SET status = 'expired', last_poll_at = $1, poll_count = poll_count + 1 WHERE session_id = $2`, now, sessionID); err != nil {
+				return ownerauth.PollOutcome{}, err
+			}
+			if err := tx.Commit(ctx); err != nil {
+				return ownerauth.PollOutcome{}, err
+			}
 		}
 		return ownerauth.PollOutcome{Status: ownerauth.PollOutcomeExpired}, nil
 	}
 
 	if lastPollAt != nil && now.Sub(*lastPollAt) < minInterval {
-		_, _ = tx.Exec(ctx, `UPDATE device_claim_sessions SET last_poll_at = $1, poll_count = poll_count + 1 WHERE session_id = $2`, now, sessionID)
-		_ = tx.Commit(ctx)
+		if _, err := tx.Exec(ctx, `UPDATE device_claim_sessions SET last_poll_at = $1, poll_count = poll_count + 1 WHERE session_id = $2`, now, sessionID); err != nil {
+			return ownerauth.PollOutcome{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return ownerauth.PollOutcome{}, err
+		}
 		return ownerauth.PollOutcome{
 			Status:          ownerauth.PollOutcomeSlowDown,
 			IntervalSeconds: int(minInterval.Seconds()) * 2,
 		}, nil
 	}
 
-	_, err = tx.Exec(ctx, `UPDATE device_claim_sessions SET last_poll_at = $1, poll_count = poll_count + 1 WHERE session_id = $2`, now, sessionID)
-	if err != nil {
+	if _, err = tx.Exec(ctx, `UPDATE device_claim_sessions SET last_poll_at = $1, poll_count = poll_count + 1 WHERE session_id = $2`, now, sessionID); err != nil {
 		return ownerauth.PollOutcome{}, err
 	}
 
@@ -391,17 +406,19 @@ func (s *Store) PollClaimSession(
 		if ownerUserID != nil {
 			owner = *ownerUserID
 		}
+		if strings.TrimSpace(owner) == "" {
+			return ownerauth.PollOutcome{}, ownerauth.ErrInvalidClaim
+		}
 		token, tokenExp, err := mintAuthFn(bootstrapID, deviceID, owner)
 		if err != nil {
 			return ownerauth.PollOutcome{}, err
 		}
-		_, err = tx.Exec(ctx, `
+		if _, err = tx.Exec(ctx, `
 			UPDATE device_claim_sessions
 			SET status = 'consumed', consumed_at = $1, claim_authorization = $2, claim_auth_expires_at = $3
-			WHERE session_id = $4`,
+			WHERE session_id = $4 AND status = 'approved'`,
 			now, token, tokenExp, sessionID,
-		)
-		if err != nil {
+		); err != nil {
 			return ownerauth.PollOutcome{}, err
 		}
 		if err := tx.Commit(ctx); err != nil {
@@ -414,7 +431,7 @@ func (s *Store) PollClaimSession(
 		}, nil
 
 	case "consumed":
-		if claimAuthExp != nil && claimAuthExp.After(now) && claimAuth != nil {
+		if claimAuthExp != nil && claimAuthExp.After(now) && claimAuth != nil && strings.TrimSpace(*claimAuth) != "" {
 			if err := tx.Commit(ctx); err != nil {
 				return ownerauth.PollOutcome{}, err
 			}
@@ -435,4 +452,37 @@ func (s *Store) PollClaimSession(
 		}
 		return ownerauth.PollOutcome{Status: ownerauth.PollOutcomeExpired}, nil
 	}
+}
+
+func (s *Store) AuthorizeClaimSession(ctx context.Context, rawAuthorization, bootstrapID, deviceID string, now time.Time) (string, error) {
+	rawAuthorization = strings.TrimSpace(rawAuthorization)
+	bootstrapID = strings.TrimSpace(bootstrapID)
+	deviceID = strings.TrimSpace(deviceID)
+	if rawAuthorization == "" || bootstrapID == "" || deviceID == "" {
+		return "", ownerauth.ErrInvalidClaim
+	}
+
+	var ownerUserID string
+	err := s.pool.QueryRow(ctx, `
+		SELECT owner_user_id
+		FROM device_claim_sessions
+		WHERE claim_authorization = $1
+		  AND bootstrap_id = $2
+		  AND device_id = $3
+		  AND status = 'consumed'
+		  AND owner_user_id IS NOT NULL
+		  AND claim_auth_expires_at > $4`,
+		rawAuthorization, bootstrapID, deviceID, now,
+	).Scan(&ownerUserID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ownerauth.ErrInvalidClaim
+	}
+	if err != nil {
+		return "", err
+	}
+	ownerUserID = strings.TrimSpace(ownerUserID)
+	if ownerUserID == "" {
+		return "", ownerauth.ErrInvalidClaim
+	}
+	return ownerUserID, nil
 }

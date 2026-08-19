@@ -59,44 +59,43 @@ func authenticateTestOwner(t *testing.T, s *Service, userID string) (rawSession 
 func TestDeviceClaimSessionCreation(t *testing.T) {
 	svc := newTestOwnerAuthService(t)
 
-	// Valid creation
 	reqBody := `{"bootstrap_id": "boot-123", "device_id": "dev-456"}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/device-claim-sessions", strings.NewReader(reqBody))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
-
 	svc.HandleDeviceClaimSessions(w, req)
-
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected status 201, got %d: %s", w.Code, w.Body.String())
 	}
 
 	var resp struct {
-		DeviceCode             string `json:"device_code"`
-		UserCode               string `json:"user_code"`
-		VerificationURI        string `json:"verification_uri"`
+		DeviceCode              string `json:"device_code"`
+		UserCode                string `json:"user_code"`
+		VerificationURI         string `json:"verification_uri"`
 		VerificationURIComplete string `json:"verification_uri_complete"`
-		ExpiresIn              int    `json:"expires_in"`
-		Interval               int    `json:"interval"`
+		ExpiresIn               int    `json:"expires_in"`
+		Interval                int    `json:"interval"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-
 	if resp.DeviceCode == "" || len(resp.DeviceCode) < 32 {
 		t.Fatalf("invalid device_code: %s", resp.DeviceCode)
 	}
-	if len(resp.UserCode) != 9 || resp.UserCode[4] != '-' { // XXXX-XXXX
+	if len(resp.UserCode) != 9 || resp.UserCode[4] != '-' {
 		t.Fatalf("invalid user_code format: %s", resp.UserCode)
 	}
-	if !strings.Contains(resp.VerificationURIComplete, "s=") {
-		t.Fatalf("verification_uri_complete missing session param: %s", resp.VerificationURIComplete)
+	complete, err := url.Parse(resp.VerificationURIComplete)
+	if err != nil {
+		t.Fatalf("parse verification_uri_complete: %v", err)
+	}
+	if complete.Query().Get("s") == "" || complete.Query().Get("user_code") != resp.UserCode {
+		t.Fatalf("verification_uri_complete missing bound handoff values: %s", resp.VerificationURIComplete)
 	}
 	if resp.ExpiresIn != 300 || resp.Interval != 5 {
 		t.Fatalf("unexpected timing: expires_in=%d interval=%d", resp.ExpiresIn, resp.Interval)
 	}
 
-	// Invalid input
 	badReq := httptest.NewRequest(http.MethodPost, "/v1/device-claim-sessions", strings.NewReader(`{"bootstrap_id": ""}`))
 	badReq.Header.Set("Content-Type", "application/json")
 	badW := httptest.NewRecorder()
@@ -111,7 +110,6 @@ func TestDeviceClaimSessionFullLifecycleAndPolling(t *testing.T) {
 	ownerUserID := "user-alice"
 	rawSession, csrfToken := authenticateTestOwner(t, svc, ownerUserID)
 
-	// 1. Device creates session
 	createResp, err := svc.CreateDeviceClaimSession("boot-xyz", "dev-abc", "https://companion.example.com")
 	if err != nil {
 		t.Fatalf("create session: %v", err)
@@ -119,7 +117,6 @@ func TestDeviceClaimSessionFullLifecycleAndPolling(t *testing.T) {
 	deviceCode := createResp["device_code"].(string)
 	userCode := createResp["user_code"].(string)
 	completeURI := createResp["verification_uri_complete"].(string)
-
 	u, err := url.Parse(completeURI)
 	if err != nil {
 		t.Fatal(err)
@@ -129,8 +126,7 @@ func TestDeviceClaimSessionFullLifecycleAndPolling(t *testing.T) {
 		t.Fatal("empty session_id in verification URI")
 	}
 
-	// 2. Owner loads claim page (GET /v1/owner/device-claim?s=...)
-	pageReq := httptest.NewRequest(http.MethodGet, "/v1/owner/device-claim?s="+sessionID, nil)
+	pageReq := httptest.NewRequest(http.MethodGet, u.RequestURI(), nil)
 	pageReq.AddCookie(&http.Cookie{Name: sessionCookieName, Value: rawSession})
 	pageW := httptest.NewRecorder()
 	svc.HandleOwnerDeviceClaimPage(pageW, pageReq)
@@ -141,7 +137,14 @@ func TestDeviceClaimSessionFullLifecycleAndPolling(t *testing.T) {
 		t.Fatalf("claim page missing user code or device id: %s", pageW.Body.String())
 	}
 
-	// 3. Device polls before approval -> authorization_pending
+	wrongCodeReq := httptest.NewRequest(http.MethodGet, "/v1/owner/device-claim?s="+url.QueryEscape(sessionID)+"&user_code=AAAA-AAAA", nil)
+	wrongCodeReq.AddCookie(&http.Cookie{Name: sessionCookieName, Value: rawSession})
+	wrongCodeW := httptest.NewRecorder()
+	svc.HandleOwnerDeviceClaimPage(wrongCodeW, wrongCodeReq)
+	if wrongCodeW.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for mismatched user code, got %d", wrongCodeW.Code)
+	}
+
 	pollBody := map[string]string{"device_code": deviceCode}
 	pollJSON, _ := json.Marshal(pollBody)
 	pollReq := httptest.NewRequest(http.MethodPost, "/v1/device-claim-sessions/token", bytes.NewReader(pollJSON))
@@ -158,7 +161,6 @@ func TestDeviceClaimSessionFullLifecycleAndPolling(t *testing.T) {
 		t.Fatalf("expected error 'authorization_pending', got %s", pollErr.Error)
 	}
 
-	// 4. Device polls too quickly -> slow_down
 	pollReq2 := httptest.NewRequest(http.MethodPost, "/v1/device-claim-sessions/token", bytes.NewReader(pollJSON))
 	pollW2 := httptest.NewRecorder()
 	svc.HandleDeviceClaimSessionToken(pollW2, pollReq2)
@@ -170,7 +172,6 @@ func TestDeviceClaimSessionFullLifecycleAndPolling(t *testing.T) {
 		t.Fatalf("expected error 'slow_down', got %s", pollErr.Error)
 	}
 
-	// 5. Unauthenticated approval fails
 	unauthApproveReq := httptest.NewRequest(http.MethodPost, "/v1/owner/device-claim-sessions/"+sessionID+"/approve", nil)
 	unauthW := httptest.NewRecorder()
 	svc.HandleOwnerDeviceClaimSessionApprove(unauthW, unauthApproveReq, sessionID)
@@ -178,7 +179,6 @@ func TestDeviceClaimSessionFullLifecycleAndPolling(t *testing.T) {
 		t.Fatalf("expected 401 for unauthenticated approve, got %d", unauthW.Code)
 	}
 
-	// 6. Invalid CSRF approval fails
 	badCsrfReq := httptest.NewRequest(http.MethodPost, "/v1/owner/device-claim-sessions/"+sessionID+"/approve", nil)
 	badCsrfReq.AddCookie(&http.Cookie{Name: sessionCookieName, Value: rawSession})
 	badCsrfReq.Header.Set("X-CSRF-Token", "invalid-csrf-token")
@@ -188,7 +188,6 @@ func TestDeviceClaimSessionFullLifecycleAndPolling(t *testing.T) {
 		t.Fatalf("expected 401 for bad CSRF, got %d", badCsrfW.Code)
 	}
 
-	// 7. Authenticated owner approves
 	approveReq := httptest.NewRequest(http.MethodPost, "/v1/owner/device-claim-sessions/"+sessionID+"/approve", nil)
 	approveReq.AddCookie(&http.Cookie{Name: sessionCookieName, Value: rawSession})
 	approveReq.Header.Set("X-CSRF-Token", csrfToken)
@@ -197,21 +196,17 @@ func TestDeviceClaimSessionFullLifecycleAndPolling(t *testing.T) {
 	if approveW.Code != http.StatusOK {
 		t.Fatalf("expected 200 for approve, got %d: %s", approveW.Code, approveW.Body.String())
 	}
-
-	// Duplicate approve returns conflict
 	dupApproveW := httptest.NewRecorder()
 	svc.HandleOwnerDeviceClaimSessionApprove(dupApproveW, approveReq, sessionID)
 	if dupApproveW.Code != http.StatusConflict {
 		t.Fatalf("expected 409 for duplicate approve, got %d", dupApproveW.Code)
 	}
 
-	// Advance time past poll interval
 	originalNow := svc.now
 	defer func() { svc.now = originalNow }()
 	mockTime := time.Now().UTC().Add(10 * time.Second)
 	svc.now = func() time.Time { return mockTime }
 
-	// 8. Device polls after approval -> receives claim_authorization
 	pollReq3 := httptest.NewRequest(http.MethodPost, "/v1/device-claim-sessions/token", bytes.NewReader(pollJSON))
 	pollW3 := httptest.NewRecorder()
 	svc.HandleDeviceClaimSessionToken(pollW3, pollReq3)
@@ -229,7 +224,6 @@ func TestDeviceClaimSessionFullLifecycleAndPolling(t *testing.T) {
 		t.Fatal("empty claim_authorization received")
 	}
 
-	// 9. Verify claim authorization is accepted by AuthorizeDeviceClaim
 	authorizedOwner, err := svc.AuthorizeDeviceClaim(approvedResp.ClaimAuthorization, "boot-xyz", "dev-abc")
 	if err != nil {
 		t.Fatalf("authorize device claim: %v", err)
@@ -237,8 +231,6 @@ func TestDeviceClaimSessionFullLifecycleAndPolling(t *testing.T) {
 	if authorizedOwner != ownerUserID {
 		t.Fatalf("expected owner %s, got %s", ownerUserID, authorizedOwner)
 	}
-
-	// Cross-device and cross-bootstrap substitution fail
 	if _, err := svc.AuthorizeDeviceClaim(approvedResp.ClaimAuthorization, "boot-wrong", "dev-abc"); err != ErrInvalidClaim {
 		t.Fatalf("expected ErrInvalidClaim on wrong bootstrap, got %v", err)
 	}
@@ -246,7 +238,6 @@ func TestDeviceClaimSessionFullLifecycleAndPolling(t *testing.T) {
 		t.Fatalf("expected ErrInvalidClaim on wrong device, got %v", err)
 	}
 
-	// 10. Device response loss / replay returns exact same token
 	mockTime = mockTime.Add(10 * time.Second)
 	pollReq4 := httptest.NewRequest(http.MethodPost, "/v1/device-claim-sessions/token", bytes.NewReader(pollJSON))
 	pollW4 := httptest.NewRecorder()
@@ -277,7 +268,6 @@ func TestDeviceClaimSessionDenyFlow(t *testing.T) {
 	u, _ := url.Parse(completeURI)
 	sessionID := u.Query().Get("s")
 
-	// Owner denies
 	denyReq := httptest.NewRequest(http.MethodPost, "/v1/owner/device-claim-sessions/"+sessionID+"/deny", nil)
 	denyReq.AddCookie(&http.Cookie{Name: sessionCookieName, Value: rawSession})
 	denyReq.Header.Set("X-CSRF-Token", csrfToken)
@@ -287,7 +277,6 @@ func TestDeviceClaimSessionDenyFlow(t *testing.T) {
 		t.Fatalf("expected 200 for deny, got %d: %s", denyW.Code, denyW.Body.String())
 	}
 
-	// Device poll returns 403 access_denied
 	pollBody, _ := json.Marshal(map[string]string{"device_code": deviceCode})
 	pollReq := httptest.NewRequest(http.MethodPost, "/v1/device-claim-sessions/token", bytes.NewReader(pollBody))
 	pollW := httptest.NewRecorder()
@@ -307,15 +296,12 @@ func TestDeviceClaimSessionDenyFlow(t *testing.T) {
 func TestSafeOIDCContinuationAndOpenRedirectDefense(t *testing.T) {
 	svc := newTestOwnerAuthService(t)
 
-	// Valid same-origin path
 	validTarget, err := svc.BeginLoginWithReturnTo("/v1/owner/device-claim?s=valid-session-123")
 	if err != nil {
 		t.Fatal(err)
 	}
 	parsed, _ := url.Parse(validTarget)
 	state := parsed.Query().Get("state")
-
-	// Inspect stored transaction
 	svc.mu.Lock()
 	txn, ok := svc.logins[state]
 	svc.mu.Unlock()
@@ -323,14 +309,12 @@ func TestSafeOIDCContinuationAndOpenRedirectDefense(t *testing.T) {
 		t.Fatalf("stored return_to mismatch: %+v", txn)
 	}
 
-	// Malicious external URL -> sanitized to empty
 	evilTarget, err := svc.BeginLoginWithReturnTo("https://evil.com/phishing")
 	if err != nil {
 		t.Fatal(err)
 	}
 	evilParsed, _ := url.Parse(evilTarget)
 	evilState := evilParsed.Query().Get("state")
-
 	svc.mu.Lock()
 	evilTxn := svc.logins[evilState]
 	svc.mu.Unlock()
@@ -338,14 +322,12 @@ func TestSafeOIDCContinuationAndOpenRedirectDefense(t *testing.T) {
 		t.Fatalf("evil return_to was not sanitized to empty: %s", evilTxn.ReturnTo)
 	}
 
-	// Protocol relative URL -> sanitized to empty
 	protoRelTarget, err := svc.BeginLoginWithReturnTo("//evil.com/phishing")
 	if err != nil {
 		t.Fatal(err)
 	}
 	protoRelParsed, _ := url.Parse(protoRelTarget)
 	protoRelState := protoRelParsed.Query().Get("state")
-
 	svc.mu.Lock()
 	protoRelTxn := svc.logins[protoRelState]
 	svc.mu.Unlock()

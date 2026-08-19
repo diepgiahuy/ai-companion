@@ -1,6 +1,7 @@
 package ownerauth
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
@@ -47,16 +48,33 @@ func (s *Service) MintBoundClaimAuthorization(rawSession, csrf, bootstrapID, dev
 
 // AuthorizeDeviceClaim verifies that raw authorizes this exact bootstrap/device
 // pair and returns only the trusted owner identity needed by the claim service.
+// Legacy browser authorizations remain process-local. Zero-typing approval
+// authorizations are validated through the configured durable claim-session store
+// so a backend restart or a request routed to another instance remains valid.
 func (s *Service) AuthorizeDeviceClaim(raw, bootstrapID, deviceID string) (string, error) {
-	claim, err := s.AuthorizeClaimAuthorization(raw)
-	if err != nil {
-		return "", err
-	}
-	want := claimBinding(strings.TrimSpace(bootstrapID), strings.TrimSpace(deviceID))
-	if subtle.ConstantTimeCompare([]byte(claim.BootstrapID), []byte(want)) != 1 {
+	bootstrapID = strings.TrimSpace(bootstrapID)
+	deviceID = strings.TrimSpace(deviceID)
+	if bootstrapID == "" || deviceID == "" {
 		return "", ErrInvalidClaim
 	}
-	return claim.UserID, nil
+
+	if claim, err := s.AuthorizeClaimAuthorization(raw); err == nil {
+		want := claimBinding(bootstrapID, deviceID)
+		if subtle.ConstantTimeCompare([]byte(claim.BootstrapID), []byte(want)) != 1 {
+			return "", ErrInvalidClaim
+		}
+		return claim.UserID, nil
+	}
+
+	store := s.claimSessionStore()
+	if store == nil {
+		return "", ErrInvalidClaim
+	}
+	ownerUserID, err := store.AuthorizeClaim(context.Background(), raw, bootstrapID, deviceID, s.now())
+	if err != nil || strings.TrimSpace(ownerUserID) == "" {
+		return "", ErrInvalidClaim
+	}
+	return ownerUserID, nil
 }
 
 // HandleBoundClaimAuthorization is the product HTTP contract for minting claim

@@ -25,6 +25,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#include <algorithm>
 #include <array>
 #include <cstdio>
 #include <string_view>
@@ -34,6 +35,7 @@ constexpr char kTag[] = "companion";
 constexpr uint64_t kWifiReprovisionHoldMs = 3'000;
 constexpr uint64_t kFactoryResetHoldMs = 8'000;
 constexpr uint32_t kRuntimePairingHoldMs = 2'000;
+constexpr uint64_t kClaimRetryMs = 5'000;
 uint64_t now_ms() { return static_cast<uint64_t>(esp_timer_get_time() / 1000); }
 
 enum class BootGesture {
@@ -114,6 +116,33 @@ void show_portal_access(companion::Display& display,
   display.show(companion::UiState::connecting, line.data());
 }
 
+template <size_t N>
+bool copy_secret(companion::provisioning::FixedSecret<N>& destination,
+                 std::string_view value) {
+  if (value.empty() || value.size() >= destination.value.size()) return false;
+  destination.value.fill('\0');
+  std::copy(value.begin(), value.end(), destination.value.begin());
+  return true;
+}
+
+template <size_t N>
+void clear_secret(companion::provisioning::FixedSecret<N>& destination) {
+  destination.value.fill('\0');
+}
+
+void show_owner_code(companion::Display& display,
+                     const companion::provisioning::PendingConfig& pending) {
+  std::array<char, 24> line{};
+  const std::string_view code = pending.user_code.view();
+  if (code.empty()) {
+    display.show(companion::UiState::connecting, "WAIT OWNER");
+    return;
+  }
+  std::snprintf(line.data(), line.size(), "CODE %.*s",
+                static_cast<int>(code.size()), code.data());
+  display.show(companion::UiState::connecting, line.data());
+}
+
 [[noreturn]] void run_setup_portal(companion::Display& display,
                                    const companion::provisioning::ProvisioningStore& store,
                                    std::string_view device_suffix) {
@@ -174,7 +203,7 @@ void show_portal_access(companion::Display& display,
 [[noreturn]] void run_claim_phase(companion::Display& display,
                                   companion::WifiStation& wifi,
                                   const companion::provisioning::ProvisioningStore& store,
-                                  const companion::provisioning::PendingConfig& pending,
+                                  companion::provisioning::PendingConfig pending,
                                   std::string_view device_id) {
   const bool initially_connected = wifi.connect(pending.wifi_ssid.view(), pending.wifi_password.view());
   if (!initially_connected) display.show(companion::UiState::connecting, "WIFI RETRY");
@@ -195,11 +224,82 @@ void show_portal_access(companion::Display& display,
       vTaskDelay(pdMS_TO_TICKS(250));
       continue;
     }
+
     const uint64_t now = now_ms();
     if (now < next_claim) {
+      if (!pending.device_code.view().empty() && pending.claim_authorization.view().empty()) {
+        show_owner_code(display, pending);
+      }
       vTaskDelay(pdMS_TO_TICKS(250));
       continue;
     }
+
+    if (pending.claim_authorization.view().empty()) {
+      if (pending.device_code.view().empty()) {
+        display.show(companion::UiState::connecting, "START OWNER");
+        companion::provisioning::ClaimSessionCreateResult session{};
+        const auto status = claims.create_session(pending, device_id, session);
+        if (status == companion::provisioning::ClaimStatus::success) {
+          if (!copy_secret(pending.device_code, session.device_code_view()) ||
+              !copy_secret(pending.user_code, session.user_code_view()) ||
+              !store.save_pending(pending)) {
+            display.show(companion::UiState::error, "CLAIM SAVE ERROR");
+            while (true) vTaskDelay(portMAX_DELAY);
+          }
+          show_owner_code(display, pending);
+          const int interval = session.interval > 0 ? session.interval : 5;
+          next_claim = now + static_cast<uint64_t>(interval) * 1'000;
+          continue;
+        }
+        if (status == companion::provisioning::ClaimStatus::setup_required) {
+          restart_after_message(display, "SETUP REQUIRED");
+        }
+        display.show(companion::UiState::connecting, "OWNER RETRY");
+        next_claim = now + kClaimRetryMs;
+        continue;
+      }
+
+      show_owner_code(display, pending);
+      companion::provisioning::ClaimAuthorizationResult authorization{};
+      int next_interval_sec = 5;
+      const auto status = claims.poll_session(
+          pending, pending.device_code.view(), authorization, next_interval_sec);
+      if (status == companion::provisioning::ClaimStatus::success) {
+        if (!copy_secret(pending.claim_authorization, authorization.authorization_view())) {
+          display.show(companion::UiState::error, "AUTH SAVE ERROR");
+          while (true) vTaskDelay(portMAX_DELAY);
+        }
+        clear_secret(pending.device_code);
+        clear_secret(pending.user_code);
+        if (!store.save_pending(pending)) {
+          display.show(companion::UiState::error, "AUTH SAVE ERROR");
+          while (true) vTaskDelay(portMAX_DELAY);
+        }
+        next_claim = now;
+        continue;
+      }
+      if (status == companion::provisioning::ClaimStatus::authorization_pending ||
+          status == companion::provisioning::ClaimStatus::slow_down) {
+        show_owner_code(display, pending);
+        const int interval = next_interval_sec > 0 ? next_interval_sec : 5;
+        next_claim = now + static_cast<uint64_t>(interval) * 1'000;
+        continue;
+      }
+      if (status == companion::provisioning::ClaimStatus::setup_required) {
+        clear_secret(pending.device_code);
+        clear_secret(pending.user_code);
+        clear_secret(pending.claim_authorization);
+        if (!store.save_pending(pending)) {
+          display.show(companion::UiState::error, "CLAIM RESET ERR");
+          while (true) vTaskDelay(portMAX_DELAY);
+        }
+        restart_after_message(display, "CLAIM EXPIRED");
+      }
+      display.show(companion::UiState::connecting, "OWNER RETRY");
+      next_claim = now + kClaimRetryMs;
+      continue;
+    }
+
     display.show(companion::UiState::connecting, "CLAIMING");
     companion::provisioning::ClaimResult result{};
     const auto status = claims.claim(pending, device_id, result);
@@ -211,11 +311,14 @@ void show_portal_access(companion::Display& display,
       restart_after_message(display, "CLAIMED");
     }
     if (status == companion::provisioning::ClaimStatus::setup_required) {
-      if (!store.clear()) {
-        display.show(companion::UiState::error, "SETUP RESET ERROR");
+      clear_secret(pending.device_code);
+      clear_secret(pending.user_code);
+      clear_secret(pending.claim_authorization);
+      if (!store.save_pending(pending)) {
+        display.show(companion::UiState::error, "CLAIM RESET ERR");
         while (true) vTaskDelay(portMAX_DELAY);
       }
-      restart_after_message(display, "SETUP REQUIRED");
+      restart_after_message(display, "CLAIM EXPIRED");
     }
     if (status == companion::provisioning::ClaimStatus::owner_recovery_required) {
       ESP_LOGW(kTag, "owner recovery required before device claim can continue");
@@ -223,7 +326,7 @@ void show_portal_access(companion::Display& display,
       while (true) vTaskDelay(portMAX_DELAY);
     }
     display.show(companion::UiState::connecting, "CLAIM RETRY");
-    next_claim = now + 10'000;
+    next_claim = now + kClaimRetryMs;
   }
 }
 
