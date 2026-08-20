@@ -14,8 +14,8 @@ func TestDashboardUsesSimplifiedTruthfulProductSurface(t *testing.T) {
 		}
 	}
 	for _, required := range []string{
-		"Requested", "Applied", "Smart VAD", "Monthly budget", "Savings goal",
-		"Voice Memos", "Reminders & Timers", "Save privacy settings", "Budget not set",
+		"Requested", "Applied", "Smart VAD", "Monthly budget", "Savings goal", "Not set",
+		"Voice Memos", "Reminders & Timers", "Save privacy settings",
 	} {
 		if !strings.Contains(dashboardHTML, required) {
 			t.Fatalf("dashboard missing required truthful UI marker %q", required)
