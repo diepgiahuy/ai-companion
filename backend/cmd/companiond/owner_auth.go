@@ -37,24 +37,13 @@ func ownerAuthFromEnvironment(next http.Handler, store *pgstore.Store, control *
 		cfg.ClientID != "" || cfg.ClientSecret != "" || cfg.RedirectURL != "" ||
 		strings.TrimSpace(os.Getenv("COMPANION_OWNER_OIDC_SCOPES")) != ""
 	if !configured {
-		if store != nil {
-			webHandler := ownerweb.NewHandler(ownerweb.Dependencies{
-				Store:                store,
-				ControlPlane:         control,
-				Auth:                 nil,
-				RecordingsDir:        recordingsDir,
-				DeviceOnline:         deviceOnline,
-				UpdateDeviceSettings: updateDeviceSettings,
-			})
-			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/v1/owner/dashboard" || strings.HasPrefix(r.URL.Path, "/v1/owner/data/") {
-					webHandler.ServeHTTP(w, r)
-					return
-				}
-				next.ServeHTTP(w, r)
-			})
-		}
-		return next
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasPrefix(r.URL.Path, ownerPathPrefix) || strings.HasPrefix(r.URL.Path, "/v1/device-claim-sessions") {
+				http.Error(w, "owner authentication unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
 	}
 	service, err := ownerauth.New(cfg)
 	if err != nil {

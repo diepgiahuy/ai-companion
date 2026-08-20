@@ -4,9 +4,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"companion-server/internal/pgstore"
 )
 
-func TestOwnerAuthUnconfiguredFallsThrough(t *testing.T) {
+func clearOwnerOIDCEnv(t *testing.T) {
+	t.Helper()
 	for _, key := range []string{
 		"COMPANION_OWNER_OIDC_AUTH_URL", "COMPANION_OWNER_OIDC_TOKEN_URL",
 		"COMPANION_OWNER_OIDC_USERINFO_URL", "COMPANION_OWNER_OIDC_CLIENT_ID",
@@ -15,6 +18,10 @@ func TestOwnerAuthUnconfiguredFallsThrough(t *testing.T) {
 	} {
 		t.Setenv(key, "")
 	}
+}
+
+func TestOwnerAuthUnconfiguredFallsThrough(t *testing.T) {
+	clearOwnerOIDCEnv(t)
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})
@@ -22,7 +29,38 @@ func TestOwnerAuthUnconfiguredFallsThrough(t *testing.T) {
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 	if response.Code != http.StatusNoContent {
-		t.Fatalf("unconfigured owner auth must fall through, got %d", response.Code)
+		t.Fatalf("unconfigured owner auth must fall through for non-owner routes, got %d", response.Code)
+	}
+}
+
+func TestOwnerAuthUnconfiguredFailsClosedForOwnerSurfaceWithStore(t *testing.T) {
+	clearOwnerOIDCEnv(t)
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	handler := ownerAuthFromEnvironment(next, new(pgstore.Store), nil, nil, nil, nil)
+
+	for _, tc := range []struct {
+		method string
+		path   string
+	}{
+		{method: http.MethodGet, path: "/v1/owner/dashboard"},
+		{method: http.MethodPost, path: "/v1/owner/data/budget"},
+		{method: http.MethodPost, path: "/v1/device-claim-sessions"},
+	} {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, httptest.NewRequest(tc.method, tc.path, nil))
+			if response.Code != http.StatusServiceUnavailable {
+				t.Fatalf("unconfigured owner auth must fail closed for %s %s, got %d", tc.method, tc.path, response.Code)
+			}
+		})
+	}
+
+	healthResponse := httptest.NewRecorder()
+	handler.ServeHTTP(healthResponse, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if healthResponse.Code != http.StatusNoContent {
+		t.Fatalf("non-owner route should preserve existing handler, got %d", healthResponse.Code)
 	}
 }
 
