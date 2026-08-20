@@ -11,13 +11,28 @@ import (
 )
 
 type mockProvider struct {
+	mu       sync.Mutex
 	name     string
 	forecast Forecast
 	err      error
 	calls    int
 }
 
+func (m *mockProvider) Calls() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.calls
+}
+
+func (m *mockProvider) SetErr(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.err = err
+}
+
 func (m *mockProvider) Name() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.name == "" {
 		return "mock-weather"
 	}
@@ -25,11 +40,14 @@ func (m *mockProvider) Name() string {
 }
 
 func (m *mockProvider) GetWeather(ctx context.Context, location string) (Forecast, error) {
+	m.mu.Lock()
 	m.calls++
-	if m.err != nil {
-		return Forecast{}, m.err
-	}
+	err := m.err
 	f := m.forecast
+	m.mu.Unlock()
+	if err != nil {
+		return Forecast{}, err
+	}
 	f.Location = location
 	return f, nil
 }
@@ -58,8 +76,8 @@ func TestWeatherServiceCachingAndTTL(t *testing.T) {
 	if f1.TemperatureC != 28.5 || f1.Location != "Hà Nội" || f1.Source != "mock-weather" {
 		t.Fatalf("unexpected forecast: %+v", f1)
 	}
-	if mock.calls != 1 {
-		t.Fatalf("expected 1 call to provider, got %d", mock.calls)
+	if mock.Calls() != 1 {
+		t.Fatalf("expected 1 call to provider, got %d", mock.Calls())
 	}
 
 	// 2. Second Fetch within TTL -> Cache Hit
@@ -71,8 +89,8 @@ func TestWeatherServiceCachingAndTTL(t *testing.T) {
 	if f2.TemperatureC != 28.5 {
 		t.Fatalf("unexpected forecast: %+v", f2)
 	}
-	if mock.calls != 1 {
-		t.Fatalf("expected cached fetch (calls=1), got %d", mock.calls)
+	if mock.Calls() != 1 {
+		t.Fatalf("expected cached fetch (calls=1), got %d", mock.Calls())
 	}
 
 	// 3. Third Fetch after TTL -> Cache Miss
@@ -84,8 +102,8 @@ func TestWeatherServiceCachingAndTTL(t *testing.T) {
 	if f3.TemperatureC != 28.5 {
 		t.Fatalf("unexpected forecast: %+v", f3)
 	}
-	if mock.calls != 2 {
-		t.Fatalf("expected 2 calls after TTL expiration, got %d", mock.calls)
+	if mock.Calls() != 2 {
+		t.Fatalf("expected 2 calls after TTL expiration, got %d", mock.Calls())
 	}
 }
 
@@ -110,7 +128,7 @@ func TestWeatherServiceFallbackToStaleOnProviderError(t *testing.T) {
 
 	// Expire cache and simulate provider failure
 	now = now.Add(10 * time.Minute)
-	mock.err = errors.New("upstream timeout")
+	mock.SetErr(errors.New("upstream timeout"))
 
 	stale, err := service.GetWeather(context.Background(), "mock-weather", "Đà Nẵng")
 	if err != nil {
