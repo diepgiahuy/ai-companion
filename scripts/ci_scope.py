@@ -120,6 +120,7 @@ def classify(event: str, paths: Iterable[str] = (), *, unknown_changes: bool = F
                 "ops/postgres/",
                 "backend/internal/pgstore/",
                 "backend/internal/jobs/",
+                "backend/internal/ownerweb/",
                 "backend/cmd/companiond/",
                 "backend/cmd/companion-river-migrate/",
                 "backend/cmd/companion-migrate/",
