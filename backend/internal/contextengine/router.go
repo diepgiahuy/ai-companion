@@ -33,7 +33,7 @@ func (r *Router) Plan(ctx context.Context, query string) Plan {
 	if has("xóa lịch sử", "xoá lịch sử", "clear history", "delete conversation", "xóa hội thoại", "xoá hội thoại", "xóa sạch toàn bộ lịch sử", "clear all conversation") {
 		return Plan{Packs: []string{"context"}}
 	}
-	if has("tiêu", "chi ", "chi tiêu", "expense", "mua", "cafe", "cà phê", "ăn", "tiền", "cành", "nghìn đồng", "bún bò") {
+	if has("tiêu", "chi ", "chi tiêu", "expense", "mua", "cafe", "cà phê", "ăn", "tiền", "cành", "nghìn đồng", "bún bò", "spend", "spent", "spending", "bought", "cost", "paid", "food", "meal") {
 		packs["expense"] = true
 		packs["budget"] = true
 		switch {
@@ -60,11 +60,11 @@ func (r *Router) Plan(ctx context.Context, query string) Plan {
 		packs["budget"] = true
 		uris = append(uris, "saving://current")
 	}
-	if has("timer", "đếm ngược", "hẹn giờ") {
+	if has("timer", "đếm ngược", "hẹn giờ", "countdown") {
 		packs["schedule"] = true
 		uris = append(uris, "timers://active")
 	}
-	if has("nhắc", "reminder", "calendar", "schedule", "lịch hôm", "lịch sắp", "lịch tới", "lịch ngày", "lịch tuần", "lịch họp", "cuộc hẹn", "appointment") {
+	if has("nhắc", "reminder", "remind", "calendar", "schedule", "lịch hôm", "lịch sắp", "lịch tới", "lịch ngày", "lịch tuần", "lịch họp", "cuộc hẹn", "appointment") {
 		packs["schedule"] = true
 		if has("hôm nay", "today") {
 			uris = append(uris, "reminders://today")
@@ -72,21 +72,21 @@ func (r *Router) Plan(ctx context.Context, query string) Plan {
 			uris = append(uris, "reminders://upcoming")
 		}
 	}
-	if has("ghi chú", "note") {
+	if has("ghi chú", "note", "notes", "memo") {
 		packs["note"] = true
 		uris = append(uris, "notes://recent")
 	}
-	if has("nhật ký", "journal") {
+	if has("nhật ký", "journal", "diary") {
 		packs["journal"] = true
 		uris = append(uris, "journal://today")
 	}
-	if has("ghi âm", "voice memo", "voice note", "recording") {
+	if has("ghi âm", "voice memo", "voice note", "recording", "voice recording", "audio note", "audio memo", "audio recording") {
 		packs["voice"] = true
 	}
 	if has("giá vàng", "xau", "gold", "market", "chứng khoán", "stock", "crypto", "bitcoin", "ethereum", "tỷ giá", "exchange rate", "usd/vnd", "eur/vnd", "sjc") {
 		packs["market"] = true
 	}
-	if (has("nhớ", "ghi nhớ", "remember", "quên", "forget", "từng nói", "sở thích", "dị ứng", "sinh nhật", "personal memory") || ((has("thích ", "ghét ") || strings.HasSuffix(q, "thích")) && !has("giải thích"))) && !has("tiết kiệm", "saving") {
+	if (has("nhớ", "ghi nhớ", "remember", "quên", "forget", "từng nói", "sở thích", "dị ứng", "sinh nhật", "personal memory", "allergy", "allergies", "preference", "preferences", "birthday", "facts", "license", "habit", "profile", "forgotten", "pin", "confidential facts") || ((has("thích ", "ghét ") || strings.HasSuffix(q, "thích")) && !has("giải thích"))) && !has("tiết kiệm", "saving") {
 		packs["memory"] = true
 	}
 	// Unknown/general conversation keeps all native packs available for compatibility,
