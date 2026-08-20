@@ -10,12 +10,14 @@ import (
 	"companion-server/internal/capability"
 	"companion-server/internal/market"
 	"companion-server/internal/memory"
+	"companion-server/internal/weather"
 )
 
 type PlatformDependencies struct {
 	Memory        *memory.Service
 	Market        *market.Service
 	MarketWatches market.WatchRepository
+	Weather       *weather.Service
 	Now           func() time.Time
 }
 
@@ -126,6 +128,58 @@ func RegisterPlatform(r *capability.ToolRegistry, d PlatformDependencies) error 
 			res.Presentation = &capability.Presentation{Kind: "market_price", Title: quote.Symbol, Primary: fmt.Sprintf("%.4f %s", quote.Price, quote.Currency), Secondary: "as of " + quote.AsOf.Format(time.RFC3339)}
 			return res
 		}}); err != nil {
+			return err
+		}
+	}
+	if d.Weather != nil {
+		providers := d.Weather.Providers()
+		var enum []any
+		for _, p := range providers {
+			enum = append(enum, p)
+		}
+		toolParams := map[string]any{
+			"location": str("Địa điểm hoặc thành phố, ví dụ: Hà Nội, Hồ Chí Minh, Da Nang, Tokyo, London"),
+		}
+		if len(enum) > 0 {
+			toolParams["provider"] = map[string]any{"type": "string", "enum": enum}
+		}
+		if err := reg(capability.FunctionTool{
+			ToolName: "weather.current",
+			ToolDefinition: &capability.ToolDefinition{
+				Name:        "weather.current",
+				Description: "Lấy thông tin thời tiết hiện tại và dự báo cho một địa điểm; kèm source và thời gian as_of",
+				Pack:        "weather",
+				Risk:        "external",
+				FeatureKey:  "weather.live",
+				Parameters:  obj(toolParams, "location"),
+			},
+			Handler: func(ctx context.Context, q capability.ToolRequest) capability.ToolResult {
+				var a struct {
+					Provider string `json:"provider"`
+					Location string `json:"location"`
+				}
+				if e := json.Unmarshal([]byte(q.Arguments), &a); e != nil {
+					return capability.Failure(e)
+				}
+				forecast, e := d.Weather.GetWeather(ctx, a.Provider, a.Location)
+				if e != nil {
+					return capability.Failure(e)
+				}
+				res := capability.Success(map[string]any{
+					"forecast":      forecast,
+					"provenance":    forecast.Source,
+					"as_of":         forecast.AsOf,
+					"instructional": false,
+				})
+				res.Presentation = &capability.Presentation{
+					Kind:      "weather_card",
+					Title:     forecast.Location,
+					Primary:   fmt.Sprintf("%.1f°C - %s", forecast.TemperatureC, forecast.Condition),
+					Secondary: fmt.Sprintf("Độ ẩm %d%% | %s (as of %s)", forecast.Humidity, forecast.Source, forecast.AsOf.Format(time.RFC3339)),
+				}
+				return res
+			},
+		}); err != nil {
 			return err
 		}
 	}
