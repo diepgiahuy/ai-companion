@@ -10,7 +10,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -110,6 +109,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleVoiceMemos(w, r)
 	case path == "data/voice-memos" && r.Method == http.MethodDelete:
 		h.handleDeleteVoiceMemo(w, r)
+	case strings.HasPrefix(path, "data/voice-memos/") && strings.HasSuffix(path, "/media") && r.Method == http.MethodGet:
+		h.handleVoiceMemoMedia(w, r, path)
 	case path == "data/journal" && r.Method == http.MethodGet:
 		h.handleJournal(w, r)
 	case path == "data/journal" && r.Method == http.MethodPost:
@@ -187,7 +188,7 @@ func (h *Handler) handleOverview(w http.ResponseWriter, r *http.Request) {
 		"savings_progress": savingsProgress,
 		"expenses":         recentExpenses,
 		"notes":            recentNotes,
-		"voice_memos":      recentVoiceMemos,
+		"voice_memos":      h.projectVoiceMemos(recentVoiceMemos),
 		"reminders":        activeReminders,
 	})
 }
@@ -248,7 +249,7 @@ func (h *Handler) handleVoiceMemos(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, map[string]any{"voice_memos": items})
+	writeJSON(w, map[string]any{"voice_memos": h.projectVoiceMemos(items)})
 }
 
 func (h *Handler) handleJournal(w http.ResponseWriter, r *http.Request) {
@@ -663,24 +664,22 @@ func (h *Handler) handleDeleteVoiceMemo(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "valid id is required", http.StatusBadRequest)
 		return
 	}
-	memos, _ := h.deps.Store.QueryVoiceMemos(r.Context(), userID, domain.VoiceMemoQuery{Limit: 100})
-	var memoPath string
-	for _, memo := range memos {
-		if memo.ID == id {
-			memoPath = memo.Path
-			break
-		}
+	memo, found, err := h.deps.Store.VoiceMemoByID(r.Context(), userID, id)
+	if err != nil {
+		http.Error(w, "failed to load voice memo", http.StatusInternalServerError)
+		return
 	}
+	if !found {
+		http.NotFound(w, r)
+		return
+	}
+	resolved, mediaAvailable := h.resolveVoiceMemoPath(memo.Path)
 	if err := h.deps.Store.DeleteVoiceMemo(r.Context(), userID, id); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if memoPath != "" && h.deps.RecordingsDir != "" {
-		cleanRecordings := filepath.Clean(h.deps.RecordingsDir)
-		cleanPath := filepath.Clean(memoPath)
-		if strings.HasPrefix(cleanPath, cleanRecordings+string(filepath.Separator)) || cleanPath == cleanRecordings {
-			_ = os.Remove(cleanPath)
-		}
+	if mediaAvailable {
+		_ = os.Remove(resolved)
 	}
 	writeJSON(w, map[string]any{"ok": true, "deleted": "voice_memo", "id": id})
 }
