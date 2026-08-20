@@ -28,10 +28,17 @@ class CIScopeTests(unittest.TestCase):
         self.assertFalse(scope.software_device_compile)
         self.assertFalse(scope.tier1)
 
-    def test_ownerweb_change_keeps_real_database_oracle(self) -> None:
+    def test_ownerweb_go_change_keeps_real_database_oracle(self) -> None:
         scope = ci_scope.classify("pull_request", ["backend/internal/ownerweb/dashboard.go"])
         self.assertTrue(scope.backend)
         self.assertTrue(scope.postgres)
+        self.assertFalse(scope.software_device_compile)
+        self.assertFalse(scope.tier1)
+
+    def test_ownerweb_html_only_change_stays_fast(self) -> None:
+        scope = ci_scope.classify("pull_request", ["backend/internal/ownerweb/dashboard.html"])
+        self.assertTrue(scope.backend)
+        self.assertFalse(scope.postgres)
         self.assertFalse(scope.software_device_compile)
         self.assertFalse(scope.tier1)
 
