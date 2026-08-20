@@ -28,6 +28,38 @@ class CIScopeTests(unittest.TestCase):
         self.assertFalse(scope.software_device_compile)
         self.assertFalse(scope.tier1)
 
+    def test_ownerweb_go_change_keeps_real_database_oracle(self) -> None:
+        scope = ci_scope.classify("pull_request", ["backend/internal/ownerweb/dashboard.go"])
+        self.assertTrue(scope.backend)
+        self.assertTrue(scope.postgres)
+        self.assertFalse(scope.software_device_compile)
+        self.assertFalse(scope.protocol)
+        self.assertFalse(scope.tier1)
+
+    def test_ownerweb_html_only_change_stays_fast(self) -> None:
+        scope = ci_scope.classify("pull_request", ["backend/internal/ownerweb/dashboard.html"])
+        self.assertTrue(scope.backend)
+        self.assertFalse(scope.postgres)
+        self.assertFalse(scope.software_device_compile)
+        self.assertFalse(scope.tier1)
+
+    def test_classifier_script_does_not_force_unrelated_hardware_gates(self) -> None:
+        scope = ci_scope.classify(
+            "pull_request",
+            [
+                "scripts/ci_scope.py",
+                "scripts/test_ci_scope.py",
+                "backend/internal/ownerweb/dashboard.go",
+            ],
+        )
+        self.assertEqual(scope.mode, "pr-targeted")
+        self.assertTrue(scope.backend)
+        self.assertTrue(scope.postgres)
+        self.assertFalse(scope.host)
+        self.assertFalse(scope.software_device_compile)
+        self.assertFalse(scope.protocol)
+        self.assertFalse(scope.tier1)
+
     def test_firmware_protocol_change_compiles_software_device_without_full_tier1(self) -> None:
         scope = ci_scope.classify("pull_request", ["components/companion_app/src/app.cpp"])
         self.assertTrue(scope.host)

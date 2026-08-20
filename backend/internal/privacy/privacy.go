@@ -16,12 +16,14 @@ type Policy struct {
 	MemoryRetentionDays       int       `json:"memory_retention_days"`
 	UpdatedAt                 time.Time `json:"updated_at"`
 }
+
 type RetentionReport struct {
 	ConversationRows int      `json:"conversation_rows"`
 	MemoryRows       int      `json:"memory_rows"`
 	VoiceMemoRows    int      `json:"voice_memo_rows"`
 	OrphanPaths      []string `json:"orphan_paths,omitempty"`
 }
+
 type Repository interface {
 	GetPrivacyPolicy(context.Context, string) (Policy, bool, error)
 	SetPrivacyPolicy(context.Context, Policy) error
@@ -47,6 +49,7 @@ func New(repo Repository) *Service {
 		orphanGrace:   time.Hour,
 	}
 }
+
 func (s *Service) Policy(ctx context.Context, user string) (Policy, error) {
 	p, ok, err := s.repo.GetPrivacyPolicy(ctx, user)
 	if err != nil {
@@ -57,32 +60,51 @@ func (s *Service) Policy(ctx context.Context, user string) (Policy, error) {
 	}
 	return Policy{UserID: user, SaveVoiceAudio: false, VoiceMailPolicy: "disabled", LongTermMemoryEnabled: false}, nil
 }
-func (s *Service) Set(ctx context.Context, p Policy) error {
+
+// NormalizePolicy applies privacy defaults and validates the persisted policy
+// boundary. Callers that write policies directly through a Repository should use
+// this helper so browser, tool, and service paths share one validation contract.
+func NormalizePolicy(p Policy) (Policy, error) {
 	if p.UserID == "" {
-		return fmt.Errorf("user_id required")
+		return Policy{}, fmt.Errorf("user_id required")
 	}
 	if p.VoiceMailPolicy == "" {
 		p.VoiceMailPolicy = "disabled"
 	}
 	if p.VoiceMailPolicy != "disabled" && p.VoiceMailPolicy != "ephemeral" && p.VoiceMailPolicy != "retained" {
-		return fmt.Errorf("voice_mail_policy must be disabled, ephemeral, or retained")
+		return Policy{}, fmt.Errorf("voice_mail_policy must be disabled, ephemeral, or retained")
 	}
-	for name, days := range map[string]int{"conversation_retention_days": p.ConversationRetentionDays, "voice_memo_retention_days": p.VoiceMemoRetentionDays, "memory_retention_days": p.MemoryRetentionDays} {
+	for name, days := range map[string]int{
+		"conversation_retention_days": p.ConversationRetentionDays,
+		"voice_memo_retention_days":    p.VoiceMemoRetentionDays,
+		"memory_retention_days":        p.MemoryRetentionDays,
+	} {
 		if days < 0 || days > 3650 {
-			return fmt.Errorf("%s out of range", name)
+			return Policy{}, fmt.Errorf("%s out of range", name)
 		}
 	}
-	p.UpdatedAt = s.now().UTC()
-	return s.repo.SetPrivacyPolicy(ctx, p)
+	return p, nil
 }
+
+func (s *Service) Set(ctx context.Context, p Policy) error {
+	normalized, err := NormalizePolicy(p)
+	if err != nil {
+		return err
+	}
+	normalized.UpdatedAt = s.now().UTC()
+	return s.repo.SetPrivacyPolicy(ctx, normalized)
+}
+
 func (s *Service) MemoryAllowed(ctx context.Context, user string) bool {
 	p, e := s.Policy(ctx, user)
 	return e == nil && p.LongTermMemoryEnabled
 }
+
 func (s *Service) VoiceAudioAllowed(ctx context.Context, user string) bool {
 	p, e := s.Policy(ctx, user)
 	return e == nil && p.SaveVoiceAudio
 }
+
 func (s *Service) ApplyRetention(ctx context.Context) (RetentionReport, error) {
 	now := s.now().UTC()
 	report, err := s.repo.ApplyRetention(ctx, now)
