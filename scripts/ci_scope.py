@@ -113,6 +113,7 @@ def classify(event: str, paths: Iterable[str] = (), *, unknown_changes: bool = F
         ):
             backend = True
 
+        ownerweb_go = path.startswith("backend/internal/ownerweb/") and path.endswith(".go")
         if (
             _starts(
                 path,
@@ -120,11 +121,11 @@ def classify(event: str, paths: Iterable[str] = (), *, unknown_changes: bool = F
                 "ops/postgres/",
                 "backend/internal/pgstore/",
                 "backend/internal/jobs/",
-                "backend/internal/ownerweb/",
                 "backend/cmd/companiond/",
                 "backend/cmd/companion-river-migrate/",
                 "backend/cmd/companion-migrate/",
             )
+            or ownerweb_go
             or path in {"backend/go.mod", "backend/go.sum"}
         ):
             postgres = True
