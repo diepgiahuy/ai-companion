@@ -14,6 +14,12 @@ import (
 	"time"
 
 	evalharness "companion-server/eval"
+	"companion-server/internal/capability"
+	"companion-server/internal/contextengine"
+	"companion-server/internal/memory"
+	"companion-server/internal/providers/resources"
+	"companion-server/internal/providers/tools"
+	"companion-server/internal/store"
 )
 
 func main() {
@@ -28,7 +34,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	options := cliOptions{}
 	flags.StringVar(&options.scenarios, "scenarios", "./eval/scenarios.jsonl", "scenario JSONL path, or - for stdin")
 	flags.StringVar(&options.output, "out", "-", "report JSON path, or - for stdout")
-	flags.StringVar(&options.mode, "mode", "mock", "provider mode: mock or openai")
+	flags.StringVar(&options.mode, "mode", "mock", "provider mode: mock, openai, or personal_retrieval")
 	flags.IntVar(&options.runs, "runs", 1, "ordered repetitions of every scenario")
 	flags.DurationVar(&options.requestTimeout, "request-timeout", 2*time.Minute, "timeout for each provider request")
 	flags.StringVar(&options.providerName, "provider", "", "primary provider label")
@@ -74,6 +80,73 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
+	if options.mode == "personal_retrieval" {
+		reader, closeInput, err := openInput(options.scenarios)
+		if err != nil {
+			fmt.Fprintf(stderr, "open scenarios: %v\n", err)
+			return 2
+		}
+		defer closeInput()
+		scenarios, _, err := evalharness.LoadPersonalRetrievalCorpus(reader)
+		if err != nil {
+			fmt.Fprintf(stderr, "load retrieval scenarios: %v\n", err)
+			return 2
+		}
+
+		tmpDir, err := os.MkdirTemp("", "eval-retrieval-*")
+		if err != nil {
+			fmt.Fprintf(stderr, "create temp dir: %v\n", err)
+			return 1
+		}
+		defer os.RemoveAll(tmpDir)
+
+		data, err := store.Open(filepath.Join(tmpDir, "retrieval.db"))
+		if err != nil {
+			fmt.Fprintf(stderr, "open store: %v\n", err)
+			return 1
+		}
+		defer data.Close()
+
+		baseTime := time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC)
+		mem := memory.New(data, memory.HashEmbedding{Dimensions: 32})
+		toolRegistry := capability.NewToolRegistry()
+		_ = tools.RegisterNative(toolRegistry, tools.NativeDependencies{
+			Store:         data,
+			RecordingsDir: filepath.Join(tmpDir, "recordings"),
+			Now:           func() time.Time { return baseTime },
+		})
+		_ = tools.RegisterPlatform(toolRegistry, tools.PlatformDependencies{
+			Memory: mem,
+			Now:    func() time.Time { return baseTime },
+		})
+		resourceRegistry := capability.NewResourceRegistry()
+		_ = resourceRegistry.Register(resources.NewNative(data, nil, time.UTC))
+		router := contextengine.New(resourceRegistry)
+
+		report, err := evalharness.RunPersonalRetrievalEvaluation(context.Background(), scenarios, evalharness.RetrievalDependencies{
+			Store:         data,
+			Memory:        mem,
+			Registry:      toolRegistry,
+			Router:        router,
+			Resources:     resourceRegistry,
+			RecordingsDir: filepath.Join(tmpDir, "recordings"),
+			Now:           func() time.Time { return baseTime },
+		})
+		if err != nil {
+			fmt.Fprintf(stderr, "run personal retrieval evaluation: %v\n", err)
+			return 1
+		}
+		if err := writeJSONReport(options.output, stdout, report); err != nil {
+			fmt.Fprintf(stderr, "write report: %v\n", err)
+			return 1
+		}
+		if report.FailedCases > 0 {
+			fmt.Fprintf(stderr, "personal retrieval benchmark failed: %d/%d passed (%.2f)\n", report.PassedCases, report.TotalCases, report.PassRate)
+			return 1
+		}
+		return 0
+	}
+
 	reader, closeInput, err := openInput(options.scenarios)
 	if err != nil {
 		fmt.Fprintf(stderr, "open scenarios: %v\n", err)
@@ -110,7 +183,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "run benchmark: %v\n", err)
 		return 1
 	}
-	if err := writeReport(options.output, stdout, report); err != nil {
+	if err := writeJSONReport(options.output, stdout, report); err != nil {
 		fmt.Fprintf(stderr, "write report: %v\n", err)
 		return 1
 	}
@@ -152,7 +225,7 @@ func (o cliOptions) validate() error {
 		return errors.New("max-tokens must be positive")
 	}
 	switch o.mode {
-	case "mock":
+	case "mock", "personal_retrieval":
 	case "openai":
 		if strings.TrimSpace(o.endpoint) == "" || strings.TrimSpace(o.model) == "" {
 			return errors.New("openai mode requires -endpoint and -model")
@@ -308,7 +381,7 @@ func openInput(path string) (io.Reader, func(), error) {
 	return file, func() { _ = file.Close() }, nil
 }
 
-func writeReport(path string, stdout io.Writer, report evalharness.Report) error {
+func writeJSONReport(path string, stdout io.Writer, report any) error {
 	data, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
 		return err
