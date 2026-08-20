@@ -86,6 +86,9 @@ func (r *Router) Plan(ctx context.Context, query string) Plan {
 	if has("giá vàng", "xau", "gold", "market", "chứng khoán", "stock", "crypto", "bitcoin", "ethereum", "tỷ giá", "exchange rate", "usd/vnd", "eur/vnd", "sjc") {
 		packs["market"] = true
 	}
+	if has("thời tiết", "thoi tiet", "weather", "forecast", "nhiệt độ", "nhiet do", "mưa không", "mua khong", "rain", "temperature", "sunny", "cloudy", "trời hôm nay", "dự báo thời tiết") {
+		packs["weather"] = true
+	}
 	if (has("nhớ", "ghi nhớ", "remember", "quên", "forget", "từng nói", "sở thích", "dị ứng", "sinh nhật", "personal memory", "allergy", "allergies", "preference", "preferences", "birthday", "facts", "license", "habit", "profile", "forgotten", "pin", "confidential facts") || ((has("thích ", "ghét ") || strings.HasSuffix(q, "thích")) && !has("giải thích"))) && !has("tiết kiệm", "saving") {
 		packs["memory"] = true
 	}
@@ -113,7 +116,7 @@ func (r *Router) Plan(ctx context.Context, query string) Plan {
 }
 func mapKeys(m map[string]bool) []string {
 	out := make([]string, 0, len(m))
-	for _, k := range []string{"expense", "budget", "saving", "note", "journal", "schedule", "voice", "memory", "market", "context"} {
+	for _, k := range []string{"expense", "budget", "saving", "note", "journal", "schedule", "voice", "memory", "market", "weather", "context"} {
 		if m[k] {
 			out = append(out, k)
 		}

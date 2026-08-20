@@ -45,3 +45,28 @@ func TestRoutesMarketAndMemoryWithoutExposingEverything(t *testing.T) {
 		t.Fatalf("memory packs=%v", p.Packs)
 	}
 }
+
+func TestRoutesWeatherPack(t *testing.T) {
+	r := New(nil)
+	queries := []string{
+		"thời tiết Hà Nội hôm nay",
+		"what is the weather in Tokyo?",
+		"ngày mai có mưa không",
+		"forecast for tomorrow in Da Nang",
+		"nhiệt độ hiện tại",
+	}
+	for _, q := range queries {
+		p := r.Plan(context.Background(), q)
+		found := false
+		for _, pack := range p.Packs {
+			if pack == "weather" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("expected weather pack for query %q, got packs=%v", q, p.Packs)
+		}
+	}
+}
+

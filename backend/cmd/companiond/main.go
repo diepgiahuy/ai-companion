@@ -33,6 +33,7 @@ import (
 	"companion-server/internal/supervision"
 	"companion-server/internal/usage"
 	"companion-server/internal/voicemail"
+	"companion-server/internal/weather"
 	promptpkg "companion-server/prompts"
 )
 
@@ -152,6 +153,7 @@ func main() {
 		marketProviders = append(marketProviders, market.PNJGold{Client: httpClient})
 	}
 	marketService := market.New(30*time.Second, marketProviders...)
+	weatherService := weather.New(15*time.Minute, weather.NewOpenMeteo(httpClient))
 
 	resourceRegistry := capability.NewResourceRegistry()
 	if err := resourceRegistry.Register(resourceprovider.NewNative(data, conversationService, location)); err != nil {
@@ -166,7 +168,12 @@ func main() {
 		logger.Error("register native tools", "error", err)
 		os.Exit(1)
 	}
-	if err := toolprovider.RegisterPlatform(toolRegistry, toolprovider.PlatformDependencies{Memory: memoryService, Market: marketService, MarketWatches: data}); err != nil {
+	if err := toolprovider.RegisterPlatform(toolRegistry, toolprovider.PlatformDependencies{
+		Memory:        memoryService,
+		Market:        marketService,
+		MarketWatches: data,
+		Weather:       weatherService,
+	}); err != nil {
 		logger.Error("register platform tools", "error", err)
 		os.Exit(1)
 	}

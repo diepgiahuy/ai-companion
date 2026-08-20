@@ -68,7 +68,9 @@
 {"input":"Giá vàng SJC hôm nay bao nhiêu một lượng?","must_pack":["market"]}
 {"input":"Ethereum đang giá bao nhiêu đô?","must_pack":["market"]}
 {"input":"Tỷ giá EUR/VND hôm nay","must_pack":["market"]}
-{"input":"Thời tiết Hà Nội hôm nay thế nào?","fallback":true}
+{"input":"Thời tiết Hà Nội hôm nay thế nào?","must_pack":["weather"]}
+{"input":"What is the weather forecast in Tokyo today?","must_pack":["weather"]}
+{"input":"Hôm nay trời có mưa không?","must_pack":["weather"]}
 {"input":"Giải thích cho tôi định lý Pythagoras","fallback":true}
 {"input":"Bạn có thể giúp tôi những gì trong ngày?","fallback":true}
 {"input":"Chúc ngủ ngon companion","fallback":true}
