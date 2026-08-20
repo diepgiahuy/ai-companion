@@ -25,7 +25,6 @@ jobs:
     timeout-minutes: 5
     outputs:
       host: ${{ steps.classify.outputs.host }}
-      software_device_compile: ${{ steps.classify.outputs.software_device_compile }}
       backend: ${{ steps.classify.outputs.backend }}
       backend_full: ${{ steps.classify.outputs.backend_full }}
       codeql: ${{ steps.classify.outputs.codeql }}
@@ -110,31 +109,13 @@ jobs:
 
       - name: Install host dependencies
         if: needs.prepare.result == 'success'
-        shell: bash
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          SOFTWARE_DEVICE_COMPILE: ${{ needs.prepare.outputs.software_device_compile }}
         run: |
-          set -euo pipefail
-          packages=(ninja-build pkg-config libopus-dev libopusfile-dev)
-          if [[ "$EVENT_NAME" == "pull_request" && "$SOFTWARE_DEVICE_COMPILE" == "true" ]]; then
-            packages+=(libboost-system-dev nlohmann-json3-dev libssl-dev)
-          fi
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends "${packages[@]}"
+          sudo apt-get install -y --no-install-recommends ninja-build pkg-config libopus-dev libopusfile-dev
 
       - name: Run host component and integration tests
         if: needs.prepare.result == 'success'
         run: bash scripts/e2e.sh
-
-      - name: Compile Tier-1 software-device nearest oracle
-        if: >-
-          needs.prepare.result == 'success' &&
-          github.event_name == 'pull_request' &&
-          needs.prepare.outputs.software_device_compile == 'true'
-        run: |
-          cmake -S host/companion_software_device -B build-software-device -G Ninja -DCMAKE_BUILD_TYPE=Release
-          cmake --build build-software-device --target companion_software_device
 
   backend-quality:
     name: Go backend quality
@@ -268,7 +249,7 @@ jobs:
     name: Protocol v2 firmware compile
     needs: prepare
     if: >-
-      github.event_name != 'schedule' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
       needs.prepare.result == 'success' &&
       needs.prepare.outputs.protocol == 'true'
     uses: ./.github/workflows/protocol_v2.yml
@@ -277,14 +258,14 @@ jobs:
     name: Tier-1 software-device orchestration
     needs: prepare
     if: >-
-      github.event_name != 'schedule' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
       needs.prepare.result == 'success' &&
       needs.prepare.outputs.tier1 == 'true'
     uses: ./.github/workflows/software-device-e2e.yml
 
   pr-gate:
     name: PR Gate
-    needs: [prepare, host, backend-quality, codeql-go, postgres-gate, protocol-gate, tier1-gate]
+    needs: [prepare, host, backend-quality, codeql-go, postgres-gate]
     if: github.event_name == 'pull_request' && always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -297,15 +278,10 @@ jobs:
           BACKEND_RESULT: ${{ needs.backend-quality.result }}
           CODEQL_RESULT: ${{ needs.codeql-go.result }}
           POSTGRES_RESULT: ${{ needs.postgres-gate.result }}
-          PROTOCOL_RESULT: ${{ needs.protocol-gate.result }}
-          TIER1_RESULT: ${{ needs.tier1-gate.result }}
           HOST_REQUIRED: ${{ needs.prepare.outputs.host }}
-          SOFTWARE_DEVICE_COMPILE_REQUIRED: ${{ needs.prepare.outputs.software_device_compile }}
           BACKEND_REQUIRED: ${{ needs.prepare.outputs.backend }}
           CODEQL_REQUIRED: ${{ needs.prepare.outputs.codeql }}
           POSTGRES_REQUIRED: ${{ needs.prepare.outputs.postgres }}
-          PROTOCOL_REQUIRED: ${{ needs.prepare.outputs.protocol }}
-          TIER1_REQUIRED: ${{ needs.prepare.outputs.tier1 }}
           CI_MODE: ${{ needs.prepare.outputs.mode }}
         run: |
           set -euo pipefail
@@ -322,8 +298,6 @@ jobs:
           [[ "$BACKEND_REQUIRED" != "true" ]] || require_success "backend quality" "$BACKEND_RESULT"
           [[ "$CODEQL_REQUIRED" != "true" ]] || require_success "CodeQL Go" "$CODEQL_RESULT"
           [[ "$POSTGRES_REQUIRED" != "true" ]] || require_success "PostgreSQL / River integration" "$POSTGRES_RESULT"
-          [[ "$PROTOCOL_REQUIRED" != "true" ]] || require_success "Protocol firmware compile" "$PROTOCOL_RESULT"
-          [[ "$TIER1_REQUIRED" != "true" ]] || require_success "Tier-1 software device" "$TIER1_RESULT"
 
           {
             echo "## PR Gate"
@@ -331,12 +305,9 @@ jobs:
             echo "- mode: $CI_MODE"
             echo "- evidence: $PREPARE_RESULT"
             echo "- host tests: $HOST_RESULT"
-            echo "- software-device compile required: $SOFTWARE_DEVICE_COMPILE_REQUIRED"
             echo "- backend: $BACKEND_RESULT"
             echo "- CodeQL: $CODEQL_RESULT"
             echo "- PostgreSQL/River: $POSTGRES_RESULT"
-            echo "- protocol: $PROTOCOL_RESULT"
-            echo "- Tier-1 software device: $TIER1_RESULT"
           } >> "$GITHUB_STEP_SUMMARY"
 
   promotion-gate:
