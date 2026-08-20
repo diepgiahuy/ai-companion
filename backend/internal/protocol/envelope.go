@@ -148,15 +148,19 @@ func (e Envelope) Validate() error {
 	if err := validateOpaqueID("message_id", e.MessageID, 128); err != nil {
 		return &ProtocolError{Code: InvalidEnvelopeCode, Detail: err.Error()}
 	}
-	for name, value := range map[string]string{
-		"correlation_id": e.CorrelationID,
-		"session_id":     e.SessionID,
-		"turn_id":        e.TurnID,
-	} {
-		if value != "" {
-			if err := validateOpaqueID(name, value, 128); err != nil {
-				return &ProtocolError{Code: InvalidEnvelopeCode, Detail: err.Error()}
-			}
+	if e.CorrelationID != "" {
+		if err := validateOpaqueID("correlation_id", e.CorrelationID, 128); err != nil {
+			return &ProtocolError{Code: InvalidEnvelopeCode, Detail: err.Error()}
+		}
+	}
+	if e.SessionID != "" {
+		if err := validateOpaqueID("session_id", e.SessionID, 128); err != nil {
+			return &ProtocolError{Code: InvalidEnvelopeCode, Detail: err.Error()}
+		}
+	}
+	if e.TurnID != "" {
+		if err := validateOpaqueID("turn_id", e.TurnID, 128); err != nil {
+			return &ProtocolError{Code: InvalidEnvelopeCode, Detail: err.Error()}
 		}
 	}
 	if len(e.Payload) == 0 || len(e.Payload) > MaximumPayloadBytes {

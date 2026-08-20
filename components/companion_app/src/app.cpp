@@ -467,10 +467,12 @@ void CompanionApp::pump_alarm_tone() {
         playback_frame_.size(), total_samples - alarm_tone_generated_samples_));
     const uint32_t period = std::max<uint32_t>(2, kAudioSampleRateHz /
                                                      std::max<uint16_t>(1, config_.alarm_tone_hz));
+    constexpr uint64_t beep_period_samples = static_cast<uint64_t>(kAudioSampleRateHz) * 300 / 1'000;
+    constexpr uint64_t beep_active_samples = static_cast<uint64_t>(kAudioSampleRateHz) * 180 / 1'000;
     for (size_t i = 0; i < count; ++i) {
       const uint64_t sample_index = alarm_tone_generated_samples_ + i;
       const uint32_t within_period = static_cast<uint32_t>(sample_index % period);
-      const bool beep_window = ((sample_index * 1'000 / kAudioSampleRateHz) % 300) < 180;
+      const bool beep_window = (sample_index % beep_period_samples) < beep_active_samples;
       playback_frame_[i] = beep_window
                                ? (within_period < period / 2 ? config_.alarm_tone_amplitude
                                                             : -config_.alarm_tone_amplitude)
@@ -673,7 +675,7 @@ bool CompanionApp::frame_has_voice(std::span<const int16_t> pcm) const {
     const int32_t value = sample;
     sum += static_cast<uint64_t>(value < 0 ? -value : value);
   }
-  return sum / pcm.size() >= config_.vad_mean_abs_threshold;
+  return sum >= static_cast<uint64_t>(config_.vad_mean_abs_threshold) * pcm.size();
 }
 
 bool CompanionApp::ensure_monitor_capture() {
