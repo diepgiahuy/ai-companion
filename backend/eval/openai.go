@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -137,8 +138,33 @@ func (p *OpenAIProvider) Evaluate(ctx context.Context, req ProviderRequest) (Pro
 	if strings.TrimSpace(p.config.APIKey) != "" {
 		httpReq.Header.Set("Authorization", "Bearer "+strings.TrimSpace(p.config.APIKey))
 	}
-	started := time.Now()
-	httpResp, err := p.client.Do(httpReq)
+	var httpResp *http.Response
+	var started time.Time
+	maxAttempts := 8
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		started = time.Now()
+		req := httpReq.Clone(ctx)
+		req.Body = io.NopCloser(bytes.NewReader(body))
+		httpResp, err = p.client.Do(req)
+		if err == nil && (httpResp.StatusCode == http.StatusTooManyRequests || httpResp.StatusCode == http.StatusServiceUnavailable) {
+			if attempt < maxAttempts-1 {
+				_ = httpResp.Body.Close()
+				backoff := time.Duration(attempt+1) * 2 * time.Second
+				if retryAfter := httpResp.Header.Get("Retry-After"); retryAfter != "" {
+					if seconds, parseErr := strconv.Atoi(retryAfter); parseErr == nil && seconds > 0 {
+						backoff = time.Duration(seconds) * time.Second
+					}
+				}
+				select {
+				case <-ctx.Done():
+					return ProviderResponse{}, ctx.Err()
+				case <-time.After(backoff):
+					continue
+				}
+			}
+		}
+		break
+	}
 	if err != nil {
 		return ProviderResponse{}, fmt.Errorf("call chat endpoint: %w", err)
 	}
@@ -182,10 +208,22 @@ func defaultSystemPrompt(s Scenario) string {
 	if strings.TrimSpace(s.System) != "" {
 		return strings.TrimSpace(s.System)
 	}
-	return "You are an AI Companion benchmark target. Use supplied tools when appropriate. " +
-		"When no tool call is needed, return exactly one JSON object with optional keys " +
-		"answer (string), packs (array of strings), retrieved_ids (array of strings), and escalate (boolean). " +
-		"Do not include markdown. Allowed routing packs are expense, budget, schedule, note, journal, voice, memory, market, and context."
+	return "You are an AI Companion domain router. Classify user queries into one or more relevant domain packs: expense, budget, saving, schedule, note, journal, voice, memory, market, weather, context.\n\n" +
+		"Routing rules:\n" +
+		"- Expense queries (spending money, buying, food costs, paying) require [\"expense\", \"budget\"].\n" +
+		"- Pure budget queries (budget limits, allowances, budget overview) require [\"budget\"].\n" +
+		"- Saving queries (saving goals, savings targets, progress) require [\"saving\", \"budget\"].\n" +
+		"- Timers, alarms, reminders, calendar, appointments, meetings require [\"schedule\"].\n" +
+		"- Text notes and quick note search require [\"note\"].\n" +
+		"- Diary entries and personal journals require [\"journal\"].\n" +
+		"- Voice recordings and audio voice notes/memos require [\"voice\"].\n" +
+		"- Personal facts, user preferences, allergies, birthdays to remember/forget require [\"memory\"].\n" +
+		"- Gold, stock, crypto, Bitcoin, FX currency exchange rates require [\"market\"]. If combined with price alert/reminder: [\"market\", \"schedule\"].\n" +
+		"- Weather forecasts, rain, temperature require [\"weather\"].\n" +
+		"- Reset/clear conversation history requires exact [\"context\"].\n" +
+		"- General chit-chat, greetings, jokes, math, explanations require {\"answer\": \"<response>\", \"packs\": []}.\n\n" +
+		"When tools are provided, invoke the appropriate tools.\n" +
+		"Always return strictly valid JSON: {\"packs\": [\"<pack1>\", ...]} or {\"answer\": \"...\", \"packs\": []}."
 }
 
 func readJSONResponse(r io.Reader, started time.Time) (ProviderResponse, error) {
@@ -301,8 +339,16 @@ func normalizeChatOutput(content string, calls []apiToolCall, usage *apiUsage) (
 	if usage != nil {
 		observation.Usage = &Usage{InputTokens: usage.PromptTokens, OutputTokens: usage.CompletionTokens, TotalTokens: usage.TotalTokens}
 	}
-	if strings.TrimSpace(content) == "" {
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" {
 		return observation, nil
+	}
+	if strings.HasPrefix(trimmed, "```") {
+		lines := strings.Split(trimmed, "\n")
+		if len(lines) >= 2 && strings.HasPrefix(lines[0], "```") && strings.HasSuffix(strings.TrimSpace(lines[len(lines)-1]), "```") {
+			trimmed = strings.Join(lines[1:len(lines)-1], "\n")
+			trimmed = strings.TrimSpace(trimmed)
+		}
 	}
 	var structured struct {
 		Answer       string   `json:"answer"`
@@ -310,7 +356,7 @@ func normalizeChatOutput(content string, calls []apiToolCall, usage *apiUsage) (
 		RetrievedIDs []string `json:"retrieved_ids"`
 		Escalate     *bool    `json:"escalate"`
 	}
-	if err := json.Unmarshal([]byte(content), &structured); err != nil {
+	if err := json.Unmarshal([]byte(trimmed), &structured); err != nil {
 		return observation, []string{"response content was not the structured observation JSON contract; text-only checks remain available"}
 	}
 	if structured.Answer != "" {
