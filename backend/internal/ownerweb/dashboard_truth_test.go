@@ -67,6 +67,16 @@ func TestDashboardUsesSimplifiedTruthfulProductSurface(t *testing.T) {
 			t.Fatalf("dashboard missing canonical mutation path %q", mutation)
 		}
 	}
+
+	if !strings.Contains(dashboardHTML, "v.media_url") {
+		t.Fatal("dashboard missing voice memo media_url playback binding")
+	}
+	if !strings.Contains(dashboardHTML, `<audio controls preload="none"`) {
+		t.Fatal("dashboard missing audio playback control")
+	}
+	if strings.Contains(dashboardHTML, ".path") || strings.Contains(dashboardHTML, "['path']") || strings.Contains(dashboardHTML, `["path"]`) {
+		t.Fatal("dashboard must never reference storage path")
+	}
 }
 
 func TestLegacyDashboardClaimRouteIsGone(t *testing.T) {
