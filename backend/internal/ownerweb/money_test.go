@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -39,7 +40,7 @@ func TestOwnerMonthlyBudgetMutationRequiresCSRFAndRereadsFromOverview(t *testing
 		req := httptest.NewRequest(
 			http.MethodPost,
 			"/v1/owner/data/budget",
-			strings.NewReader(`{"period":"monthly","limit_vnd":`+jsonInt(limit)+`}`),
+			strings.NewReader(`{"period":"monthly","limit_vnd":`+strconv.FormatInt(limit, 10)+`}`),
 		)
 		addOwnerSession(req, session)
 		req.Header.Set("X-CSRF-Token", csrf)
@@ -83,16 +84,4 @@ func TestOwnerMonthlyBudgetMutationRequiresCSRFAndRereadsFromOverview(t *testing
 	if !updated.BudgetSet || updated.MonthlyBudget != 18_000_000 {
 		t.Fatalf("updated overview budget=%+v", updated)
 	}
-}
-
-func jsonInt(value int64) string {
-	return strings.TrimSpace(strings.ReplaceAll(strings.TrimSpace(string(mustJSON(value))), "\n", ""))
-}
-
-func mustJSON(value any) []byte {
-	data, err := json.Marshal(value)
-	if err != nil {
-		panic(err)
-	}
-	return data
 }
