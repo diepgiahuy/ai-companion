@@ -28,6 +28,13 @@ class CIScopeTests(unittest.TestCase):
         self.assertFalse(scope.software_device_compile)
         self.assertFalse(scope.tier1)
 
+    def test_ownerweb_change_keeps_real_database_oracle(self) -> None:
+        scope = ci_scope.classify("pull_request", ["backend/internal/ownerweb/dashboard.go"])
+        self.assertTrue(scope.backend)
+        self.assertTrue(scope.postgres)
+        self.assertFalse(scope.software_device_compile)
+        self.assertFalse(scope.tier1)
+
     def test_firmware_protocol_change_compiles_software_device_without_full_tier1(self) -> None:
         scope = ci_scope.classify("pull_request", ["components/companion_app/src/app.cpp"])
         self.assertTrue(scope.host)
