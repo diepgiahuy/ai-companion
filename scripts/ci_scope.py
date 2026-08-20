@@ -46,8 +46,6 @@ def _is_ci_control(path: str) -> bool:
             "scripts/backend_quality.sh",
             "scripts/check_evidence.py",
             "scripts/check_single_path.py",
-            "scripts/ci_scope.py",
-            "scripts/test_ci_scope.py",
         }
     )
 
@@ -80,7 +78,9 @@ def classify(event: str, paths: Iterable[str] = (), *, unknown_changes: bool = F
 
     cleaned = sorted({path.strip() for path in paths if path.strip()})
     if any(_is_ci_control(path) for path in cleaned):
-        # CI-control changes validate the broad gate they are changing.
+        # Workflow/gate implementation changes validate the broad gate they alter.
+        # The classifier and its unit tests are validated directly by the always-on
+        # classification-policy test and should not force unrelated hardware/Tier-1 work.
         return _broad("pr-ci-control", promotion=False)
 
     host = False
