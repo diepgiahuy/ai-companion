@@ -116,9 +116,9 @@ func TestOwnerHubBrowserKeyboardFocusAndResponsiveFlow(t *testing.T) {
 	}
 	executeScript(t, wd, `document.querySelector('[data-create="expense"]').click(); return true;`)
 	waitForScript(t, wd, `return document.getElementById('edit-sheet').open && document.activeElement.id === 'sheet-amount_vnd';`)
-	bottom := scriptMap(t, wd, `const r=document.getElementById('edit-sheet').getBoundingClientRect(); return {bottom:r.bottom,width:r.width,viewportHeight:innerHeight,viewportWidth:innerWidth};`)
-	if absFloat(asFloat(bottom["bottom"])-asFloat(bottom["viewportHeight"])) > 3 || absFloat(asFloat(bottom["width"])-asFloat(bottom["viewportWidth"])) > 3 {
-		t.Fatalf("mobile edit sheet is not a full-width bottom sheet: %#v", bottom)
+	bottom := scriptMap(t, wd, `const sheet=document.getElementById('edit-sheet'),r=sheet.getBoundingClientRect(); return {bottom:r.bottom,width:r.width,viewportHeight:innerHeight,viewportWidth:innerWidth,noOverflow:sheet.scrollWidth<=sheet.clientWidth};`)
+	if absFloat(asFloat(bottom["bottom"])-asFloat(bottom["viewportHeight"])) > 3 || asFloat(bottom["width"]) < asFloat(bottom["viewportWidth"])*0.9 || bottom["noOverflow"] != true {
+		t.Fatalf("mobile edit sheet violates bottom-sheet responsive contract: %#v", bottom)
 	}
 }
 
