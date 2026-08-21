@@ -89,6 +89,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleExpenses(w, r)
 	case path == "data/expenses" && r.Method == http.MethodPost:
 		h.handleCreateExpense(w, r)
+	case path == "data/expenses" && r.Method == http.MethodPatch:
+		h.handleUpdateExpense(w, r)
 	case path == "data/expenses" && r.Method == http.MethodDelete:
 		h.handleDeleteExpense(w, r)
 	case path == "data/budget" && r.Method == http.MethodPost:
@@ -103,6 +105,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleNotes(w, r)
 	case path == "data/notes" && r.Method == http.MethodPost:
 		h.handleCreateNote(w, r)
+	case path == "data/notes" && r.Method == http.MethodPatch:
+		h.handleUpdateNote(w, r)
 	case path == "data/notes" && r.Method == http.MethodDelete:
 		h.handleDeleteNote(w, r)
 	case path == "data/voice-memos" && r.Method == http.MethodGet:
@@ -115,14 +119,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleJournal(w, r)
 	case path == "data/journal" && r.Method == http.MethodPost:
 		h.handleCreateJournal(w, r)
+	case path == "data/journal" && r.Method == http.MethodPatch:
+		h.handleUpdateJournal(w, r)
 	case path == "data/journal" && r.Method == http.MethodDelete:
 		h.handleDeleteJournal(w, r)
 	case path == "data/reminders" && r.Method == http.MethodGet:
 		h.handleReminders(w, r)
 	case path == "data/reminders" && r.Method == http.MethodPost:
 		h.handleCreateReminder(w, r)
+	case path == "data/reminders" && r.Method == http.MethodPatch:
+		h.handleUpdateReminder(w, r)
 	case path == "data/reminders" && r.Method == http.MethodDelete:
 		h.handleDeleteReminder(w, r)
+	case path == "data/reminders/cancel" && r.Method == http.MethodPost:
+		h.handleCancelReminder(w, r)
 	case path == "data/timers/pause" && r.Method == http.MethodPost:
 		h.handlePauseTimer(w, r)
 	case path == "data/timers/resume" && r.Method == http.MethodPost:
@@ -219,10 +229,7 @@ func (h *Handler) handleNotes(w http.ResponseWriter, r *http.Request) {
 	}
 	from, to := parseQueryRange(r)
 	items, err := h.deps.Store.QueryNotes(r.Context(), userID, domain.NoteQuery{
-		From:   from,
-		To:     to,
-		Search: strings.TrimSpace(r.URL.Query().Get("search")),
-		Limit:  parseQueryLimit(r, 50),
+		From: from, To: to, Search: strings.TrimSpace(r.URL.Query().Get("search")), Limit: parseQueryLimit(r, 50),
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -240,10 +247,7 @@ func (h *Handler) handleVoiceMemos(w http.ResponseWriter, r *http.Request) {
 	from, to := parseQueryRange(r)
 	items, err := h.deps.Store.QueryVoiceMemos(r.Context(), userID, domain.VoiceMemoQuery{
 		DeviceID: strings.TrimSpace(r.URL.Query().Get("device_id")),
-		From:     from,
-		To:       to,
-		Search:   strings.TrimSpace(r.URL.Query().Get("search")),
-		Limit:    parseQueryLimit(r, 50),
+		From: from, To: to, Search: strings.TrimSpace(r.URL.Query().Get("search")), Limit: parseQueryLimit(r, 50),
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -409,11 +413,7 @@ func (h *Handler) handleUpdateDeviceConfig(w http.ResponseWriter, r *http.Reques
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	writeJSON(w, map[string]any{
-		"ok":              true,
-		"device":          projectOwnerDevice(twin, status, status.Online),
-		"settings_status": status,
-	})
+	writeJSON(w, map[string]any{"ok": true, "device": projectOwnerDevice(twin, status, status.Online), "settings_status": status})
 }
 
 func (h *Handler) handleCreateExpense(w http.ResponseWriter, r *http.Request) {
@@ -423,10 +423,10 @@ func (h *Handler) handleCreateExpense(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Amount      int64  `json:"amount_vnd"`
-		Category    string `json:"category"`
+		Amount int64 `json:"amount_vnd"`
+		Category string `json:"category"`
 		Description string `json:"description"`
-		OccurredAt  string `json:"occurred_at"`
+		OccurredAt string `json:"occurred_at"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Amount <= 0 {
 		http.Error(w, "invalid expense payload", http.StatusBadRequest)
@@ -453,8 +453,8 @@ func (h *Handler) handleSetBudget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Period   string `json:"period"`
-		LimitVND int64  `json:"limit_vnd"`
+		Period string `json:"period"`
+		LimitVND int64 `json:"limit_vnd"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Period == "" || req.LimitVND < 0 {
 		http.Error(w, "invalid budget payload", http.StatusBadRequest)
@@ -498,12 +498,7 @@ func ownerMutationRequest(r *http.Request, userID, operation, clientKey string, 
 		return idempotency.Request{}, err
 	}
 	hash := sha256.Sum256(append([]byte(operation+":"), body...))
-	return idempotency.Request{
-		Actor:       userID,
-		Operation:   operation,
-		Key:         key,
-		RequestHash: hex.EncodeToString(hash[:]),
-	}, nil
+	return idempotency.Request{Actor: userID, Operation: operation, Key: key, RequestHash: hex.EncodeToString(hash[:])}, nil
 }
 
 func (h *Handler) handleGetSavingsGoal(w http.ResponseWriter, r *http.Request) {
@@ -544,9 +539,9 @@ func (h *Handler) handleSetSavingsGoal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Period         string `json:"period"`
-		TargetVND      int64  `json:"target_vnd"`
-		Description    string `json:"description"`
+		Period string `json:"period"`
+		TargetVND int64 `json:"target_vnd"`
+		Description string `json:"description"`
 		IdempotencyKey string `json:"idempotency_key"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -569,9 +564,7 @@ func (h *Handler) handleSetSavingsGoal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	mutationReq, err := ownerMutationRequest(r, userID, "saving.goal_set", req.IdempotencyKey, map[string]any{
-		"period":      period,
-		"target_vnd":  req.TargetVND,
-		"description": req.Description,
+		"period": period, "target_vnd": req.TargetVND, "description": req.Description,
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -620,9 +613,7 @@ func (h *Handler) handleCreateNote(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	var req struct {
-		Content string `json:"content"`
-	}
+	var req struct{ Content string `json:"content"` }
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Content) == "" {
 		http.Error(w, "content is required", http.StatusBadRequest)
 		return
@@ -690,9 +681,7 @@ func (h *Handler) handleCreateJournal(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	var req struct {
-		Content string `json:"content"`
-	}
+	var req struct{ Content string `json:"content"` }
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Content) == "" {
 		http.Error(w, "content is required", http.StatusBadRequest)
 		return
@@ -730,13 +719,13 @@ func (h *Handler) handleCreateReminder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Kind           string `json:"kind"`
-		Title          string `json:"title"`
-		FireAt         string `json:"fire_at"`
-		DelayMinutes   int    `json:"delay_minutes"`
-		DelaySeconds   int    `json:"delay_seconds"`
+		Kind string `json:"kind"`
+		Title string `json:"title"`
+		FireAt string `json:"fire_at"`
+		DelayMinutes int `json:"delay_minutes"`
+		DelaySeconds int `json:"delay_seconds"`
 		IdempotencyKey string `json:"idempotency_key"`
-		DeviceID       string `json:"device_id"`
+		DeviceID string `json:"device_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Title) == "" {
 		http.Error(w, "title is required", http.StatusBadRequest)
@@ -801,9 +790,7 @@ func (h *Handler) handlePauseTimer(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	var req struct {
-		ID int64 `json:"id"`
-	}
+	var req struct{ ID int64 `json:"id"` }
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ID <= 0 {
 		http.Error(w, "valid id is required", http.StatusBadRequest)
 		return
@@ -821,9 +808,7 @@ func (h *Handler) handleResumeTimer(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	var req struct {
-		ID int64 `json:"id"`
-	}
+	var req struct{ ID int64 `json:"id"` }
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ID <= 0 {
 		http.Error(w, "valid id is required", http.StatusBadRequest)
 		return
@@ -848,14 +833,14 @@ func (h *Handler) handleGetPrivacy(w http.ResponseWriter, r *http.Request) {
 	}
 	if !found {
 		policy = privacy.Policy{
-			UserID:                    userID,
-			SaveVoiceAudio:            false,
-			VoiceMailPolicy:           "disabled",
-			LongTermMemoryEnabled:     false,
+			UserID: userID,
+			SaveVoiceAudio: false,
+			VoiceMailPolicy: "disabled",
+			LongTermMemoryEnabled: false,
 			ConversationRetentionDays: 30,
-			VoiceMemoRetentionDays:    30,
-			MemoryRetentionDays:       90,
-			UpdatedAt:                 time.Now().UTC(),
+			VoiceMemoRetentionDays: 30,
+			MemoryRetentionDays: 90,
+			UpdatedAt: time.Now().UTC(),
 		}
 	}
 	writeJSON(w, map[string]any{"privacy": policy})
