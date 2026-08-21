@@ -287,7 +287,7 @@ func TestDeviceSettingsWakeModelAndThresholdDispatchedInPlan07B(t *testing.T) {
 	srv := New(pipeline.Components{}, nil, WithAdminToken("admin-secret"), WithControlPlane(cp), WithDeviceCapabilities(router))
 	sess := newSettingsTestSession(t, srv, "dev-wake-plan07b", "user-wake-plan07b")
 
-	req := httptest.NewRequest(http.MethodPatch, "/api/v1/devices/dev-wake-plan07b/twin?user_id=user-wake-plan07b", bytes.NewReader([]byte(`{"wake_model":"wn9_hiesp","wake_threshold":0.72}`)))
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/devices/dev-wake-plan07b/twin?user_id=user-wake-plan07b", bytes.NewReader([]byte(`{"wake_model":"hey_bin","wake_threshold":0.72}`)))
 	req.SetPathValue("deviceID", "dev-wake-plan07b")
 	req.Header.Set("Authorization", "Bearer admin-secret")
 	rec := httptest.NewRecorder()
@@ -312,7 +312,7 @@ func TestDeviceSettingsWakeModelAndThresholdDispatchedInPlan07B(t *testing.T) {
 	if err := json.Unmarshal(callPayload.Arguments, &args); err != nil {
 		t.Fatal(err)
 	}
-	if args.Settings.WakeModel != "wn9_hiesp" || args.Settings.WakeThreshold == nil || *args.Settings.WakeThreshold != 0.72 {
+	if args.Settings.WakeModel != controlplane.WakeModelHeyBin || args.Settings.WakeThreshold == nil || *args.Settings.WakeThreshold != 0.72 {
 		t.Fatalf("wake settings in args mismatch: %+v", args)
 	}
 
@@ -336,7 +336,7 @@ func TestDeviceSettingsWakeModelAndThresholdDispatchedInPlan07B(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &twin); err != nil {
 		t.Fatal(err)
 	}
-	if twin.Status != controlplane.TwinStatusApplied || twin.Desired.WakeModel != "wn9_hiesp" || twin.Reported.WakeModel != "wn9_hiesp" {
+	if twin.Status != controlplane.TwinStatusApplied || twin.Desired.WakeModel != controlplane.WakeModelHeyBin || twin.Reported.WakeModel != controlplane.WakeModelHeyBin {
 		t.Fatalf("wake twin mismatch=%+v", twin)
 	}
 }
