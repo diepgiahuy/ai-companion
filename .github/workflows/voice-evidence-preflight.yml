@@ -1,0 +1,32 @@
+name: voice-evidence-preflight
+
+on:
+  push:
+    branches: [feat/105-real-voice-provider-benchmark-v2]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  credential-presence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      HAS_XUNFEI_APP_ID: ${{ secrets.XUNFEI_ASR_APP_ID != '' }}
+      HAS_XUNFEI_API_KEY: ${{ secrets.XUNFEI_ASR_API_KEY != '' }}
+      HAS_XUNFEI_API_SECRET: ${{ secrets.XUNFEI_ASR_API_SECRET != '' }}
+      HAS_HUOSHAN_APP_ID: ${{ secrets.HUOSHAN_TTS_APP_ID != '' }}
+      HAS_HUOSHAN_ACCESS_TOKEN: ${{ secrets.HUOSHAN_TTS_ACCESS_TOKEN != '' }}
+      HAS_HUOSHAN_RESOURCE_ID: ${{ secrets.HUOSHAN_TTS_RESOURCE_ID != '' }}
+      HAS_HUOSHAN_SPEAKER: ${{ secrets.HUOSHAN_TTS_SPEAKER != '' }}
+      HAS_QWEN_API_KEY: ${{ secrets.QWEN_REALTIME_API_KEY != '' }}
+      HAS_QWEN_WORKSPACE_ID: ${{ secrets.QWEN_REALTIME_WORKSPACE_ID != '' }}
+    steps:
+      - name: Report only credential presence
+        run: |
+          set -euo pipefail
+          printf 'xunfei_complete=%s\n' "$([[ "$HAS_XUNFEI_APP_ID" == true && "$HAS_XUNFEI_API_KEY" == true && "$HAS_XUNFEI_API_SECRET" == true ]] && echo true || echo false)"
+          printf 'huoshan_complete=%s\n' "$([[ "$HAS_HUOSHAN_APP_ID" == true && "$HAS_HUOSHAN_ACCESS_TOKEN" == true && "$HAS_HUOSHAN_RESOURCE_ID" == true && "$HAS_HUOSHAN_SPEAKER" == true ]] && echo true || echo false)"
+          printf 'qwen_complete=%s\n' "$([[ "$HAS_QWEN_API_KEY" == true && "$HAS_QWEN_WORKSPACE_ID" == true ]] && echo true || echo false)"
+          printf 'No secret values are printed by this workflow.\n'
