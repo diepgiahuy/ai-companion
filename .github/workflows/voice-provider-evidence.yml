@@ -8,7 +8,7 @@ on:
       - 'backend/cmd/bench-speech/**'
       - 'backend/eval/speechbench/**'
       - 'backend/internal/speech/**'
-      - 'backend/internal/server/voice_provider_evidence_test.go'
+      - 'backend/internal/server/voice_provider_evidence*_test.go'
       - 'scripts/prepare_voice_eval_corpus.py'
       - 'scripts/funasr_eval_server.py'
   workflow_dispatch:
@@ -29,6 +29,8 @@ jobs:
       FUNASR_REMOTE_CODE_COMMIT: 53a56d80667320b44a7dd779f5bf8c024b6c30a8
       FUNASR_MODEL_REPO: FunAudioLLM/Fun-ASR-MLT-Nano-2512
       EDGE_TTS_VERSION: 7.2.8
+      TORCH_VERSION: 2.9.0
+      TORCHAUDIO_VERSION: 2.9.0
     steps:
       - name: Checkout benchmark head
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -53,8 +55,19 @@ jobs:
           python3 -m py_compile scripts/prepare_voice_eval_corpus.py scripts/funasr_eval_server.py
           cd backend
           go test -tags nolibopusfile ./eval/speechbench ./cmd/bench-speech
-          go test -tags 'adk,nolibopusfile' ./internal/server -run TestVoiceEvidenceCanonicalRealCascade -count=1
+          go test -tags 'adk,nolibopusfile' ./internal/server -run '^TestVoiceEvidenceCanonicalRealCascade$' -count=1
           go build -tags nolibopusfile -o "$RUNNER_TEMP/bench-speech" ./cmd/bench-speech
+
+      - name: Prove canonical injected timeout and rate-limit semantics
+        env:
+          VOICE_EVIDENCE_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          VOICE_EVIDENCE_FAULT_REPORT: ${{ runner.temp }}/voice-evidence/canonical-faults.json
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/voice-evidence"
+          cd backend
+          go test -tags 'adk,nolibopusfile' ./internal/server \
+            -run '^TestVoiceEvidenceCanonicalFaultSemantics$' -count=1 -v
 
       - name: Prepare content-addressed FLEURS corpus
         run: |
@@ -75,10 +88,23 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m pip install --upgrade pip
+          # QwenAudio/Fun-ASR@${FUNASR_REMOTE_CODE_COMMIT} requires torch>=2.9.0
+          # and torchaudio>=2.9.0. Use PyTorch's official CPU wheel index because
+          # this hosted evidence lane intentionally runs without CUDA.
+          python3 -m pip install \
+            "torch==${TORCH_VERSION}" \
+            "torchaudio==${TORCHAUDIO_VERSION}" \
+            --index-url https://download.pytorch.org/whl/cpu
           python3 -m pip install \
             'funasr==1.4.1' \
             "edge-tts==${EDGE_TTS_VERSION}" \
             huggingface_hub
+          python3 - <<'PY'
+          import os, torch, torchaudio
+          assert torch.__version__.split('+', 1)[0] == os.environ['TORCH_VERSION'], torch.__version__
+          assert torchaudio.__version__.split('+', 1)[0] == os.environ['TORCHAUDIO_VERSION'], torchaudio.__version__
+          print(f"torch={torch.__version__} torchaudio={torchaudio.__version__} cuda={torch.cuda.is_available()}")
+          PY
           python3 -m pip freeze | sort > "$RUNNER_TEMP/voice-evidence/python-packages.txt"
 
       - name: Pin official FunASR remote code
@@ -188,6 +214,7 @@ jobs:
           root = pathlib.Path(os.environ["RUNNER_TEMP"]) / "voice-evidence"
           report = json.loads((root / "report.json").read_text())
           canonical = json.loads((root / "canonical-session.json").read_text())
+          faults = json.loads((root / "canonical-faults.json").read_text())
           lanes = {lane["lane"]: lane for lane in report["lanes"]}
           local = lanes.get("reference-local")
           if not local or local.get("status") != "passed":
@@ -200,11 +227,21 @@ jobs:
               raise SystemExit(f"canonical path evidence missing or misclassified: {canonical}")
           if canonical.get("tool_executions") != 1 or canonical.get("tts_binary_frames", 0) <= 0:
               raise SystemExit(f"canonical ADK/ToolRegistry/TTS evidence incomplete: {canonical}")
+          if faults.get("evidence_class") != "injected_failure_canonical_session":
+              raise SystemExit(f"fault evidence is missing or misclassified: {faults}")
+          fault_summary = faults.get("summary") or {}
+          if not fault_summary.get("timeout_handled") or not fault_summary.get("rate_limit_handled"):
+              raise SystemExit(f"timeout/rate-limit semantics were not proven: {fault_summary}")
+          if fault_summary.get("provider_errors_observed") != 2 or fault_summary.get("retries_observed") != 0:
+              raise SystemExit(f"fault counts/retry truth are unexpected: {fault_summary}")
+          for probe in faults.get("probes") or []:
+              if probe.get("protocol_error_code") != "asr_failed" or probe.get("agent_requests") != 0 or probe.get("tool_executions") != 0 or probe.get("tts_syntheses") != 0 or probe.get("stale_binary_frames") != 0:
+                  raise SystemExit(f"fault escaped canonical ASR boundary: {probe}")
           for name in ("reference-streaming", "native-realtime"):
               lane = lanes.get(name)
               if not lane or lane.get("status") != "insufficient_evidence":
                   raise SystemExit(f"{name} must remain insufficient without credentials: {lane}")
-          print("VOICE EVIDENCE PASS: real FunASR+EdgeTTS measured and exercised through canonical /v2/device + ADK + ToolRegistry; unavailable cloud lanes remain insufficient_evidence")
+          print("VOICE EVIDENCE PASS: real FunASR+EdgeTTS measured through canonical /v2/device + ADK + ToolRegistry; injected timeout/rate-limit semantics proven; unavailable cloud lanes remain insufficient_evidence")
           PY
 
       - name: Stop benchmark bridge
