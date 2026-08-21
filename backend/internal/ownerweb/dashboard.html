@@ -67,9 +67,13 @@
 
 <script>
 const app={view:'home',personal:'money',deviceID:'',devices:[],device:null,sheet:null,lastFocus:null};
-const esc=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+const esc=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#39;'}[char]));
 const money=value=>new Intl.NumberFormat('vi-VN').format(Number(value||0))+' VND';
 const date=value=>value?new Date(value).toLocaleString():'—';
+const clipped=(value,limit=56)=>{
+  const text=String(value??'').replace(/\s+/g,' ').trim();
+  return text.length>limit?text.slice(0,limit-1)+'…':text;
+};
 
 function localValue(value){
   const current=value?new Date(value):new Date();
@@ -121,6 +125,16 @@ function wakeLabel(value){
   if(value==='disabled')return'Push-to-talk only';
   if(value==='wn9_hiesp')return'Hi, ESP';
   return value||'Not set';
+}
+
+function otaPollingSelect(value){
+  const current=Number(value);
+  const choices=[[3600,'1 hour'],[21600,'6 hours'],[43200,'12 hours'],[86400,'24 hours'],[604800,'7 days']];
+  if(Number.isInteger(current)&&current>=3600&&current<=604800&&!choices.some(([seconds])=>seconds===current)){
+    const hours=Math.round((current/3600)*10)/10;
+    choices.unshift([current,`${hours} hours (current)`]);
+  }
+  return `<select id="ota-seconds" class="select compact" aria-label="OTA polling interval">${choices.map(([seconds,label])=>`<option value="${seconds}" ${seconds===current?'selected':''}>${label}</option>`).join('')}</select>`;
 }
 
 function pageHead(title){
@@ -227,6 +241,7 @@ function companionMarkup(device){
   const reported=device.reported||{};
   const wakeSelect=`<select id="wake-model" class="select compact"><option value="wn9_hiesp" ${desired.wake_model==='wn9_hiesp'?'selected':''}>Hi, ESP</option><option value="disabled" ${desired.wake_model==='disabled'?'selected':''}>Push-to-talk only</option></select>`;
   const smartVAD=`<select id="smart-vad" class="select compact"><option value="true" ${desired.smart_vad_enabled===true?'selected':''}>On</option><option value="false" ${desired.smart_vad_enabled===false?'selected':''}>Off</option></select>`;
+  const otaPolling=otaPollingSelect(desired.ota_poll_interval_s??reported.ota_poll_interval_s);
   return `<div class="state-card">
     <strong class="${stateClass(state)}">${esc(stateText(state))}</strong>
     <p>${state==='applied'?'Requested and applied state match.':'Requested state remains distinct from applied device state.'}</p>
@@ -237,7 +252,7 @@ function companionMarkup(device){
       ${controlRow('Wake',wakeLabel(reported.wake_model),wakeSelect,'save-wake')}
       ${controlRow('Wake sensitivity','Supported threshold',`<input id="wake-threshold" class="input compact" type="number" min="0.40" max="0.99" step="0.01" value="${esc(desired.wake_threshold??reported.wake_threshold??'')}">`,'save-wake-threshold')}
       ${controlRow('Smart VAD',reported.smart_vad_enabled===true?'On':reported.smart_vad_enabled===false?'Off':'Not set',smartVAD,'save-vad')}
-      ${controlRow('OTA polling','Desired polling interval',`<input id="ota-seconds" class="input compact" type="number" min="1" step="1" value="${esc(desired.ota_poll_interval_s??reported.ota_poll_interval_s??'')}">`,'save-ota')}
+      ${controlRow('OTA polling','How often Companion checks for updates',otaPolling,'save-ota')}
     </div>
   </section>
   <details class="advanced">
@@ -286,7 +301,7 @@ function bindCompanion(content,device){
   content.querySelector('#save-vad').onclick=()=>run({smart_vad_enabled:content.querySelector('#smart-vad').value==='true'});
   content.querySelector('#save-ota').onclick=()=>{
     const value=Number(content.querySelector('#ota-seconds').value);
-    if(Number.isInteger(value)&&value>0)run({ota_poll_interval:`${value}s`});
+    if(Number.isInteger(value)&&value>=3600&&value<=604800)run({ota_poll_interval:`${value}s`});
   };
   content.querySelector('#save-vad-threshold').onclick=()=>{
     const value=Number(content.querySelector('#vad-threshold').value);
@@ -385,14 +400,20 @@ async function renderReminders(content){
   });
   content.querySelectorAll('[data-pause]').forEach(button=>button.onclick=async()=>{await mutate('/v1/owner/data/timers/pause','POST',{id:Number(button.dataset.pause)});renderPersonal(document.getElementById('content'))});
   content.querySelectorAll('[data-resume]').forEach(button=>button.onclick=async()=>{await mutate('/v1/owner/data/timers/resume','POST',{id:Number(button.dataset.resume)});renderPersonal(document.getElementById('content'))});
-  content.querySelectorAll('[data-cancel-timer]').forEach(button=>button.onclick=()=>confirmAction('Cancel this timer?',async()=>{await mutate('/v1/owner/data/reminders/cancel','POST',{id:Number(button.dataset.cancelTimer)});renderPersonal(document.getElementById('content'))},button));
+  content.querySelectorAll('[data-cancel-timer]').forEach(button=>{
+    const item=timers.find(value=>String(value.id)===button.dataset.cancelTimer);
+    button.onclick=()=>confirmAction(`Cancel timer "${clipped(item?.title||'Timer')}"?`,async()=>{await mutate('/v1/owner/data/reminders/cancel','POST',{id:Number(button.dataset.cancelTimer)});renderPersonal(document.getElementById('content'))},button);
+  });
 }
 
 async function renderVoice(content){
   const data=await fetchJSON('/v1/owner/data/voice-memos?limit=50');
   const items=data.voice_memos||[];
   content.innerHTML=`<div class="toolbar"><h2>Voice Memos</h2></div><div class="item-list">${items.length?items.map(v=>`<div class="item audio-row"><div><div class="item-title">${esc(v.transcript||'Voice memo')}</div><div class="item-sub">${esc(date(v.created_at))} · ${Math.round(Number(v.duration_ms||0)/1000)}s</div>${v.playback_available&&v.media_url?`<audio controls preload="none" src="${esc(v.media_url)}"></audio>`:'<div class="item-sub">Playback unavailable</div>'}</div><button class="btn danger" type="button" data-delete-voice="${v.id}">Delete</button></div>`).join(''):'<div class="empty">No voice memos yet.</div>'}</div>`;
-  content.querySelectorAll('[data-delete-voice]').forEach(button=>button.onclick=()=>confirmAction('Delete this voice memo and its stored audio?',async()=>{await mutate('/v1/owner/data/voice-memos?id='+encodeURIComponent(button.dataset.deleteVoice),'DELETE');renderPersonal(document.getElementById('content'))},button));
+  content.querySelectorAll('[data-delete-voice]').forEach(button=>{
+    const item=items.find(value=>String(value.id)===button.dataset.deleteVoice);
+    button.onclick=()=>confirmAction(`Delete voice memo "${clipped(item?.transcript||'Voice memo')}" and its stored audio?`,async()=>{await mutate('/v1/owner/data/voice-memos?id='+encodeURIComponent(button.dataset.deleteVoice),'DELETE');renderPersonal(document.getElementById('content'))},button);
+  });
 }
 
 async function renderSettings(content){
@@ -451,6 +472,19 @@ function openCreate(kind,trigger){
 }
 
 function openEdit(kind,item,trigger){openSheet({kind,mode:'edit',item:{...item}},trigger)}
+
+function destructiveLabel(state){
+  const item=state.item||{};
+  if(state.kind==='expense'){
+    const detail=clipped(item.description||item.category||'');
+    return `Delete expense ${money(item.amount_vnd)}${detail?` · "${detail}"`:''}?`;
+  }
+  if(state.kind==='note')return `Delete note "${clipped(item.content||'Note')}"?`;
+  if(state.kind==='journal')return `Delete journal "${clipped(item.content||'Journal entry')}"?`;
+  if(state.kind==='reminder')return `Cancel reminder "${clipped(item.title||'Reminder')}"?`;
+  if(state.kind==='timer')return `Cancel timer "${clipped(item.title||'Timer')}"?`;
+  return 'Confirm this change?';
+}
 
 function openSheet(state,trigger){
   app.sheet=state;
@@ -542,8 +576,7 @@ async function saveSheet(){
 sheetDelete.onclick=()=>{
   if(!app.sheet||app.sheet.mode!=='edit')return;
   const state={...app.sheet,item:{...app.sheet.item}};
-  const text=state.kind==='reminder'?'Cancel this reminder?':`Delete this ${state.kind}?`;
-  confirmAction(text,async()=>{
+  confirmAction(destructiveLabel(state),async()=>{
     if(state.kind==='expense')await mutate('/v1/owner/data/expenses?id='+encodeURIComponent(state.item.id),'DELETE');
     else if(state.kind==='note')await mutate('/v1/owner/data/notes?id='+encodeURIComponent(state.item.id),'DELETE');
     else if(state.kind==='journal')await mutate('/v1/owner/data/journal?id='+encodeURIComponent(state.item.id),'DELETE');
