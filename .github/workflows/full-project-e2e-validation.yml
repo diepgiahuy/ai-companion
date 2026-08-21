@@ -1,0 +1,88 @@
+name: full-project-e2e-validation
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  host:
+    name: Full host simulation
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install host dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build pkg-config libopus-dev libopusfile-dev libboost-system-dev nlohmann-json3-dev libssl-dev
+      - name: Run host firmware and integration tests
+        run: bash scripts/e2e.sh
+      - name: Compile Tier-1 software-device nearest oracle
+        run: |
+          cmake -S host/companion_software_device -B build-software-device -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-software-device --target companion_software_device
+
+  backend-full:
+    name: Full Go backend quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c
+      - name: Build full quality image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
+        with:
+          context: .
+          file: Dockerfile.test
+          target: quality
+          load: true
+          pull: true
+          tags: companion-test:quality
+          cache-from: type=gha,scope=companion-quality
+          cache-to: type=gha,mode=max,scope=companion-quality
+      - name: Run full backend quality, race and vulnerability checks
+        run: docker run --rm companion-test:quality bash scripts/backend_quality.sh full
+      - name: Diff hygiene
+        run: git diff --check
+
+  postgres:
+    name: PostgreSQL / River integration
+    uses: ./.github/workflows/postgres-schema.yml
+
+  protocol:
+    name: ESP32-S3 firmware compile
+    uses: ./.github/workflows/protocol_v2.yml
+
+  software-device:
+    name: Tier-1 software-device E2E
+    uses: ./.github/workflows/software-device-e2e.yml
+
+  full-gate:
+    name: Full Project E2E Gate
+    needs: [host, backend-full, postgres, protocol, software-device]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every software oracle
+        env:
+          HOST: ${{ needs.host.result }}
+          BACKEND: ${{ needs.backend-full.result }}
+          POSTGRES: ${{ needs.postgres.result }}
+          PROTOCOL: ${{ needs.protocol.result }}
+          SOFTWARE_DEVICE: ${{ needs.software-device.result }}
+        run: |
+          set -euo pipefail
+          for value in "$HOST" "$BACKEND" "$POSTGRES" "$PROTOCOL" "$SOFTWARE_DEVICE"; do
+            test "$value" = success
+          done
+          echo 'FULL PROJECT E2E PASS: host + backend full + PostgreSQL/River + ESP32-S3 compile + Tier-1 software device'
