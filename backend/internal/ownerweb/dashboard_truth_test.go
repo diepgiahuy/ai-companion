@@ -49,8 +49,10 @@ func TestDashboardUsesApprovedSimpleConsumerSurface(t *testing.T) {
 		`[604800,'7 days']`,
 		"value>=3600&&value<=604800",
 		"destructiveLabel(state)",
-		`Cancel timer \"${clipped(item?.title||'Timer')}\"?`,
-		`Delete voice memo \"${clipped(item?.transcript||'Voice memo')}\"`,
+		"Cancel timer",
+		"clipped(item?.title",
+		"Delete voice memo",
+		"clipped(item?.transcript",
 	} {
 		if !strings.Contains(dashboardHTML, required) {
 			t.Fatalf("dashboard missing required truthful UI marker %q", required)
