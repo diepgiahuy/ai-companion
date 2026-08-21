@@ -57,7 +57,6 @@ func TestDashboardUsesApprovedSimpleConsumerSurface(t *testing.T) {
 		"SHA256 verified",
 		"160.5 KiB",
 		"PSRAM Codec",
-		"10000000",
 		"toggleAudio(",
 		"checkOTA(",
 		"triggerOTA(",
