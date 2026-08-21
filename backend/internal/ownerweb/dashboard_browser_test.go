@@ -101,7 +101,7 @@ func TestOwnerHubBrowserKeyboardFocusAndResponsiveFlow(t *testing.T) {
 	if !strings.Contains(confirmText, "Lunch") && !strings.Contains(confirmText, "125") {
 		t.Fatalf("destructive confirmation does not identify expense: %q", confirmText)
 	}
-	pressKey(t, wd, "\ue004")
+	pressShiftTab(t, wd)
 	waitForScript(t, wd, `return document.activeElement.id === 'confirm-cancel';`)
 	pressKey(t, wd, "\ue007")
 	waitForScript(t, wd, `return !document.getElementById('confirm-dialog').open && document.activeElement.id === 'sheet-delete';`)
@@ -323,6 +323,21 @@ func pressKey(t *testing.T, wd *webDriverClient, key string) {
 		"actions": []map[string]any{{
 			"type": "key", "id": "keyboard",
 			"actions": []map[string]any{{"type": "keyDown", "value": key}, {"type": "keyUp", "value": key}},
+		}},
+	})
+}
+
+func pressShiftTab(t *testing.T, wd *webDriverClient) {
+	t.Helper()
+	wd.must(t, http.MethodPost, "/session/"+wd.sessionID+"/actions", map[string]any{
+		"actions": []map[string]any{{
+			"type": "key", "id": "keyboard",
+			"actions": []map[string]any{
+				{"type": "keyDown", "value": "\ue008"},
+				{"type": "keyDown", "value": "\ue004"},
+				{"type": "keyUp", "value": "\ue004"},
+				{"type": "keyUp", "value": "\ue008"},
+			},
 		}},
 	})
 }
