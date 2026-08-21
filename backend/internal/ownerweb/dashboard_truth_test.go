@@ -44,6 +44,13 @@ func TestDashboardUsesApprovedSimpleConsumerSurface(t *testing.T) {
 		":focus-visible",
 		"min-height:44px",
 		"@media(max-width:640px)",
+		`id="ota-seconds"`,
+		`[3600,'1 hour']`,
+		`[604800,'7 days']`,
+		"value>=3600&&value<=604800",
+		"destructiveLabel(state)",
+		`Cancel timer \"${clipped(item?.title||'Timer')}\"?`,
+		`Delete voice memo \"${clipped(item?.transcript||'Voice memo')}\"`,
 	} {
 		if !strings.Contains(dashboardHTML, required) {
 			t.Fatalf("dashboard missing required truthful UI marker %q", required)
@@ -67,6 +74,7 @@ func TestDashboardUsesApprovedSimpleConsumerSurface(t *testing.T) {
 		"checkOTA(",
 		"triggerOTA(",
 		"custom_phrase",
+		`id="ota-seconds" class="input`,
 	} {
 		if strings.Contains(dashboardHTML, forbidden) {
 			t.Fatalf("dashboard contains stale or candidate UI marker %q", forbidden)
