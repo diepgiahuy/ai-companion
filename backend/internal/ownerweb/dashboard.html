@@ -67,7 +67,7 @@
 
 <script>
 const app={view:'home',personal:'money',deviceID:'',devices:[],device:null,sheet:null,lastFocus:null};
-const esc=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#39;'}[char]));
+const esc=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 const money=value=>new Intl.NumberFormat('vi-VN').format(Number(value||0))+' VND';
 const date=value=>value?new Date(value).toLocaleString():'—';
 const clipped=(value,limit=56)=>{
@@ -606,8 +606,10 @@ document.getElementById('confirm-ok').onclick=async()=>{
   try{if(run)await run();confirmDialog.close()}finally{button.disabled=false}
 };
 confirmDialog.addEventListener('close',()=>{
+  const focus=confirmFocus;
   confirmRun=null;
-  if(confirmFocus&&document.contains(confirmFocus))confirmFocus.focus();
+  confirmFocus=null;
+  requestAnimationFrame(()=>{if(focus&&document.contains(focus))focus.focus()});
 });
 
 loadDevices().finally(render);
