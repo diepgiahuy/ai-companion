@@ -300,6 +300,16 @@ void EspSrAudioFrontend::reset() {
   impl_->reference_epoch = 0;
 }
 
+bool EspSrAudioFrontend::set_wake_threshold(float threshold) {
+  if (threshold < 0.4F || threshold > 0.9999F || impl_ == nullptr ||
+      impl_->multinet == nullptr || impl_->multinet_data == nullptr) {
+    return false;
+  }
+  config_.wake_threshold = threshold;
+  impl_->multinet->set_det_threshold(impl_->multinet_data, threshold);
+  return true;
+}
+
 bool EspSrAudioFrontend::begin_playback_reference(uint64_t epoch) {
   if (impl_ == nullptr || impl_->data == nullptr || epoch == 0) return false;
   impl_->clear_pipeline_state();
