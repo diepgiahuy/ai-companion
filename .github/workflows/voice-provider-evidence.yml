@@ -1,0 +1,195 @@
+name: voice-provider-evidence
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/voice-provider-evidence.yml'
+      - 'backend/cmd/bench-speech/**'
+      - 'backend/eval/speechbench/**'
+      - 'backend/internal/speech/**'
+      - 'scripts/prepare_voice_eval_corpus.py'
+      - 'scripts/funasr_eval_server.py'
+  workflow_dispatch:
+
+concurrency:
+  group: voice-provider-evidence-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  reference-local:
+    name: Recorded VN/EN real-provider reference
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    env:
+      FUNASR_REMOTE_CODE_COMMIT: 53a56d80667320b44a7dd779f5bf8c024b6c30a8
+      FUNASR_MODEL_REPO: FunAudioLLM/Fun-ASR-MLT-Nano-2512
+      EDGE_TTS_VERSION: 7.2.8
+    steps:
+      - name: Checkout benchmark head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go 1.26.6
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.6'
+          cache-dependency-path: backend/go.sum
+
+      - name: Install native prerequisites
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg git pkg-config libopus-dev
+
+      - name: Verify benchmark code before model download
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/prepare_voice_eval_corpus.py scripts/funasr_eval_server.py
+          cd backend
+          go test -tags nolibopusfile ./eval/speechbench ./cmd/bench-speech
+          go build -tags nolibopusfile -o "$RUNNER_TEMP/bench-speech" ./cmd/bench-speech
+
+      - name: Prepare content-addressed FLEURS corpus
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/voice-evidence/corpus"
+          python3 scripts/prepare_voice_eval_corpus.py \
+            --out-dir "$RUNNER_TEMP/voice-evidence/corpus" \
+            --manifest "$RUNNER_TEMP/voice-evidence/corpus-manifest.json"
+          cat > "$RUNNER_TEMP/voice-evidence/ATTRIBUTION.txt" <<'EOF'
+          FLEURS dataset: google/fleurs
+          License: CC-BY-4.0
+          Selected validation row identifiers, normalized PCM hashes and the observed
+          source repository head are recorded in corpus-manifest.json. The immutable
+          benchmark corpus identity is the manifest SHA-256 plus per-case PCM SHA-256.
+          EOF
+
+      - name: Install pinned benchmark Python packages
+        run: |
+          set -euo pipefail
+          python3 -m pip install --upgrade pip
+          python3 -m pip install \
+            'funasr==1.4.1' \
+            "edge-tts==${EDGE_TTS_VERSION}" \
+            huggingface_hub
+          python3 -m pip freeze | sort > "$RUNNER_TEMP/voice-evidence/python-packages.txt"
+
+      - name: Pin official FunASR remote code
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none --no-checkout https://github.com/QwenAudio/Fun-ASR.git "$RUNNER_TEMP/Fun-ASR"
+          git -C "$RUNNER_TEMP/Fun-ASR" fetch --depth 1 origin "$FUNASR_REMOTE_CODE_COMMIT"
+          git -C "$RUNNER_TEMP/Fun-ASR" checkout --detach "$FUNASR_REMOTE_CODE_COMMIT"
+          test "$(git -C "$RUNNER_TEMP/Fun-ASR" rev-parse HEAD)" = "$FUNASR_REMOTE_CODE_COMMIT"
+
+      - name: Resolve and snapshot exact FunASR model revision
+        id: model
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' > "$RUNNER_TEMP/model.env"
+          import os
+          from huggingface_hub import HfApi, snapshot_download
+
+          repo = os.environ["FUNASR_MODEL_REPO"]
+          info = HfApi().model_info(repo)
+          if not info.sha:
+              raise SystemExit("Hugging Face returned no model revision")
+          path = snapshot_download(
+              repo_id=repo,
+              revision=info.sha,
+              ignore_patterns=["*.md", "images/*", "example/*"],
+          )
+          print(f"MODEL_SHA={info.sha}")
+          print(f"MODEL_PATH={path}")
+          PY
+          cat "$RUNNER_TEMP/model.env"
+          source "$RUNNER_TEMP/model.env"
+          echo "sha=$MODEL_SHA" >> "$GITHUB_OUTPUT"
+          echo "path=$MODEL_PATH" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "$FUNASR_MODEL_REPO@$MODEL_SHA" > "$RUNNER_TEMP/voice-evidence/funasr-model.txt"
+
+      - name: Start pinned FunASR CPU bridge
+        env:
+          FUNASR_EVAL_MODEL_PATH: ${{ steps.model.outputs.path }}
+          FUNASR_EVAL_REMOTE_CODE: ${{ runner.temp }}/Fun-ASR/model.py
+          FUNASR_EVAL_DEVICE: cpu
+        run: |
+          set -euo pipefail
+          nohup python3 scripts/funasr_eval_server.py --port 18080 \
+            > "$RUNNER_TEMP/voice-evidence/funasr-server.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/funasr-server.pid"
+          for attempt in $(seq 1 120); do
+            if curl --fail --silent http://127.0.0.1:18080/healthz >/dev/null; then
+              echo "FunASR bridge ready after attempt $attempt"
+              exit 0
+            fi
+            if ! kill -0 "$(cat "$RUNNER_TEMP/funasr-server.pid")" 2>/dev/null; then
+              cat "$RUNNER_TEMP/voice-evidence/funasr-server.log"
+              exit 1
+            fi
+            sleep 5
+          done
+          cat "$RUNNER_TEMP/voice-evidence/funasr-server.log"
+          echo "FunASR bridge did not become ready within 10 minutes" >&2
+          exit 1
+
+      - name: Run real local lane and record unavailable cloud lanes
+        env:
+          FUNASR_BASE_URL: http://127.0.0.1:18080
+          FUNASR_MODEL: ${{ env.FUNASR_MODEL_REPO }}@${{ steps.model.outputs.sha }}
+          FUNASR_RUNTIME_VERSION: 1.4.1
+          EDGE_TTS_VERSION: ${{ env.EDGE_TTS_VERSION }}
+          FFMPEG_VERSION: ubuntu-24.04-system-ffmpeg
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/bench-speech" \
+            --corpus "$RUNNER_TEMP/voice-evidence/corpus-manifest.json" \
+            --out "$RUNNER_TEMP/voice-evidence/report.json" \
+            --lanes local,streaming,realtime \
+            --commit "${{ github.event.pull_request.head.sha || github.sha }}" \
+            --runner "github-hosted/ubuntu-24.04/x86_64" \
+            --pace=true
+
+      - name: Validate evidence boundary
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, pathlib
+          root = pathlib.Path(os.environ["RUNNER_TEMP"]) / "voice-evidence"
+          report = json.loads((root / "report.json").read_text())
+          lanes = {lane["lane"]: lane for lane in report["lanes"]}
+          local = lanes.get("reference-local")
+          if not local or local.get("status") != "passed":
+              raise SystemExit(f"reference-local did not pass real-provider run: {local}")
+          if not local.get("cases") or any(case.get("error") for case in local["cases"]):
+              raise SystemExit("reference-local contains unproven case results")
+          if not report["corpus"].get("manifest_sha256"):
+              raise SystemExit("report is missing immutable manifest hash")
+          for name in ("reference-streaming", "native-realtime"):
+              lane = lanes.get(name)
+              if not lane or lane.get("status") != "insufficient_evidence":
+                  raise SystemExit(f"{name} must remain insufficient without credentials: {lane}")
+          print("VOICE EVIDENCE PASS: real FunASR+EdgeTTS recorded-audio lane measured; cloud lanes remain insufficient_evidence")
+          PY
+
+      - name: Stop benchmark bridge
+        if: always()
+        run: |
+          if [[ -f "$RUNNER_TEMP/funasr-server.pid" ]]; then
+            kill "$(cat "$RUNNER_TEMP/funasr-server.pid")" 2>/dev/null || true
+          fi
+
+      - name: Upload provider evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: voice-provider-evidence-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/voice-evidence
+          if-no-files-found: warn
+          retention-days: 30
