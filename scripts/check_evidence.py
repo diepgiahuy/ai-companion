@@ -5,6 +5,8 @@ This checker intentionally uses only the Python standard library so the release
 truth gate cannot be skipped because a YAML/third-party parser is unavailable.
 """
 
+# Ephemeral verification trigger: exercise the repository's broad PR CI oracles.
+
 from __future__ import annotations
 
 import json
