@@ -90,7 +90,7 @@ func TestOwnerHubBrowserKeyboardFocusAndResponsiveFlow(t *testing.T) {
 	pressKey(t, wd, "\ue00c")
 	waitForScript(t, wd, `return !document.getElementById('edit-sheet').open && document.activeElement?.dataset?.create === 'expense';`)
 
-	// Destructive confirmation must identify the affected record and restore focus on cancel.
+	// Destructive confirmation must identify the affected record and restore focus on keyboard cancel.
 	executeScript(t, wd, `openPersonal('money'); return true;`)
 	waitForScript(t, wd, `return !!document.querySelector('[data-edit-expense="1"]');`)
 	executeScript(t, wd, `document.querySelector('[data-edit-expense="1"]').click(); return true;`)
@@ -101,7 +101,9 @@ func TestOwnerHubBrowserKeyboardFocusAndResponsiveFlow(t *testing.T) {
 	if !strings.Contains(confirmText, "Lunch") && !strings.Contains(confirmText, "125") {
 		t.Fatalf("destructive confirmation does not identify expense: %q", confirmText)
 	}
-	pressKey(t, wd, "\ue00c")
+	pressKey(t, wd, "\ue004")
+	waitForScript(t, wd, `return document.activeElement.id === 'confirm-cancel';`)
+	pressKey(t, wd, "\ue007")
 	waitForScript(t, wd, `return !document.getElementById('confirm-dialog').open && document.activeElement.id === 'sheet-delete';`)
 	pressKey(t, wd, "\ue00c")
 	waitForScript(t, wd, `return !document.getElementById('edit-sheet').open && document.activeElement?.dataset?.editExpense === '1';`)
