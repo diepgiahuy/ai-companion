@@ -95,8 +95,8 @@ func TestOwnerHubBrowserKeyboardFocusAndResponsiveFlow(t *testing.T) {
 	waitForScript(t, wd, `return !!document.querySelector('[data-edit-expense="1"]');`)
 	executeScript(t, wd, `document.querySelector('[data-edit-expense="1"]').click(); return true;`)
 	waitForScript(t, wd, `return document.getElementById('edit-sheet').open && document.activeElement.id === 'sheet-amount_vnd';`)
-	executeScript(t, wd, `document.getElementById('sheet-delete').click(); return true;`)
-	waitForScript(t, wd, `return document.getElementById('confirm-dialog').open;`)
+	executeScript(t, wd, `const trigger=document.getElementById('sheet-delete'); trigger.focus(); trigger.click(); return true;`)
+	waitForScript(t, wd, `return document.getElementById('confirm-dialog').open && document.activeElement.id === 'confirm-ok';`)
 	confirmText := scriptString(t, wd, `return document.getElementById('confirm-text').textContent;`)
 	if !strings.Contains(confirmText, "Lunch") && !strings.Contains(confirmText, "125") {
 		t.Fatalf("destructive confirmation does not identify expense: %q", confirmText)
