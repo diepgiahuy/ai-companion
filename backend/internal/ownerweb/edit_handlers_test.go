@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -203,5 +204,5 @@ func TestOwnerWebEditRejectsMalformedTimestampWithoutMutation(t *testing.T) {
 }
 
 func itoa64(value int64) string {
-	return strings.TrimSpace(strings.ReplaceAll(time.Unix(value, 0).UTC().Format("05"), "", ""))
+	return strconv.FormatInt(value, 10)
 }
