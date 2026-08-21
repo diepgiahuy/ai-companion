@@ -8,6 +8,7 @@ on:
       - 'backend/cmd/bench-speech/**'
       - 'backend/eval/speechbench/**'
       - 'backend/internal/speech/**'
+      - 'backend/internal/server/voice_provider_evidence_test.go'
       - 'scripts/prepare_voice_eval_corpus.py'
       - 'scripts/funasr_eval_server.py'
   workflow_dispatch:
@@ -52,6 +53,7 @@ jobs:
           python3 -m py_compile scripts/prepare_voice_eval_corpus.py scripts/funasr_eval_server.py
           cd backend
           go test -tags nolibopusfile ./eval/speechbench ./cmd/bench-speech
+          go test -tags 'adk,nolibopusfile' ./internal/server -run TestVoiceEvidenceCanonicalRealCascade -count=1
           go build -tags nolibopusfile -o "$RUNNER_TEMP/bench-speech" ./cmd/bench-speech
 
       - name: Prepare content-addressed FLEURS corpus
@@ -156,6 +158,28 @@ jobs:
             --runner "github-hosted/ubuntu-24.04/x86_64" \
             --pace=true
 
+      - name: Prove real cascade through canonical Companion session
+        env:
+          COMPANION_VOICE_EVIDENCE: '1'
+          FUNASR_BASE_URL: http://127.0.0.1:18080
+          FUNASR_MODEL: ${{ env.FUNASR_MODEL_REPO }}@${{ steps.model.outputs.sha }}
+          EDGE_TTS_VOICE_VI: vi-VN-HoaiMyNeural
+          VOICE_EVIDENCE_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          VOICE_EVIDENCE_CANONICAL_REPORT: ${{ runner.temp }}/voice-evidence/canonical-session.json
+        run: |
+          set -euo pipefail
+          VOICE_EVIDENCE_PCM="$(python3 - <<'PY'
+          import json, os, pathlib
+          manifest = pathlib.Path(os.environ['RUNNER_TEMP']) / 'voice-evidence/corpus-manifest.json'
+          data = json.loads(manifest.read_text())
+          print(next(case['pcm_path'] for case in data['cases'] if case['language'] == 'vi'))
+          PY
+          )"
+          export VOICE_EVIDENCE_PCM
+          cd backend
+          go test -tags 'adk,nolibopusfile' ./internal/server \
+            -run '^TestVoiceEvidenceCanonicalRealCascade$' -count=1 -v
+
       - name: Validate evidence boundary
         run: |
           set -euo pipefail
@@ -163,6 +187,7 @@ jobs:
           import json, os, pathlib
           root = pathlib.Path(os.environ["RUNNER_TEMP"]) / "voice-evidence"
           report = json.loads((root / "report.json").read_text())
+          canonical = json.loads((root / "canonical-session.json").read_text())
           lanes = {lane["lane"]: lane for lane in report["lanes"]}
           local = lanes.get("reference-local")
           if not local or local.get("status") != "passed":
@@ -171,11 +196,15 @@ jobs:
               raise SystemExit("reference-local contains unproven case results")
           if not report["corpus"].get("manifest_sha256"):
               raise SystemExit("report is missing immutable manifest hash")
+          if canonical.get("evidence_class") != "real_provider_recorded_fixture_canonical_session":
+              raise SystemExit(f"canonical path evidence missing or misclassified: {canonical}")
+          if canonical.get("tool_executions") != 1 or canonical.get("tts_binary_frames", 0) <= 0:
+              raise SystemExit(f"canonical ADK/ToolRegistry/TTS evidence incomplete: {canonical}")
           for name in ("reference-streaming", "native-realtime"):
               lane = lanes.get(name)
               if not lane or lane.get("status") != "insufficient_evidence":
                   raise SystemExit(f"{name} must remain insufficient without credentials: {lane}")
-          print("VOICE EVIDENCE PASS: real FunASR+EdgeTTS recorded-audio lane measured; cloud lanes remain insufficient_evidence")
+          print("VOICE EVIDENCE PASS: real FunASR+EdgeTTS measured and exercised through canonical /v2/device + ADK + ToolRegistry; unavailable cloud lanes remain insufficient_evidence")
           PY
 
       - name: Stop benchmark bridge
