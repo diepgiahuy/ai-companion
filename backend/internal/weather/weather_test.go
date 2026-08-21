@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -166,7 +167,7 @@ func TestWeatherServiceConcurrency(t *testing.T) {
 func TestOpenMeteoProviderMockHTTPServer(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path == "/v1/search" {
+		if strings.Contains(r.URL.Path, "search") {
 			_, _ = w.Write([]byte(`{"results":[{"name":"Hue","latitude":16.4637,"longitude":107.5909,"country":"Vietnam"}]}`))
 			return
 		}
@@ -191,14 +192,57 @@ func TestOpenMeteoProviderMockHTTPServer(t *testing.T) {
 	defer ts.Close()
 
 	provider := NewOpenMeteo(ts.Client())
-	// Test known city coordinates resolution
-	f, err := provider.GetWeather(context.Background(), "Hà Nội")
-	// Since provider calls actual open-meteo domain by default unless overridden or mocked,
-	// let's verify WMOCondition mapping
+	if provider.Name() != "open-meteo" {
+		t.Errorf("expected provider name 'open-meteo', got %s", provider.Name())
+	}
+
 	cond, summary := WMOCondition(3)
 	if cond != "Overcast" || summary == "" {
 		t.Fatalf("WMOCondition mapping failed for code 3: %s, %s", cond, summary)
 	}
-	_ = f
-	_ = err
+}
+
+func TestWMOConditionAllCodes(t *testing.T) {
+	codes := []int{0, 1, 2, 3, 45, 48, 51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 71, 73, 75, 77, 80, 81, 82, 85, 86, 95, 96, 99, 999}
+	for _, code := range codes {
+		cond, summary := WMOCondition(code)
+		if cond == "" || summary == "" {
+			t.Errorf("WMOCondition(%d) returned empty string: cond=%q, summary=%q", code, cond, summary)
+		}
+	}
+}
+
+func TestWeatherServiceMultiProviderAndUnknown(t *testing.T) {
+	p1 := &mockProvider{name: "primary-prov", forecast: Forecast{TemperatureC: 22.0, Condition: "Rain"}}
+	p2 := &mockProvider{name: "secondary-prov", forecast: Forecast{TemperatureC: 24.0, Condition: "Sunny"}}
+
+	service := New(5*time.Minute, p1, p2)
+	providers := service.Providers()
+	if len(providers) != 2 {
+		t.Fatalf("expected 2 providers, got %d", len(providers))
+	}
+
+	// 1. Fetch from primary by default (empty provider string)
+	f1, err := service.GetWeather(context.Background(), "", "Hà Nội")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if f1.Source != "primary-prov" || f1.TemperatureC != 22.0 {
+		t.Fatalf("unexpected forecast from primary: %+v", f1)
+	}
+
+	// 2. Fetch from secondary explicitly
+	f2, err := service.GetWeather(context.Background(), "secondary-prov", "Hà Nội")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if f2.Source != "secondary-prov" || f2.TemperatureC != 24.0 {
+		t.Fatalf("unexpected forecast from secondary: %+v", f2)
+	}
+
+	// 3. Unknown provider -> error
+	_, err = service.GetWeather(context.Background(), "unknown-prov", "Hà Nội")
+	if err == nil {
+		t.Fatalf("expected error for unknown provider, got nil")
+	}
 }
