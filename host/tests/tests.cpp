@@ -395,7 +395,7 @@ void runtime_config_is_versioned_and_last_known_good() {
   good.settings.ota_poll_interval_s = 7'200;
   good.settings.volume = 85;
   good.settings.wake_threshold = 0.72F;
-  good.settings.set_wake_model("wake_custom_v1");
+  good.settings.set_wake_model("hey_bin");
 
   assert(good.valid());
   const bool good_queued = backend.inject_settings(good); (void)good_queued;
@@ -405,7 +405,7 @@ void runtime_config_is_versioned_and_last_known_good() {
   assert(app.settings_version() == 3);
   assert(app.config().volume == 85);
   assert(app.config().wake_threshold >= 0.719F && app.config().wake_threshold <= 0.721F);
-  assert(app.config().wake_model.data() == std::string_view("wake_custom_v1"));
+  assert(app.config().wake_model.data() == std::string_view("hey_bin"));
   assert(app.config().ota_poll_interval_s == 7'200);
 
   SettingsTwin stale = good;
@@ -682,7 +682,7 @@ void settings_twin_validation_and_dynamic_apply() {
 
   settings.wake_model.fill('\0');
   assert(!settings.validate());
-  settings.set_wake_model("wake_custom_v1");
+  settings.set_wake_model("hey_bin");
   assert(settings.validate());
 
   SettingsTwin twin{
@@ -731,12 +731,12 @@ void settings_twin_validation_and_dynamic_apply() {
   twin.version = 1;
   twin.settings.volume = 92;
   twin.settings.wake_threshold = 0.85F;
-  twin.settings.set_wake_model("wake_production");
+  twin.settings.set_wake_model("hey_bin");
   assert(app.apply_settings(twin));
   assert(app.settings_version() == 1);
   assert(app.config().volume == 92);
   assert(app.config().wake_threshold >= 0.849F && app.config().wake_threshold <= 0.851F);
-  assert(app.config().wake_model.data() == std::string_view("wake_production"));
+  assert(app.config().wake_model.data() == std::string_view("hey_bin"));
 
   // Reject monotonic <= version
   twin.version = 1;
