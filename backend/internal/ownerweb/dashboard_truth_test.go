@@ -15,9 +15,20 @@ func TestDashboardUsesApprovedSimpleConsumerSurface(t *testing.T) {
 	}
 
 	for _, required := range []string{
+		"Owner Hub",
+		`id="breadcrumb-current"`,
+		"grid-template-columns:200px",
+		"max-width:980px",
+		"font-size:32px",
+		"@media(max-width:960px)",
+		"grid-template-columns:72px",
 		"Quick add",
 		"Requested",
 		"Applied",
+		"Wake phrase",
+		"Hey Bin",
+		`value="hey_bin"`,
+		"Push-to-talk only",
 		"Smart VAD",
 		"VAD threshold",
 		"End silence",
@@ -68,6 +79,13 @@ func TestDashboardUsesApprovedSimpleConsumerSurface(t *testing.T) {
 		"coming soon",
 		"/v1/owner/data/device/claim",
 		"Claim Device",
+		"wn9_hiesp",
+		"Hi, ESP",
+		"custom_phrase",
+		"Appearance",
+		"Language settings",
+		"Timezone settings",
+		"Display face",
 		"v2.4.1",
 		"SHA256 verified",
 		"160.5 KiB",
@@ -75,7 +93,6 @@ func TestDashboardUsesApprovedSimpleConsumerSurface(t *testing.T) {
 		"toggleAudio(",
 		"checkOTA(",
 		"triggerOTA(",
-		"custom_phrase",
 		`id="ota-seconds" class="input`,
 	} {
 		if strings.Contains(dashboardHTML, forbidden) {
