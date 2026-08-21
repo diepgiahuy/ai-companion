@@ -182,6 +182,7 @@ public:
   virtual bool start() = 0;
   virtual void reset() = 0;
   virtual bool frontend_enabled() const = 0;
+  virtual bool set_wake_threshold(float) { return false; }
   virtual bool start_capture() = 0;
   virtual size_t read_capture(std::span<int16_t> destination) = 0;
   virtual void stop_capture() = 0;
@@ -251,7 +252,7 @@ struct AppConfig {
   uint32_t ota_poll_interval_s{21'600};
   uint8_t volume{70};
   float wake_threshold{0.60F};
-  std::array<char, 64> wake_model{"default"};
+  std::array<char, 64> wake_model{"hey_bin"};
 
   std::string_view wake_model_view() const {
     size_t length = 0;
@@ -260,8 +261,7 @@ struct AppConfig {
   }
 
   bool wake_enabled() const {
-    const auto view = wake_model_view();
-    return !view.empty() && view != "disabled" && view != "off";
+    return wake_model_view() == kWakeModelHeyBin;
   }
 };
 
