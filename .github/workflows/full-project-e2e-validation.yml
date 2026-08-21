@@ -7,6 +7,11 @@ on:
 permissions:
   contents: read
 
+# This temporary workflow adds the promotion-only backend-full oracle.
+# The repository's normal ci workflow sees this workflow-file change as
+# pr-ci-control and, on the same exact PR head, runs host + PostgreSQL/River +
+# ESP32-S3 protocol compile + Tier-1 software-device orchestration. Keeping
+# those reusable workflows in one place avoids duplicate-job cancellation.
 jobs:
   host:
     name: Full host simulation
@@ -55,34 +60,18 @@ jobs:
       - name: Diff hygiene
         run: git diff --check
 
-  postgres:
-    name: PostgreSQL / River integration
-    uses: ./.github/workflows/postgres-schema.yml
-
-  protocol:
-    name: ESP32-S3 firmware compile
-    uses: ./.github/workflows/protocol_v2.yml
-
-  software-device:
-    name: Tier-1 software-device E2E
-    uses: ./.github/workflows/software-device-e2e.yml
-
-  full-gate:
-    name: Full Project E2E Gate
-    needs: [host, backend-full, postgres, protocol, software-device]
+  validation-gate:
+    name: Validation supplement gate
+    needs: [host, backend-full]
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Require every software oracle
+      - name: Require supplement oracles
         env:
           HOST: ${{ needs.host.result }}
           BACKEND: ${{ needs.backend-full.result }}
-          POSTGRES: ${{ needs.postgres.result }}
-          PROTOCOL: ${{ needs.protocol.result }}
-          SOFTWARE_DEVICE: ${{ needs.software-device.result }}
         run: |
           set -euo pipefail
-          for value in "$HOST" "$BACKEND" "$POSTGRES" "$PROTOCOL" "$SOFTWARE_DEVICE"; do
-            test "$value" = success
-          done
-          echo 'FULL PROJECT E2E PASS: host + backend full + PostgreSQL/River + ESP32-S3 compile + Tier-1 software device'
+          test "$HOST" = success
+          test "$BACKEND" = success
+          echo 'VALIDATION SUPPLEMENT PASS: host + backend full'
