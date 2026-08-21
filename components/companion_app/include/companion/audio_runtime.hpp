@@ -80,6 +80,13 @@ public:
 
   bool frontend_enabled() const override { return frontend_ != nullptr; }
 
+  bool set_wake_threshold(float threshold) override {
+    // Host/manual-VAD configurations have no acoustic detector to update, so
+    // there is no hidden physical state to diverge from the app config.
+    if (frontend_ == nullptr) return true;
+    return frontend_->set_wake_threshold(threshold);
+  }
+
   bool start_capture() override {
     if (capture_active_) return true;
     if (!microphone_.start_capture()) return false;
