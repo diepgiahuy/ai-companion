@@ -151,7 +151,7 @@ func TestVoiceEvidenceCanonicalRealCascade(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer data.Close()
-	conversation := conversationctx.New(data, conversationctx.NewMemoryCache(10*time.Minute, 4))
+	conversation := conversationctx.New(voiceEvidenceConversationStore{data: data}, conversationctx.NewMemoryCache(10*time.Minute, 4))
 	agent, err := adkbridge.New(adkbridge.Config{
 		AppName:       "companion-voice-evidence",
 		ModelName:     "evidence-model",
@@ -263,17 +263,17 @@ func TestVoiceEvidenceCanonicalRealCascade(t *testing.T) {
 			"Opus downlink",
 		},
 		"input_pcm": map[string]any{
-			"path":                  pcmPath,
-			"used_bytes":            len(pcm),
-			"used_duration_ms":      float64(len(pcm)) / float64(protocol.UplinkSampleRate*2) * 1000,
+			"path":                    pcmPath,
+			"used_bytes":              len(pcm),
+			"used_duration_ms":        float64(len(pcm)) / float64(protocol.UplinkSampleRate*2) * 1000,
 			"trimmed_to_protocol_max": trimmed,
 		},
-		"transcript":          transcript,
-		"tool_executions":     toolExecutions.Load(),
-		"llm_fixture_requests": llmRequests.Load(),
-		"tts_binary_frames":   binaryFrames,
-		"generation_id":       generation,
-		"turn_after_listen_stop_ms": turnMS,
+		"transcript":                 transcript,
+		"tool_executions":            toolExecutions.Load(),
+		"llm_fixture_requests":        llmRequests.Load(),
+		"tts_binary_frames":           binaryFrames,
+		"generation_id":               generation,
+		"turn_after_listen_stop_ms":   turnMS,
 		"limitations": []string{
 			"Speech providers are real; the LLM transport is a deterministic local fixture so this artifact does not claim LLM provider quality.",
 			"Recorded input does not prove physical microphone, enclosure, AEC, WakeNet or speaker quality.",
