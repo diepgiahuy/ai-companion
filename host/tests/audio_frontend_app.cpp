@@ -235,10 +235,10 @@ void wake_disabled_falls_back_to_ptt_and_wake_enabled_triggers_turn() {
   app.tick(180);
   assert(app.state() == UiState::ready);
 
-  // 2. Apply wake_model = "wn9_hiesp"
+  // 2. Apply the only packaged product wake capability: Hey Bin.
   SettingsTwin enabled_wake = disabled_wake;
   enabled_wake.version = 3;
-  enabled_wake.settings.set_wake_model("wn9_hiesp");
+  enabled_wake.settings.set_wake_model("hey_bin");
   assert(app.apply_settings(enabled_wake));
   assert(app.config().wake_enabled());
 
@@ -247,6 +247,14 @@ void wake_disabled_falls_back_to_ptt_and_wake_enabled_triggers_turn() {
   app.tick(200);
   assert(app.state() == UiState::listening);
   assert(backend.begin_count == 2);
+
+  // 3. An unavailable acoustic model must be rejected before replacing the
+  // previous-good Hey Bin runtime config.
+  SettingsTwin unsupported_wake = enabled_wake;
+  unsupported_wake.version = 4;
+  unsupported_wake.settings.set_wake_model("wn9_hiesp");
+  assert(!app.apply_settings(unsupported_wake));
+  assert(app.config().wake_model_view() == kWakeModelHeyBin);
 }
 
 } // namespace
