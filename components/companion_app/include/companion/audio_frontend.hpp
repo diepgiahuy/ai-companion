@@ -43,6 +43,10 @@ public:
   virtual ~AudioFrontend() = default;
   virtual bool start() = 0;
   virtual void reset() = 0;
+  // Apply the actual acoustic wake detector threshold. Implementations that do
+  // not support runtime threshold mutation must fail closed instead of allowing
+  // the Device Twin to report a value that was never applied physically.
+  virtual bool set_wake_threshold(float) { return false; }
   virtual bool begin_playback_reference(uint64_t epoch) = 0;
   virtual void end_playback_reference(uint64_t epoch) = 0;
   virtual bool push_playback_reference(std::span<const int16_t> accepted_pcm,
