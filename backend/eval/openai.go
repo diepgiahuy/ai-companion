@@ -117,8 +117,9 @@ type chatResponse struct {
 type streamChunk struct {
 	Choices []struct {
 		Delta struct {
-			Content   string        `json:"content"`
-			ToolCalls []apiToolCall `json:"tool_calls"`
+			Content          string        `json:"content"`
+			ReasoningContent string        `json:"reasoning_content,omitempty"`
+			ToolCalls        []apiToolCall `json:"tool_calls"`
 		} `json:"delta"`
 	} `json:"choices"`
 	Usage *apiUsage `json:"usage,omitempty"`
@@ -208,20 +209,39 @@ func defaultSystemPrompt(s Scenario) string {
 	if strings.TrimSpace(s.System) != "" {
 		return strings.TrimSpace(s.System)
 	}
-	return "You are an AI Companion domain router. Classify user queries into one or more relevant domain packs: expense, budget, saving, schedule, note, journal, voice, memory, market, weather, context.\n\n" +
+	return "You are the AI Companion domain router. Classify user queries into one or more domain packs: expense, budget, saving, schedule, note, journal, voice, memory, market, weather, context.\n\n" +
 		"Routing rules:\n" +
-		"- Expense queries (spending money, buying, food costs, paying) require [\"expense\", \"budget\"].\n" +
-		"- Pure budget queries (budget limits, allowances, budget overview) require [\"budget\"].\n" +
-		"- Saving queries (saving goals, savings targets, progress) require [\"saving\", \"budget\"].\n" +
-		"- Timers, alarms, reminders, calendar, appointments, meetings require [\"schedule\"].\n" +
-		"- Text notes and quick note search require [\"note\"].\n" +
-		"- Diary entries and personal journals require [\"journal\"].\n" +
-		"- Voice recordings and audio voice notes/memos require [\"voice\"].\n" +
-		"- Personal facts, user preferences, allergies, birthdays to remember/forget require [\"memory\"].\n" +
-		"- Gold, stock, crypto, Bitcoin, FX currency exchange rates require [\"market\"]. If combined with price alert/reminder: [\"market\", \"schedule\"].\n" +
-		"- Weather forecasts, rain, temperature require [\"weather\"].\n" +
-		"- Reset/clear conversation history requires exact [\"context\"].\n" +
-		"- General chit-chat, greetings, jokes, math, explanations require {\"answer\": \"<response>\", \"packs\": []}.\n\n" +
+		"- Any spending, buying, meal, food, coffee, expense query, or modifying expenses (\"chi tiêu\", \"khoản chi\", \"Sửa khoản chi\", \"50 cành\", \"bún bò 50 cành\", \"ăn trưa\", \"tiêu bao nhiêu\") -> {\"packs\": [\"expense\", \"budget\"]}.\n" +
+		"- Budget allowances/limits -> {\"packs\": [\"budget\"]}.\n" +
+		"- Savings targets/goals (\"tiết kiệm\", \"mục tiêu tiết kiệm\", \"xóa mục tiêu tiết kiệm\", \"để dành\") -> {\"packs\": [\"saving\", \"budget\"]}.\n" +
+		"- Timers, alarms, reminders, calendar -> {\"packs\": [\"schedule\"]}.\n" +
+		"- Text notes, searching notes (\"Tìm ghi chú\", \"ghi chú\", \"note\") -> {\"packs\": [\"note\"]}.\n" +
+		"- Diary entries (\"nhật ký\", \"journal\") -> {\"packs\": [\"journal\"]}.\n" +
+		"- Audio recordings & voice memos (\"ghi âm\", \"voice note\", \"voice recording\", \"Liệt kê voice note\") -> {\"packs\": [\"voice\"]}.\n" +
+		"- Personal memory, facts, allergies, remembering statements (\"Ghi nhớ mục tiêu mua laptop cuối năm\", \"tôi từng nói gì\", \"sở thích\", \"ghi nhớ\") -> {\"packs\": [\"memory\"]}.\n" +
+		"- Gold, stocks, crypto, exchange rates -> {\"packs\": [\"market\"]}. If combined with reminder or price alert (\"Nhắc tôi nếu giá vàng...\") -> {\"packs\": [\"market\", \"schedule\"]}.\n" +
+		"- Weather and rain -> {\"packs\": [\"weather\"]}.\n" +
+		"- Clear/reset conversation history (\"xóa lịch sử\", \"clear history\") -> {\"packs\": [\"context\"]}.\n" +
+		"- Chit-chat, greetings, jokes, capability questions (\"Bạn có thể giúp tôi những gì trong ngày?\"), goodnight (\"Chúc ngủ ngon companion\") -> {\"answer\": \"<reply>\", \"packs\": []}.\n\n" +
+		"Few-shot examples:\n" +
+		"Q: Sửa khoản chi hôm nay\n" +
+		"A: {\"packs\": [\"expense\", \"budget\"]}\n\n" +
+		"Q: Nhắc tôi nếu giá vàng xuống dưới 3000\n" +
+		"A: {\"packs\": [\"market\", \"schedule\"]}\n\n" +
+		"Q: Sáng nay làm bát bún bò 50 cành\n" +
+		"A: {\"packs\": [\"expense\", \"budget\"]}\n\n" +
+		"Q: Ghi nhớ mục tiêu mua laptop cuối năm\n" +
+		"A: {\"packs\": [\"memory\"]}\n\n" +
+		"Q: Liệt kê voice note\n" +
+		"A: {\"packs\": [\"voice\"]}\n\n" +
+		"Q: Tìm ghi chú có chữ espresso\n" +
+		"A: {\"packs\": [\"note\"]}\n\n" +
+		"Q: Xóa mục tiêu tiết kiệm\n" +
+		"A: {\"packs\": [\"saving\", \"budget\"]}\n\n" +
+		"Q: Bạn có thể giúp tôi những gì trong ngày?\n" +
+		"A: {\"answer\": \"Tôi có thể hỗ trợ bạn ghi chép chi tiêu, nhắc nhở, ghi chú, xem thời tiết và thị trường.\", \"packs\": []}\n\n" +
+		"Q: Chúc ngủ ngon companion\n" +
+		"A: {\"answer\": \"Chúc bạn ngủ ngon và có giấc mơ đẹp!\", \"packs\": []}\n\n" +
 		"When tools are provided, invoke the appropriate tools.\n" +
 		"Always return strictly valid JSON: {\"packs\": [\"<pack1>\", ...]} or {\"answer\": \"...\", \"packs\": []}."
 }
@@ -276,8 +296,10 @@ func readStreamingResponse(r io.Reader, started time.Time) (ProviderResponse, er
 			usage = &copyUsage
 		}
 		for _, choice := range chunk.Choices {
-			if choice.Delta.Content != "" {
+			if choice.Delta.ReasoningContent != "" || choice.Delta.Content != "" || len(choice.Delta.ToolCalls) > 0 {
 				markTTFT(&ttft, started)
+			}
+			if choice.Delta.Content != "" {
 				content.WriteString(choice.Delta.Content)
 			}
 			for _, delta := range choice.Delta.ToolCalls {

@@ -1,0 +1,5771 @@
+{
+  "schema_version": "companion.eval.report.v1",
+  "evidence_class": "provider_measured",
+  "selection": "not_selected",
+  "corpus": {
+    "source": "./eval/scenarios.jsonl",
+    "sha256": "5d156ab9f28c36214b055eda44af706fdf843688ec242cf5afdd68847f1e17db",
+    "scenario_count": 81
+  },
+  "configuration": {
+    "runs": 1,
+    "primary": {
+      "name": "google-ai-studio",
+      "model": "gemini-3.5-flash-lite",
+      "version": "3.5-flash-lite",
+      "runtime": "google-adk",
+      "region": "global",
+      "endpoint": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+    },
+    "pricing": {},
+    "metadata": {
+      "run_id": "gemini-eval-01",
+      "hardware": "host",
+      "runtime_config": "default",
+      "prompt_version": "v4",
+      "tool_schema_commit": "282d11075c1e350003bb3a578676db498939c92b",
+      "source_commit": "282d11075c1e350003bb3a578676db498939c92b"
+    }
+  },
+  "trials": [
+    {
+      "scenario_id": "scenario-0001",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"expense\", \"budget\"]}",
+          "packs": [
+            "expense",
+            "budget"
+          ],
+          "usage": {
+            "input_tokens": 312,
+            "output_tokens": 9,
+            "total_tokens": 321
+          }
+        },
+        "timing": {
+          "ttft_us": 836355,
+          "total_us": 836617
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 836355,
+        "total_us": 836617
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "expense"
+            ],
+            "observed": [
+              "budget",
+              "expense"
+            ],
+            "true_positive": 2,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "expense"
+            ],
+            "observed": [
+              "budget",
+              "expense"
+            ],
+            "true_positive": 2,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0002",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"expense\", \"budget\"]}",
+          "packs": [
+            "expense",
+            "budget"
+          ],
+          "usage": {
+            "input_tokens": 312,
+            "output_tokens": 9,
+            "total_tokens": 321
+          }
+        },
+        "timing": {
+          "ttft_us": 832148,
+          "total_us": 832594
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 832148,
+        "total_us": 832594
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "expense"
+            ],
+            "observed": [
+              "budget",
+              "expense"
+            ],
+            "true_positive": 2,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "expense"
+            ],
+            "observed": [
+              "budget",
+              "expense"
+            ],
+            "true_positive": 2,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0003",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\n  \"packs\": [\n    \"expense\",\n    \"budget\"\n  ]\n}",
+          "packs": [
+            "expense",
+            "budget"
+          ],
+          "usage": {
+            "input_tokens": 312,
+            "output_tokens": 22,
+            "total_tokens": 334
+          }
+        },
+        "timing": {
+          "ttft_us": 728451,
+          "total_us": 729562
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 728451,
+        "total_us": 729562
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "expense"
+            ],
+            "observed": [
+              "budget",
+              "expense"
+            ],
+            "true_positive": 2,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "expense"
+            ],
+            "observed": [
+              "budget",
+              "expense"
+            ],
+            "true_positive": 2,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0004",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"expense\", \"budget\"]}",
+          "packs": [
+            "expense",
+            "budget"
+          ],
+          "usage": {
+            "input_tokens": 314,
+            "output_tokens": 9,
+            "total_tokens": 323
+          }
+        },
+        "timing": {
+          "ttft_us": 838973,
+          "total_us": 839022
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 838973,
+        "total_us": 839022
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "expense"
+            ],
+            "observed": [
+              "budget",
+              "expense"
+            ],
+            "true_positive": 2,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "expense"
+            ],
+            "observed": [
+              "budget",
+              "expense"
+            ],
+            "true_positive": 2,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0005",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\n  \"packs\": [\n    \"expense\",\n    \"budget\"\n  ]\n}",
+          "packs": [
+            "expense",
+            "budget"
+          ],
+          "usage": {
+            "input_tokens": 310,
+            "output_tokens": 22,
+            "total_tokens": 332
+          }
+        },
+        "timing": {
+          "ttft_us": 710768,
+          "total_us": 710822
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 710768,
+        "total_us": 710822
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "expense"
+            ],
+            "observed": [
+              "budget",
+              "expense"
+            ],
+            "true_positive": 2,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "expense"
+            ],
+            "observed": [
+              "budget",
+              "expense"
+            ],
+            "true_positive": 2,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0006",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"budget\"]}",
+          "packs": [
+            "budget"
+          ],
+          "usage": {
+            "input_tokens": 313,
+            "output_tokens": 6,
+            "total_tokens": 319
+          }
+        },
+        "timing": {
+          "ttft_us": 742422,
+          "total_us": 746738
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 742422,
+        "total_us": 746738
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "budget"
+            ],
+            "observed": [
+              "budget"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "budget"
+            ],
+            "observed": [
+              "budget"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0007",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"budget\"]}",
+          "packs": [
+            "budget"
+          ],
+          "usage": {
+            "input_tokens": 311,
+            "output_tokens": 6,
+            "total_tokens": 317
+          }
+        },
+        "timing": {
+          "ttft_us": 814188,
+          "total_us": 816013
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 814188,
+        "total_us": 816013
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "budget"
+            ],
+            "observed": [
+              "budget"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "budget"
+            ],
+            "observed": [
+              "budget"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0008",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"budget\"]}",
+          "packs": [
+            "budget"
+          ],
+          "usage": {
+            "input_tokens": 312,
+            "output_tokens": 6,
+            "total_tokens": 318
+          }
+        },
+        "timing": {
+          "ttft_us": 728545,
+          "total_us": 729115
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 728545,
+        "total_us": 729115
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "budget"
+            ],
+            "observed": [
+              "budget"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "budget"
+            ],
+            "observed": [
+              "budget"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0009",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"schedule\"]}",
+          "packs": [
+            "schedule"
+          ],
+          "usage": {
+            "input_tokens": 311,
+            "output_tokens": 6,
+            "total_tokens": 317
+          }
+        },
+        "timing": {
+          "ttft_us": 754953,
+          "total_us": 754976
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 754953,
+        "total_us": 754976
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": [
+              "schedule"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": [
+              "schedule"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0010",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"schedule\"]}",
+          "packs": [
+            "schedule"
+          ],
+          "usage": {
+            "input_tokens": 311,
+            "output_tokens": 6,
+            "total_tokens": 317
+          }
+        },
+        "timing": {
+          "ttft_us": 732488,
+          "total_us": 733820
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 732488,
+        "total_us": 733820
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": [
+              "schedule"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": [
+              "schedule"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0011",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"schedule\"]}",
+          "packs": [
+            "schedule"
+          ],
+          "usage": {
+            "input_tokens": 311,
+            "output_tokens": 6,
+            "total_tokens": 317
+          }
+        },
+        "timing": {
+          "ttft_us": 727147,
+          "total_us": 727193
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 727147,
+        "total_us": 727193
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": [
+              "schedule"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": [
+              "schedule"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0012",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"schedule\"]}",
+          "packs": [
+            "schedule"
+          ],
+          "usage": {
+            "input_tokens": 313,
+            "output_tokens": 6,
+            "total_tokens": 319
+          }
+        },
+        "timing": {
+          "ttft_us": 619992,
+          "total_us": 620666
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 619992,
+        "total_us": 620666
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": [
+              "schedule"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": [
+              "schedule"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0013",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"schedule\"]}",
+          "packs": [
+            "schedule"
+          ],
+          "usage": {
+            "input_tokens": 311,
+            "output_tokens": 6,
+            "total_tokens": 317
+          }
+        },
+        "timing": {
+          "ttft_us": 728077,
+          "total_us": 728100
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 728077,
+        "total_us": 728100
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": [
+              "schedule"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": [
+              "schedule"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0014",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\n  \"packs\": [\"schedule\"]\n}",
+          "packs": [
+            "schedule"
+          ],
+          "usage": {
+            "input_tokens": 312,
+            "output_tokens": 11,
+            "total_tokens": 323
+          }
+        },
+        "timing": {
+          "ttft_us": 624719,
+          "total_us": 630585
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 624719,
+        "total_us": 630585
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": [
+              "schedule"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": [
+              "schedule"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0015",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"note\"]}",
+          "packs": [
+            "note"
+          ],
+          "usage": {
+            "input_tokens": 310,
+            "output_tokens": 6,
+            "total_tokens": 316
+          }
+        },
+        "timing": {
+          "ttft_us": 725171,
+          "total_us": 725195
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 725171,
+        "total_us": 725195
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "note"
+            ],
+            "observed": [
+              "note"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "note"
+            ],
+            "observed": [
+              "note"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0016",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"note\"]}",
+          "packs": [
+            "note"
+          ],
+          "usage": {
+            "input_tokens": 309,
+            "output_tokens": 6,
+            "total_tokens": 315
+          }
+        },
+        "timing": {
+          "ttft_us": 713320,
+          "total_us": 714248
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 713320,
+        "total_us": 714248
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "note"
+            ],
+            "observed": [
+              "note"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "note"
+            ],
+            "observed": [
+              "note"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0017",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"note\"]}",
+          "packs": [
+            "note"
+          ],
+          "usage": {
+            "input_tokens": 311,
+            "output_tokens": 6,
+            "total_tokens": 317
+          }
+        },
+        "timing": {
+          "ttft_us": 907845,
+          "total_us": 908002
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 907845,
+        "total_us": 908002
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "note"
+            ],
+            "observed": [
+              "note"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "note"
+            ],
+            "observed": [
+              "note"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0018",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"journal\"]}",
+          "packs": [
+            "journal"
+          ],
+          "usage": {
+            "input_tokens": 310,
+            "output_tokens": 6,
+            "total_tokens": 316
+          }
+        },
+        "timing": {
+          "ttft_us": 652538,
+          "total_us": 656013
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 652538,
+        "total_us": 656013
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "journal"
+            ],
+            "observed": [
+              "journal"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "journal"
+            ],
+            "observed": [
+              "journal"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0019",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"journal\"]}",
+          "packs": [
+            "journal"
+          ],
+          "usage": {
+            "input_tokens": 307,
+            "output_tokens": 6,
+            "total_tokens": 313
+          }
+        },
+        "timing": {
+          "ttft_us": 722165,
+          "total_us": 725376
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 722165,
+        "total_us": 725376
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "journal"
+            ],
+            "observed": [
+              "journal"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "journal"
+            ],
+            "observed": [
+              "journal"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0020",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"voice\"]}",
+          "packs": [
+            "voice"
+          ],
+          "usage": {
+            "input_tokens": 312,
+            "output_tokens": 6,
+            "total_tokens": 318
+          }
+        },
+        "timing": {
+          "ttft_us": 712036,
+          "total_us": 712115
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 712036,
+        "total_us": 712115
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "voice"
+            ],
+            "observed": [
+              "voice"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "voice"
+            ],
+            "observed": [
+              "voice"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0021",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\n  \"packs\": [\n    \"voice\",\n    \"note\"\n  ]\n}",
+          "packs": [
+            "voice",
+            "note"
+          ],
+          "usage": {
+            "input_tokens": 309,
+            "output_tokens": 22,
+            "total_tokens": 331
+          }
+        },
+        "timing": {
+          "ttft_us": 756318,
+          "total_us": 756371
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 756318,
+        "total_us": 756371
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "voice"
+            ],
+            "observed": [
+              "note",
+              "voice"
+            ],
+            "true_positive": 1,
+            "false_positive": 1,
+            "false_negative": 0,
+            "precision": 0.5,
+            "recall": 1,
+            "f1": 0.6666666666666666,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0.6666666666666666,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "voice"
+            ],
+            "observed": [
+              "note",
+              "voice"
+            ],
+            "true_positive": 1,
+            "false_positive": 1,
+            "false_negative": 0,
+            "precision": 0.5,
+            "recall": 1,
+            "f1": 0.6666666666666666,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0.6666666666666666,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0022",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"memory\"]}",
+          "packs": [
+            "memory"
+          ],
+          "usage": {
+            "input_tokens": 312,
+            "output_tokens": 6,
+            "total_tokens": 318
+          }
+        },
+        "timing": {
+          "ttft_us": 744349,
+          "total_us": 744407
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 744349,
+        "total_us": 744407
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "memory"
+            ],
+            "observed": [
+              "memory"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "memory"
+            ],
+            "observed": [
+              "memory"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0023",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\n  \"packs\": [\n    \"memory\",\n    \"saving\",\n    \"budget\"\n  ]\n}",
+          "packs": [
+            "memory",
+            "saving",
+            "budget"
+          ],
+          "usage": {
+            "input_tokens": 313,
+            "output_tokens": 27,
+            "total_tokens": 340
+          }
+        },
+        "timing": {
+          "ttft_us": 929602,
+          "total_us": 934583
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 929602,
+        "total_us": 934583
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "memory"
+            ],
+            "observed": [
+              "budget",
+              "memory",
+              "saving"
+            ],
+            "true_positive": 1,
+            "false_positive": 2,
+            "false_negative": 0,
+            "precision": 0.3333333333333333,
+            "recall": 1,
+            "f1": 0.5,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0.5,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "memory"
+            ],
+            "observed": [
+              "budget",
+              "memory",
+              "saving"
+            ],
+            "true_positive": 1,
+            "false_positive": 2,
+            "false_negative": 0,
+            "precision": 0.3333333333333333,
+            "recall": 1,
+            "f1": 0.5,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0.5,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0024",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"memory\"]}",
+          "packs": [
+            "memory"
+          ],
+          "usage": {
+            "input_tokens": 314,
+            "output_tokens": 6,
+            "total_tokens": 320
+          }
+        },
+        "timing": {
+          "ttft_us": 721689,
+          "total_us": 724554
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 721689,
+        "total_us": 724554
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "memory"
+            ],
+            "observed": [
+              "memory"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "memory"
+            ],
+            "observed": [
+              "memory"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0025",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"memory\"]}",
+          "packs": [
+            "memory"
+          ],
+          "usage": {
+            "input_tokens": 310,
+            "output_tokens": 6,
+            "total_tokens": 316
+          }
+        },
+        "timing": {
+          "ttft_us": 747853,
+          "total_us": 747919
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 747853,
+        "total_us": 747919
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "memory"
+            ],
+            "observed": [
+              "memory"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "memory"
+            ],
+            "observed": [
+              "memory"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0026",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"market\"]}",
+          "packs": [
+            "market"
+          ],
+          "usage": {
+            "input_tokens": 311,
+            "output_tokens": 6,
+            "total_tokens": 317
+          }
+        },
+        "timing": {
+          "ttft_us": 651839,
+          "total_us": 651880
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 651839,
+        "total_us": 651880
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": [
+              "market"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": [
+              "market"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0027",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"market\"]}",
+          "packs": [
+            "market"
+          ],
+          "usage": {
+            "input_tokens": 312,
+            "output_tokens": 6,
+            "total_tokens": 318
+          }
+        },
+        "timing": {
+          "ttft_us": 740196,
+          "total_us": 740226
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 740196,
+        "total_us": 740226
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": [
+              "market"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": [
+              "market"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0028",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"market\"]}",
+          "packs": [
+            "market"
+          ],
+          "usage": {
+            "input_tokens": 310,
+            "output_tokens": 6,
+            "total_tokens": 316
+          }
+        },
+        "timing": {
+          "ttft_us": 778894,
+          "total_us": 780931
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 778894,
+        "total_us": 780931
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": [
+              "market"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": [
+              "market"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0029",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"market\"]}",
+          "packs": [
+            "market"
+          ],
+          "usage": {
+            "input_tokens": 308,
+            "output_tokens": 6,
+            "total_tokens": 314
+          }
+        },
+        "timing": {
+          "ttft_us": 621800,
+          "total_us": 621858
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 621800,
+        "total_us": 621858
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": [
+              "market"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": [
+              "market"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0030",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\n  \"packs\": [\n    \"market\"\n  ]\n}",
+          "packs": [
+            "market"
+          ],
+          "usage": {
+            "input_tokens": 313,
+            "output_tokens": 17,
+            "total_tokens": 330
+          }
+        },
+        "timing": {
+          "ttft_us": 712917,
+          "total_us": 713014
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 712917,
+        "total_us": 713014
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": [
+              "market"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": [
+              "market"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0031",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"market\"]}",
+          "packs": [
+            "market"
+          ],
+          "usage": {
+            "input_tokens": 308,
+            "output_tokens": 6,
+            "total_tokens": 314
+          }
+        },
+        "timing": {
+          "ttft_us": 615591,
+          "total_us": 615651
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 615591,
+        "total_us": 615651
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": [
+              "market"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": [
+              "market"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0032",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"market\", \"schedule\"]}",
+          "packs": [
+            "market",
+            "schedule"
+          ],
+          "usage": {
+            "input_tokens": 317,
+            "output_tokens": 9,
+            "total_tokens": 326
+          }
+        },
+        "timing": {
+          "ttft_us": 746797,
+          "total_us": 746959
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 746797,
+        "total_us": 746959
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "market",
+              "schedule"
+            ],
+            "observed": [
+              "market",
+              "schedule"
+            ],
+            "true_positive": 2,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "market",
+              "schedule"
+            ],
+            "observed": [
+              "market",
+              "schedule"
+            ],
+            "true_positive": 2,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0033",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"market\", \"schedule\"]}",
+          "packs": [
+            "market",
+            "schedule"
+          ],
+          "usage": {
+            "input_tokens": 313,
+            "output_tokens": 9,
+            "total_tokens": 322
+          }
+        },
+        "timing": {
+          "ttft_us": 1006992,
+          "total_us": 1007122
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 1006992,
+        "total_us": 1007122
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": [
+              "market",
+              "schedule"
+            ],
+            "true_positive": 1,
+            "false_positive": 1,
+            "false_negative": 0,
+            "precision": 0.5,
+            "recall": 1,
+            "f1": 0.6666666666666666,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0.6666666666666666,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": [
+              "market",
+              "schedule"
+            ],
+            "true_positive": 1,
+            "false_positive": 1,
+            "false_negative": 0,
+            "precision": 0.5,
+            "recall": 1,
+            "f1": 0.6666666666666666,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0.6666666666666666,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0034",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"context\"]}",
+          "packs": [
+            "context"
+          ],
+          "usage": {
+            "input_tokens": 311,
+            "output_tokens": 6,
+            "total_tokens": 317
+          }
+        },
+        "timing": {
+          "ttft_us": 766684,
+          "total_us": 766717
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 766684,
+        "total_us": 766717
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "context"
+            ],
+            "observed": [
+              "context"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "context"
+            ],
+            "observed": [
+              "context"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0035",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"context\"]}",
+          "packs": [
+            "context"
+          ],
+          "usage": {
+            "input_tokens": 309,
+            "output_tokens": 6,
+            "total_tokens": 315
+          }
+        },
+        "timing": {
+          "ttft_us": 682924,
+          "total_us": 682989
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 682924,
+        "total_us": 682989
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "context"
+            ],
+            "observed": [
+              "context"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "context"
+            ],
+            "observed": [
+              "context"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0036",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\n  \"packs\": [\n    \"context\"\n  ]\n}",
+          "packs": [
+            "context"
+          ],
+          "usage": {
+            "input_tokens": 311,
+            "output_tokens": 17,
+            "total_tokens": 328
+          }
+        },
+        "timing": {
+          "ttft_us": 731396,
+          "total_us": 731592
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 731396,
+        "total_us": 731592
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "context"
+            ],
+            "observed": [
+              "context"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "context"
+            ],
+            "observed": [
+              "context"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0037",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "Xin lỗi, tôi là một trợ lý AI nên không thể trực tiếp kiểm tra sức khỏe thể chất của bạn được. Tuy nhiên, tôi luôn sẵn sàng trò chuyện hoặc hỗ trợ bạn nếu bạn cần điều gì nhé!",
+          "usage": {
+            "input_tokens": 311,
+            "output_tokens": 53,
+            "total_tokens": 364
+          }
+        },
+        "timing": {
+          "ttft_us": 913760,
+          "total_us": 962540
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 913760,
+        "total_us": 962540
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": null,
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": null,
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0038",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "Có hai con ốc sên đang bò trên đường thì trời bắt đầu đổ mưa. Con ốc sên thứ nhất quay sang bảo con thứ hai: 'Nhanh lên, chui vào vỏ đi không ướt!'. Con thứ hai thở dài: 'Nhưng mà... nhà tớ đang cho thuê mất rồi!'",
+          "usage": {
+            "input_tokens": 309,
+            "output_tokens": 79,
+            "total_tokens": 388
+          }
+        },
+        "timing": {
+          "ttft_us": 671370,
+          "total_us": 825712
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 671370,
+        "total_us": 825712
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": null,
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": null,
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0039",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "Xin chào! Tôi có thể giúp gì cho bạn hôm nay?",
+          "usage": {
+            "input_tokens": 307,
+            "output_tokens": 28,
+            "total_tokens": 335
+          }
+        },
+        "timing": {
+          "ttft_us": 592893,
+          "total_us": 592981
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 592893,
+        "total_us": 592981
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": null,
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": null,
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0040",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"expense\", \"budget\"]}",
+          "packs": [
+            "expense",
+            "budget"
+          ],
+          "usage": {
+            "input_tokens": 311,
+            "output_tokens": 9,
+            "total_tokens": 320
+          }
+        },
+        "timing": {
+          "ttft_us": 718384,
+          "total_us": 718511
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 718384,
+        "total_us": 718511
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "expense"
+            ],
+            "observed": [
+              "budget",
+              "expense"
+            ],
+            "true_positive": 2,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "expense"
+            ],
+            "observed": [
+              "budget",
+              "expense"
+            ],
+            "true_positive": 2,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0041",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"expense\", \"budget\"]}",
+          "packs": [
+            "expense",
+            "budget"
+          ],
+          "usage": {
+            "input_tokens": 311,
+            "output_tokens": 9,
+            "total_tokens": 320
+          }
+        },
+        "timing": {
+          "ttft_us": 635984,
+          "total_us": 636026
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 635984,
+        "total_us": 636026
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "expense"
+            ],
+            "observed": [
+              "budget",
+              "expense"
+            ],
+            "true_positive": 2,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "expense"
+            ],
+            "observed": [
+              "budget",
+              "expense"
+            ],
+            "true_positive": 2,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0042",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"budget\"]}",
+          "packs": [
+            "budget"
+          ],
+          "usage": {
+            "input_tokens": 307,
+            "output_tokens": 6,
+            "total_tokens": 313
+          }
+        },
+        "timing": {
+          "ttft_us": 746363,
+          "total_us": 746408
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 746363,
+        "total_us": 746408
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "budget"
+            ],
+            "observed": [
+              "budget"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "budget"
+            ],
+            "observed": [
+              "budget"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0043",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"schedule\"]}",
+          "packs": [
+            "schedule"
+          ],
+          "usage": {
+            "input_tokens": 307,
+            "output_tokens": 6,
+            "total_tokens": 313
+          }
+        },
+        "timing": {
+          "ttft_us": 613713,
+          "total_us": 613762
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 613713,
+        "total_us": 613762
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": [
+              "schedule"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": [
+              "schedule"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0044",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\n  \"packs\": [\n    \"schedule\"\n  ]\n}",
+          "packs": [
+            "schedule"
+          ],
+          "usage": {
+            "input_tokens": 312,
+            "output_tokens": 17,
+            "total_tokens": 329
+          }
+        },
+        "timing": {
+          "ttft_us": 742724,
+          "total_us": 742790
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 742724,
+        "total_us": 742790
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": [
+              "schedule"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": [
+              "schedule"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0045",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\n  \"packs\": [\n    \"voice\"\n  ]\n}",
+          "packs": [
+            "voice"
+          ],
+          "usage": {
+            "input_tokens": 308,
+            "output_tokens": 17,
+            "total_tokens": 325
+          }
+        },
+        "timing": {
+          "ttft_us": 624017,
+          "total_us": 624071
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 624017,
+        "total_us": 624071
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "voice"
+            ],
+            "observed": [
+              "voice"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "voice"
+            ],
+            "observed": [
+              "voice"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0046",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"memory\"]}",
+          "packs": [
+            "memory"
+          ],
+          "usage": {
+            "input_tokens": 308,
+            "output_tokens": 6,
+            "total_tokens": 314
+          }
+        },
+        "timing": {
+          "ttft_us": 699702,
+          "total_us": 701202
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 699702,
+        "total_us": 701202
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "memory"
+            ],
+            "observed": [
+              "memory"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "memory"
+            ],
+            "observed": [
+              "memory"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0047",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"market\"]}",
+          "packs": [
+            "market"
+          ],
+          "usage": {
+            "input_tokens": 308,
+            "output_tokens": 6,
+            "total_tokens": 314
+          }
+        },
+        "timing": {
+          "ttft_us": 745306,
+          "total_us": 745347
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 745306,
+        "total_us": 745347
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": [
+              "market"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": [
+              "market"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0048",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"market\"]}",
+          "packs": [
+            "market"
+          ],
+          "usage": {
+            "input_tokens": 310,
+            "output_tokens": 6,
+            "total_tokens": 316
+          }
+        },
+        "timing": {
+          "ttft_us": 717354,
+          "total_us": 717491
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 717354,
+        "total_us": 717491
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": [
+              "market"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": [
+              "market"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0049",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"expense\", \"budget\"]}",
+          "packs": [
+            "expense",
+            "budget"
+          ],
+          "usage": {
+            "input_tokens": 317,
+            "output_tokens": 9,
+            "total_tokens": 326
+          }
+        },
+        "timing": {
+          "ttft_us": 799153,
+          "total_us": 799241
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 799153,
+        "total_us": 799241
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "expense"
+            ],
+            "observed": [
+              "budget",
+              "expense"
+            ],
+            "true_positive": 2,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "expense"
+            ],
+            "observed": [
+              "budget",
+              "expense"
+            ],
+            "true_positive": 2,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0050",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"expense\", \"budget\"]}",
+          "packs": [
+            "expense",
+            "budget"
+          ],
+          "usage": {
+            "input_tokens": 317,
+            "output_tokens": 9,
+            "total_tokens": 326
+          }
+        },
+        "timing": {
+          "ttft_us": 620473,
+          "total_us": 620523
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 620473,
+        "total_us": 620523
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "expense"
+            ],
+            "observed": [
+              "budget",
+              "expense"
+            ],
+            "true_positive": 2,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "expense"
+            ],
+            "observed": [
+              "budget",
+              "expense"
+            ],
+            "true_positive": 2,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0051",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"expense\", \"budget\"]}",
+          "packs": [
+            "expense",
+            "budget"
+          ],
+          "usage": {
+            "input_tokens": 315,
+            "output_tokens": 9,
+            "total_tokens": 324
+          }
+        },
+        "timing": {
+          "ttft_us": 804437,
+          "total_us": 804462
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 804437,
+        "total_us": 804462
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "expense"
+            ],
+            "observed": [
+              "budget",
+              "expense"
+            ],
+            "true_positive": 2,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "expense"
+            ],
+            "observed": [
+              "budget",
+              "expense"
+            ],
+            "true_positive": 2,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0052",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\n  \"packs\": [\n    \"schedule\"\n  ]\n}",
+          "packs": [
+            "schedule"
+          ],
+          "usage": {
+            "input_tokens": 315,
+            "output_tokens": 17,
+            "total_tokens": 332
+          }
+        },
+        "timing": {
+          "ttft_us": 729434,
+          "total_us": 729917
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 729434,
+        "total_us": 729917
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": [
+              "schedule"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": [
+              "schedule"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0053",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"schedule\"]}",
+          "packs": [
+            "schedule"
+          ],
+          "usage": {
+            "input_tokens": 313,
+            "output_tokens": 6,
+            "total_tokens": 319
+          }
+        },
+        "timing": {
+          "ttft_us": 724734,
+          "total_us": 724777
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 724734,
+        "total_us": 724777
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": [
+              "schedule"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": [
+              "schedule"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0054",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"schedule\"]}",
+          "packs": [
+            "schedule"
+          ],
+          "usage": {
+            "input_tokens": 312,
+            "output_tokens": 6,
+            "total_tokens": 318
+          }
+        },
+        "timing": {
+          "ttft_us": 736260,
+          "total_us": 736303
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 736260,
+        "total_us": 736303
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": [
+              "schedule"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": [
+              "schedule"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0055",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"schedule\"]}",
+          "packs": [
+            "schedule"
+          ],
+          "usage": {
+            "input_tokens": 310,
+            "output_tokens": 6,
+            "total_tokens": 316
+          }
+        },
+        "timing": {
+          "ttft_us": 687008,
+          "total_us": 687052
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 687008,
+        "total_us": 687052
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": [
+              "schedule"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": [
+              "schedule"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0056",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"schedule\"]}",
+          "packs": [
+            "schedule"
+          ],
+          "usage": {
+            "input_tokens": 313,
+            "output_tokens": 6,
+            "total_tokens": 319
+          }
+        },
+        "timing": {
+          "ttft_us": 718568,
+          "total_us": 718614
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 718568,
+        "total_us": 718614
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": [
+              "schedule"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "schedule"
+            ],
+            "observed": [
+              "schedule"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0057",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"note\"]}",
+          "packs": [
+            "note"
+          ],
+          "usage": {
+            "input_tokens": 310,
+            "output_tokens": 6,
+            "total_tokens": 316
+          }
+        },
+        "timing": {
+          "ttft_us": 818475,
+          "total_us": 818851
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 818475,
+        "total_us": 818851
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "note"
+            ],
+            "observed": [
+              "note"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "note"
+            ],
+            "observed": [
+              "note"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0058",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"note\"]}",
+          "packs": [
+            "note"
+          ],
+          "usage": {
+            "input_tokens": 315,
+            "output_tokens": 6,
+            "total_tokens": 321
+          }
+        },
+        "timing": {
+          "ttft_us": 726074,
+          "total_us": 726220
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 726074,
+        "total_us": 726220
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "note"
+            ],
+            "observed": [
+              "note"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "note"
+            ],
+            "observed": [
+              "note"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0059",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\n  \"packs\": [\n    \"voice\",\n    \"note\"\n  ]\n}",
+          "packs": [
+            "voice",
+            "note"
+          ],
+          "usage": {
+            "input_tokens": 312,
+            "output_tokens": 22,
+            "total_tokens": 334
+          }
+        },
+        "timing": {
+          "ttft_us": 680221,
+          "total_us": 680344
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 680221,
+        "total_us": 680344
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "voice"
+            ],
+            "observed": [
+              "note",
+              "voice"
+            ],
+            "true_positive": 1,
+            "false_positive": 1,
+            "false_negative": 0,
+            "precision": 0.5,
+            "recall": 1,
+            "f1": 0.6666666666666666,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0.6666666666666666,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "voice"
+            ],
+            "observed": [
+              "note",
+              "voice"
+            ],
+            "true_positive": 1,
+            "false_positive": 1,
+            "false_negative": 0,
+            "precision": 0.5,
+            "recall": 1,
+            "f1": 0.6666666666666666,
+            "exact": false
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 0.6666666666666666,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0060",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"voice\"]}",
+          "packs": [
+            "voice"
+          ],
+          "usage": {
+            "input_tokens": 313,
+            "output_tokens": 6,
+            "total_tokens": 319
+          }
+        },
+        "timing": {
+          "ttft_us": 742405,
+          "total_us": 742448
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 742405,
+        "total_us": 742448
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "voice"
+            ],
+            "observed": [
+              "voice"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "voice"
+            ],
+            "observed": [
+              "voice"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0061",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"journal\"]}",
+          "packs": [
+            "journal"
+          ],
+          "usage": {
+            "input_tokens": 316,
+            "output_tokens": 6,
+            "total_tokens": 322
+          }
+        },
+        "timing": {
+          "ttft_us": 618180,
+          "total_us": 618223
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 618180,
+        "total_us": 618223
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "journal"
+            ],
+            "observed": [
+              "journal"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "journal"
+            ],
+            "observed": [
+              "journal"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0062",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"journal\"]}",
+          "packs": [
+            "journal"
+          ],
+          "usage": {
+            "input_tokens": 312,
+            "output_tokens": 6,
+            "total_tokens": 318
+          }
+        },
+        "timing": {
+          "ttft_us": 619155,
+          "total_us": 619197
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 619155,
+        "total_us": 619197
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "journal"
+            ],
+            "observed": [
+              "journal"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "journal"
+            ],
+            "observed": [
+              "journal"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0063",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"memory\"]}",
+          "packs": [
+            "memory"
+          ],
+          "usage": {
+            "input_tokens": 314,
+            "output_tokens": 6,
+            "total_tokens": 320
+          }
+        },
+        "timing": {
+          "ttft_us": 644659,
+          "total_us": 644701
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 644659,
+        "total_us": 644701
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "memory"
+            ],
+            "observed": [
+              "memory"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "memory"
+            ],
+            "observed": [
+              "memory"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0064",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"memory\"]}",
+          "packs": [
+            "memory"
+          ],
+          "usage": {
+            "input_tokens": 320,
+            "output_tokens": 6,
+            "total_tokens": 326
+          }
+        },
+        "timing": {
+          "ttft_us": 634756,
+          "total_us": 638118
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 634756,
+        "total_us": 638118
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "memory"
+            ],
+            "observed": [
+              "memory"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "memory"
+            ],
+            "observed": [
+              "memory"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0065",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"memory\"]}",
+          "packs": [
+            "memory"
+          ],
+          "usage": {
+            "input_tokens": 312,
+            "output_tokens": 6,
+            "total_tokens": 318
+          }
+        },
+        "timing": {
+          "ttft_us": 670092,
+          "total_us": 672919
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 670092,
+        "total_us": 672919
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "memory"
+            ],
+            "observed": [
+              "memory"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "memory"
+            ],
+            "observed": [
+              "memory"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0066",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"context\"]}",
+          "packs": [
+            "context"
+          ],
+          "usage": {
+            "input_tokens": 313,
+            "output_tokens": 6,
+            "total_tokens": 319
+          }
+        },
+        "timing": {
+          "ttft_us": 635951,
+          "total_us": 636021
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 635951,
+        "total_us": 636021
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "context"
+            ],
+            "observed": [
+              "context"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "context"
+            ],
+            "observed": [
+              "context"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0067",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\n  \"packs\": [\n    \"context\"\n  ]\n}",
+          "packs": [
+            "context"
+          ],
+          "usage": {
+            "input_tokens": 308,
+            "output_tokens": 17,
+            "total_tokens": 325
+          }
+        },
+        "timing": {
+          "ttft_us": 638670,
+          "total_us": 638715
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 638670,
+        "total_us": 638715
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "context"
+            ],
+            "observed": [
+              "context"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "context"
+            ],
+            "observed": [
+              "context"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0068",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"market\"]}",
+          "packs": [
+            "market"
+          ],
+          "usage": {
+            "input_tokens": 315,
+            "output_tokens": 6,
+            "total_tokens": 321
+          }
+        },
+        "timing": {
+          "ttft_us": 632476,
+          "total_us": 632512
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 632476,
+        "total_us": 632512
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": [
+              "market"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": [
+              "market"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0069",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"market\"]}",
+          "packs": [
+            "market"
+          ],
+          "usage": {
+            "input_tokens": 311,
+            "output_tokens": 6,
+            "total_tokens": 317
+          }
+        },
+        "timing": {
+          "ttft_us": 693322,
+          "total_us": 693362
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 693322,
+        "total_us": 693362
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": [
+              "market"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": [
+              "market"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0070",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"market\"]}",
+          "packs": [
+            "market"
+          ],
+          "usage": {
+            "input_tokens": 313,
+            "output_tokens": 6,
+            "total_tokens": 319
+          }
+        },
+        "timing": {
+          "ttft_us": 755359,
+          "total_us": 755432
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 755359,
+        "total_us": 755432
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": [
+              "market"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "market"
+            ],
+            "observed": [
+              "market"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0071",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"weather\"]}",
+          "packs": [
+            "weather"
+          ],
+          "usage": {
+            "input_tokens": 313,
+            "output_tokens": 6,
+            "total_tokens": 319
+          }
+        },
+        "timing": {
+          "ttft_us": 665460,
+          "total_us": 665557
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 665460,
+        "total_us": 665557
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "weather"
+            ],
+            "observed": [
+              "weather"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "weather"
+            ],
+            "observed": [
+              "weather"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0072",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"weather\"]}",
+          "packs": [
+            "weather"
+          ],
+          "usage": {
+            "input_tokens": 313,
+            "output_tokens": 6,
+            "total_tokens": 319
+          }
+        },
+        "timing": {
+          "ttft_us": 733282,
+          "total_us": 733376
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 733282,
+        "total_us": 733376
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "weather"
+            ],
+            "observed": [
+              "weather"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "weather"
+            ],
+            "observed": [
+              "weather"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0073",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"weather\"]}",
+          "packs": [
+            "weather"
+          ],
+          "usage": {
+            "input_tokens": 312,
+            "output_tokens": 6,
+            "total_tokens": 318
+          }
+        },
+        "timing": {
+          "ttft_us": 643533,
+          "total_us": 644687
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 643533,
+        "total_us": 644687
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "weather"
+            ],
+            "observed": [
+              "weather"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "weather"
+            ],
+            "observed": [
+              "weather"
+            ],
+            "true_positive": 1,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0074",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "Định lý Pythagoras (Py-ta-go) là một hệ thức lượng cơ bản trong hình học tam giác vuông. Định lý phát biểu rằng: Trong một tam giác vuông, bình phương độ dài cạnh huyền bằng tổng bình phương độ dài hai cạnh góc vuông.\n\nCông thức: $a^2 + b^2 = c^2$\nTrong đó:\n- $c$ là cạnh huyền (cạnh đối diện với góc vuông, là cạnh dài nhất).\n- $a$ và $b$ là hai cạnh góc vuông.",
+          "usage": {
+            "input_tokens": 311,
+            "output_tokens": 123,
+            "total_tokens": 434
+          }
+        },
+        "timing": {
+          "ttft_us": 782097,
+          "total_us": 904242
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 782097,
+        "total_us": 904242
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": null,
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": null,
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0075",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "Tôi có thể giúp bạn quản lý chi tiêu, ngân sách, tiền tiết kiệm, lịch trình, ghi chú, nhật ký, bản ghi âm, sở thích cá nhân, thông tin thị trường tài chính và thời tiết. Bạn cần tôi hỗ trợ việc gì trước?",
+          "usage": {
+            "input_tokens": 314,
+            "output_tokens": 69,
+            "total_tokens": 383
+          }
+        },
+        "timing": {
+          "ttft_us": 679191,
+          "total_us": 734053
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 679191,
+        "total_us": 734053
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": null,
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": null,
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0076",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "Chúc bạn ngủ ngon và có những giấc mơ đẹp nhé!",
+          "usage": {
+            "input_tokens": 308,
+            "output_tokens": 21,
+            "total_tokens": 329
+          }
+        },
+        "timing": {
+          "ttft_us": 662642,
+          "total_us": 662758
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 662642,
+        "total_us": 662758
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": null,
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": null,
+            "observed": null,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0077",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"saving\", \"budget\"]}",
+          "packs": [
+            "saving",
+            "budget"
+          ],
+          "usage": {
+            "input_tokens": 314,
+            "output_tokens": 9,
+            "total_tokens": 323
+          }
+        },
+        "timing": {
+          "ttft_us": 732220,
+          "total_us": 732286
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 732220,
+        "total_us": 732286
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "saving"
+            ],
+            "observed": [
+              "budget",
+              "saving"
+            ],
+            "true_positive": 2,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "saving"
+            ],
+            "observed": [
+              "budget",
+              "saving"
+            ],
+            "true_positive": 2,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0078",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"saving\", \"budget\"]}",
+          "packs": [
+            "saving",
+            "budget"
+          ],
+          "usage": {
+            "input_tokens": 313,
+            "output_tokens": 9,
+            "total_tokens": 322
+          }
+        },
+        "timing": {
+          "ttft_us": 815578,
+          "total_us": 815648
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 815578,
+        "total_us": 815648
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "saving"
+            ],
+            "observed": [
+              "budget",
+              "saving"
+            ],
+            "true_positive": 2,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "saving"
+            ],
+            "observed": [
+              "budget",
+              "saving"
+            ],
+            "true_positive": 2,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0079",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\n  \"packs\": [\n    \"saving\",\n    \"budget\"\n  ]\n}",
+          "packs": [
+            "saving",
+            "budget"
+          ],
+          "usage": {
+            "input_tokens": 315,
+            "output_tokens": 22,
+            "total_tokens": 337
+          }
+        },
+        "timing": {
+          "ttft_us": 598660,
+          "total_us": 598806
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 598660,
+        "total_us": 598806
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "saving"
+            ],
+            "observed": [
+              "budget",
+              "saving"
+            ],
+            "true_positive": 2,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "saving"
+            ],
+            "observed": [
+              "budget",
+              "saving"
+            ],
+            "true_positive": 2,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0080",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"saving\", \"budget\"]}",
+          "packs": [
+            "saving",
+            "budget"
+          ],
+          "usage": {
+            "input_tokens": 310,
+            "output_tokens": 9,
+            "total_tokens": 319
+          }
+        },
+        "timing": {
+          "ttft_us": 739228,
+          "total_us": 767150
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 739228,
+        "total_us": 767150
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "saving"
+            ],
+            "observed": [
+              "budget",
+              "saving"
+            ],
+            "true_positive": 2,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "saving"
+            ],
+            "observed": [
+              "budget",
+              "saving"
+            ],
+            "true_positive": 2,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    },
+    {
+      "scenario_id": "scenario-0081",
+      "kind": "routing",
+      "run": 1,
+      "primary": {
+        "observation": {
+          "text": "{\"packs\": [\"saving\", \"budget\"]}",
+          "packs": [
+            "saving",
+            "budget"
+          ],
+          "usage": {
+            "input_tokens": 316,
+            "output_tokens": 9,
+            "total_tokens": 325
+          }
+        },
+        "timing": {
+          "ttft_us": 652166,
+          "total_us": 655212
+        }
+      },
+      "final_stage": "primary",
+      "overall_timing": {
+        "ttft_us": 652166,
+        "total_us": 655212
+      },
+      "metrics": {
+        "primary": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "saving"
+            ],
+            "observed": [
+              "budget",
+              "saving"
+            ],
+            "true_positive": 2,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "final": {
+          "pack_selection": {
+            "expected": [
+              "budget",
+              "saving"
+            ],
+            "observed": [
+              "budget",
+              "saving"
+            ],
+            "true_positive": 2,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1,
+            "recall": 1,
+            "f1": 1,
+            "exact": true
+          },
+          "forbidden_tool_calls": 0,
+          "deterministic_score": 1,
+          "task_success": true
+        },
+        "escalation_requested": false
+      }
+    }
+  ],
+  "summary": {
+    "trials": 81,
+    "provider_failures": 0,
+    "latency": {
+      "total_samples": 81,
+      "ttft_samples": 81,
+      "p50_ttft_us": 724734,
+      "p95_ttft_us": 838973,
+      "p50_total_us": 726220,
+      "p95_total_us": 904242
+    },
+    "quality": {
+      "scored_trials": 81,
+      "mean_deterministic_score": 0.9814814814814815,
+      "task_success_trials": 81,
+      "task_success_rate": 1,
+      "forbidden_tool_calls": 0
+    },
+    "cost": {
+      "usage_samples": 81,
+      "priced_samples": 0,
+      "input_tokens": 25249,
+      "output_tokens": 1037,
+      "total_tokens": 26286,
+      "unavailable_reason": "pricing rates not supplied; USD cost not calculated"
+    },
+    "escalation": {
+      "ground_truth_trials": 0,
+      "true_positive": 0,
+      "false_positive": 0,
+      "true_negative": 0,
+      "false_negative": 0,
+      "requested": 0,
+      "executed": 0,
+      "unavailable": 0,
+      "failures": 0,
+      "quality_delta_samples": 0,
+      "latency_penalty_samples": 0
+    }
+  }
+}
