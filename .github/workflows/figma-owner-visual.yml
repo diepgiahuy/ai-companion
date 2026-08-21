@@ -41,7 +41,7 @@ jobs:
           fetch-depth: 0
 
       - name: Apply exact final visual remediation
-        run: python3 scripts/apply_owner_visual_final_patch.py
+        run: python3 scripts/apply_owner_visual_final_patch_v2.py
 
       - name: Commit final source changes
         shell: bash
