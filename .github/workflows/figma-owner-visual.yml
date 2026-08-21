@@ -1,0 +1,43 @@
+name: figma-owner-visual
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'backend/internal/ownerweb/**'
+      - 'scripts/figma_owner_visual.py'
+      - '.github/workflows/figma-owner-visual.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: figma-owner-visual-${{ github.event.pull_request.number || github.sha || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  figma-inventory:
+    name: Figma Owner Hub visual inventory
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Discover approved Figma frames through REST API
+        env:
+          FIGMA_TOKEN: ${{ secrets.FIGMA_TOKEN }}
+        run: python3 scripts/figma_owner_visual.py inventory
+
+      - name: Upload Figma frame inventory
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: figma-owner-frame-inventory-${{ github.sha }}
+          path: artifacts/figma/
+          if-no-files-found: warn
+          retention-days: 7
