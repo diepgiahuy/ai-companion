@@ -712,6 +712,13 @@ bool CompanionApp::apply_settings(const SettingsTwin& twin) {
   if (twin.version <= runtime_config_version_ || !twin.settings.validate()) {
     return false;
   }
+  // Apply the only mutable acoustic setting before committing the logical
+  // config/version. If the physical frontend cannot accept it, preserve the
+  // previous-good runtime state so Device Twin cannot report false success.
+  if (twin.settings.wake_threshold != config_.wake_threshold &&
+      !audio_.set_wake_threshold(twin.settings.wake_threshold)) {
+    return false;
+  }
   config_.smart_vad_enabled = twin.settings.smart_vad_enabled;
   config_.vad_mean_abs_threshold = static_cast<uint16_t>(twin.settings.vad_threshold);
   config_.vad_silence_ms = twin.settings.vad_silence_ms;

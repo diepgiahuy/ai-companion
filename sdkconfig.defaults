@@ -24,11 +24,11 @@ CONFIG_BT_NIMBLE_GATT_CLIENT=n
 CONFIG_BT_NIMBLE_GATT_SERVER=n
 CONFIG_BT_NIMBLE_HOST_QUEUE_CONG_CHECK=y
 
-# ESP-SR POC baseline. This is a reproducible development wake phrase, not the
-# final product phrase/threshold decision.
+# Product wake path: the existing ESP-SR AFE supplies cleaned 16 kHz audio to
+# MultiNet7, which recognizes the fixed product command "Hey Bin". No WakeNet
+# phrase is packaged in this slice; PTT remains the deterministic fallback.
 CONFIG_MODEL_IN_FLASH=y
 CONFIG_SR_NSN_WEBRTC=y
 CONFIG_SR_VADN_WEBRTC=y
-CONFIG_SR_WN_WN9S_HIESP=y
 CONFIG_SR_MN_CN_NONE=y
-CONFIG_SR_MN_EN_NONE=y
+CONFIG_SR_MN_EN_MULTINET7_QUANT=y

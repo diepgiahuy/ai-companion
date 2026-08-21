@@ -24,6 +24,7 @@ public:
 
   bool start() override;
   void reset() override;
+  bool set_wake_threshold(float threshold) override;
   bool begin_playback_reference(uint64_t epoch) override;
   void end_playback_reference(uint64_t epoch) override;
   bool push_playback_reference(std::span<const int16_t> accepted_pcm,

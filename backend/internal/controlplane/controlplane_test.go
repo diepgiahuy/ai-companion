@@ -35,29 +35,31 @@ func TestMergeRuntimeConfig(t *testing.T) {
 	intervalB := 14400
 	base := RuntimeConfig{
 		OTAPollIntervalSeconds: &intervalA,
-		WakeModel:              "hilexin",
+		WakeModel:              WakeModelHeyBin,
 	}
 	patch := RuntimeConfig{
 		OTAPollIntervalSeconds: &intervalB,
-		WakeModel:              "alexa",
+		WakeModel:              WakeModelDisabled,
 	}
 	merged := merge(base, patch)
 	if merged.OTAPollIntervalSeconds == nil || *merged.OTAPollIntervalSeconds != 14400 {
 		t.Fatalf("expected merged OTAPollIntervalSeconds to be 14400, got %v", merged.OTAPollIntervalSeconds)
 	}
-	if merged.WakeModel != "alexa" {
-		t.Fatalf("expected merged WakeModel to be alexa, got %v", merged.WakeModel)
+	if merged.WakeModel != WakeModelDisabled {
+		t.Fatalf("expected merged WakeModel to be disabled, got %v", merged.WakeModel)
 	}
 }
 
 func TestValidateWakeModel(t *testing.T) {
-	cfg := RuntimeConfig{WakeModel: "hilexin"}
-	if err := Validate(cfg); err != nil {
-		t.Fatalf("expected valid wake_model, got: %v", err)
+	for _, model := range []string{"", WakeModelHeyBin, WakeModelDisabled} {
+		if err := Validate(RuntimeConfig{WakeModel: model}); err != nil {
+			t.Fatalf("expected %q wake_model to be valid, got: %v", model, err)
+		}
 	}
-	tooLong := RuntimeConfig{WakeModel: string(make([]byte, 65))}
-	if err := Validate(tooLong); err == nil {
-		t.Fatalf("expected error for wake_model > 64 chars")
+	for _, model := range []string{"wn9_hiesp", "alexa", "hey whatever", string(make([]byte, 65))} {
+		if err := Validate(RuntimeConfig{WakeModel: model}); err == nil {
+			t.Fatalf("expected unsupported wake_model %q to fail", model)
+		}
 	}
 }
 

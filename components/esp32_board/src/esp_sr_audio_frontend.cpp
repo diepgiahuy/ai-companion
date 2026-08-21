@@ -4,6 +4,9 @@
 #include "esp_afe_sr_iface.h"
 #include "esp_afe_config.h"
 #include "esp_log.h"
+#include "esp_mn_iface.h"
+#include "esp_mn_models.h"
+#include "esp_mn_speech_commands.h"
 #include "model_path.h"
 
 #include <algorithm>
@@ -16,11 +19,17 @@
 namespace companion {
 namespace {
 constexpr char kTag[] = "esp_sr_frontend";
+constexpr char kWakeCommand[] = "HEY BIN";
+constexpr int kWakeCommandId = 1;
+constexpr int kWakeCommandDurationMs = 3'000;
 constexpr size_t kMaxAfeChunkSamples = 1024;
+constexpr size_t kMaxWakeChunkSamples = 1024;
 constexpr size_t kReferenceCapacity = 8192;
 constexpr size_t kOutputCapacity = 2048;
+constexpr size_t kWakeCapacity = 4096;
 
 static_assert(kReferenceCapacity > kMaxAfeChunkSamples);
+static_assert(kWakeCapacity > kMaxWakeChunkSamples);
 
 struct SampleRing {
   int16_t* storage{};
@@ -49,13 +58,17 @@ struct EspSrAudioFrontend::Impl {
   srmodel_list_t* models{};
   const esp_afe_sr_iface_t* handle{};
   esp_afe_sr_data_t* data{};
+  esp_mn_iface_t* multinet{};
+  model_iface_data_t* multinet_data{};
   size_t feed_chunk{};
   size_t fetch_chunk{};
+  size_t multinet_chunk{};
   bool last_vad_speech{};
   bool reference_active{};
   size_t microphone_count{};
   size_t reference_overruns{};
   size_t output_overruns{};
+  size_t wake_overruns{};
   uint64_t reference_epoch{};
   uint64_t reference_pushed_samples{};
   uint64_t reference_underflow_events{};
@@ -64,13 +77,24 @@ struct EspSrAudioFrontend::Impl {
   std::array<int16_t, kMaxAfeChunkSamples * 2> interleaved{};
   std::array<int16_t, kReferenceCapacity> reference_storage{};
   std::array<int16_t, kOutputCapacity> output_storage{};
+  std::array<int16_t, kWakeCapacity> wake_storage{};
+  std::array<int16_t, kMaxWakeChunkSamples> wake_chunk{};
   SampleRing references{reference_storage.data(), reference_storage.size()};
   SampleRing output{output_storage.data(), output_storage.size()};
+  SampleRing wake{wake_storage.data(), wake_storage.size()};
+
+  void clear_wake_state() {
+    wake.clear();
+    if (multinet != nullptr && multinet_data != nullptr) {
+      multinet->clean(multinet_data);
+    }
+  }
 
   void clear_pipeline_state() {
     microphone_count = 0;
     references.clear();
     output.clear();
+    clear_wake_state();
     last_vad_speech = false;
     if (handle != nullptr && data != nullptr && handle->reset_buffer != nullptr) {
       (void)handle->reset_buffer(data);
@@ -78,6 +102,13 @@ struct EspSrAudioFrontend::Impl {
   }
 
   void destroy() {
+    if (multinet != nullptr && multinet_data != nullptr) {
+      multinet->destroy(multinet_data);
+      multinet_data = nullptr;
+    }
+    multinet = nullptr;
+    multinet_chunk = 0;
+    wake.clear();
     if (handle != nullptr && data != nullptr) {
       handle->destroy(data);
       data = nullptr;
@@ -104,6 +135,47 @@ struct EspSrAudioFrontend::Impl {
       }
     }
     return true;
+  }
+
+  void append_wake_audio(const int16_t* source, size_t count) {
+    if (source == nullptr && count != 0) return;
+    for (size_t i = 0; i < count; ++i) {
+      if (!wake.push(source[i])) {
+        ++wake_overruns;
+        clear_wake_state();
+        ESP_LOGW(kTag, "Hey Bin detector queue overflow; recognition window reset");
+        return;
+      }
+    }
+  }
+
+  bool detect_hey_bin() {
+    if (multinet == nullptr || multinet_data == nullptr || multinet_chunk == 0) {
+      return false;
+    }
+    while (wake.count >= multinet_chunk) {
+      for (size_t i = 0; i < multinet_chunk; ++i) {
+        if (!wake.pop(wake_chunk[i])) return false;
+      }
+      const esp_mn_state_t state = multinet->detect(multinet_data, wake_chunk.data());
+      if (state == ESP_MN_STATE_DETECTED) {
+        esp_mn_results_t* results = multinet->get_results(multinet_data);
+        bool detected = false;
+        if (results != nullptr) {
+          for (int i = 0; i < results->num; ++i) {
+            if (results->command_id[i] == kWakeCommandId) {
+              detected = true;
+              break;
+            }
+          }
+        }
+        clear_wake_state();
+        if (detected) return true;
+      } else if (state == ESP_MN_STATE_TIMEOUT) {
+        multinet->clean(multinet_data);
+      }
+    }
+    return false;
   }
 };
 
@@ -138,17 +210,14 @@ bool EspSrAudioFrontend::start() {
   }
   afe_config->aec_init = true;
   afe_config->vad_init = true;
-  afe_config->wakenet_init = true;
+  // Hey Bin is recognized by MultiNet from this same AFE's cleaned output.
+  // Keep WakeNet disabled so there is one acoustic wake authority and no stale
+  // packaged Hi ESP path that could trigger the product accidentally.
+  afe_config->wakenet_init = false;
   afe_config->vad_mute_playback = false;
   afe_config->vad_min_speech_ms = static_cast<int>(config_.vad_min_speech_ms);
   afe_config->vad_min_noise_ms = static_cast<int>(config_.vad_min_noise_ms);
   afe_config->memory_alloc_mode = AFE_MEMORY_ALLOC_MORE_PSRAM;
-  if (afe_config->wakenet_model_name == nullptr) {
-    ESP_LOGE(kTag, "no WakeNet model selected in sdkconfig/model partition");
-    afe_config_free(afe_config);
-    impl_->destroy();
-    return false;
-  }
 
   impl_->handle = esp_afe_handle_from_config(afe_config);
   if (impl_->handle != nullptr) {
@@ -176,17 +245,51 @@ bool EspSrAudioFrontend::start() {
   impl_->feed_chunk = static_cast<size_t>(feed);
   impl_->fetch_chunk = static_cast<size_t>(fetch);
 
-  if (impl_->handle->set_wakenet_threshold != nullptr) {
-    const float threshold = std::clamp(config_.wake_threshold, 0.4F, 0.9999F);
-    if (impl_->handle->set_wakenet_threshold(impl_->data, 1, threshold) < 0) {
-      ESP_LOGE(kTag, "WakeNet threshold configuration failed");
-      impl_->destroy();
-      return false;
-    }
+  char* multinet_name = esp_srmodel_filter(impl_->models, ESP_MN_PREFIX, nullptr);
+  if (multinet_name == nullptr) {
+    ESP_LOGE(kTag, "no MultiNet model packaged for Hey Bin");
+    impl_->destroy();
+    return false;
   }
+  impl_->multinet = esp_mn_handle_from_name(multinet_name);
+  if (impl_->multinet == nullptr) {
+    ESP_LOGE(kTag, "MultiNet interface unavailable for model %s", multinet_name);
+    impl_->destroy();
+    return false;
+  }
+  impl_->multinet_data = impl_->multinet->create(multinet_name, kWakeCommandDurationMs);
+  if (impl_->multinet_data == nullptr) {
+    ESP_LOGE(kTag, "MultiNet instance creation failed for model %s", multinet_name);
+    impl_->destroy();
+    return false;
+  }
+  const int multinet_rate = impl_->multinet->get_samp_rate(impl_->multinet_data);
+  const int multinet_chunk = impl_->multinet->get_samp_chunksize(impl_->multinet_data);
+  if (multinet_rate != 16000 || multinet_chunk <= 0 ||
+      multinet_chunk > static_cast<int>(kMaxWakeChunkSamples)) {
+    ESP_LOGE(kTag, "unsupported MultiNet shape chunk=%d rate=%d",
+             multinet_chunk, multinet_rate);
+    impl_->destroy();
+    return false;
+  }
+  impl_->multinet_chunk = static_cast<size_t>(multinet_chunk);
+
+  esp_mn_commands_clear();
+  esp_mn_commands_add(kWakeCommandId, kWakeCommand);
+  if (esp_mn_commands_update() != nullptr) {
+    ESP_LOGE(kTag, "Hey Bin is not accepted by the packaged English MultiNet model");
+    impl_->destroy();
+    return false;
+  }
+  impl_->multinet->set_det_threshold(
+      impl_->multinet_data, std::clamp(config_.wake_threshold, 0.4F, 0.9999F));
+  impl_->multinet->print_active_speech_commands(impl_->multinet_data);
+
   impl_->handle->print_pipeline(impl_->data);
-  ESP_LOGI(kTag, "ESP-SR AFE ready feed=%u fetch=%u", static_cast<unsigned>(impl_->feed_chunk),
-           static_cast<unsigned>(impl_->fetch_chunk));
+  ESP_LOGI(kTag, "ESP-SR AFE + Hey Bin ready feed=%u fetch=%u mn=%s chunk=%u",
+           static_cast<unsigned>(impl_->feed_chunk),
+           static_cast<unsigned>(impl_->fetch_chunk), multinet_name,
+           static_cast<unsigned>(impl_->multinet_chunk));
   return true;
 }
 
@@ -195,6 +298,16 @@ void EspSrAudioFrontend::reset() {
   impl_->clear_pipeline_state();
   impl_->reference_active = false;
   impl_->reference_epoch = 0;
+}
+
+bool EspSrAudioFrontend::set_wake_threshold(float threshold) {
+  if (threshold < 0.4F || threshold > 0.9999F || impl_ == nullptr ||
+      impl_->multinet == nullptr || impl_->multinet_data == nullptr) {
+    return false;
+  }
+  config_.wake_threshold = threshold;
+  impl_->multinet->set_det_threshold(impl_->multinet_data, threshold);
+  return true;
 }
 
 bool EspSrAudioFrontend::begin_playback_reference(uint64_t epoch) {
@@ -289,7 +402,8 @@ AudioFrontendResult EspSrAudioFrontend::process_capture(
       break;
     }
 
-    if (result->wakeup_state == WAKENET_DETECTED) {
+    impl_->append_wake_audio(result->data, fetched);
+    if (impl_->detect_hey_bin()) {
       event = AudioFrontendEvent::wake_detected;
     }
     const bool speech = result->vad_state == VAD_SPEECH;

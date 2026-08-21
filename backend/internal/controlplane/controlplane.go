@@ -9,6 +9,11 @@ import (
 	"time"
 )
 
+const (
+	WakeModelHeyBin   = "hey_bin"
+	WakeModelDisabled = "disabled"
+)
+
 type RuntimeConfig struct {
 	SmartVADEnabled        *bool  `json:"smart_vad_enabled,omitempty"`
 	VADThreshold           *int   `json:"vad_threshold,omitempty"`
@@ -209,6 +214,9 @@ func Validate(c RuntimeConfig) error {
 	// Firmware stores wake_model in a 64-byte NUL-terminated fixed buffer.
 	if len(c.WakeModel) > 63 {
 		return fmt.Errorf("wake_model too long")
+	}
+	if c.WakeModel != "" && c.WakeModel != WakeModelHeyBin && c.WakeModel != WakeModelDisabled {
+		return fmt.Errorf("unsupported wake_model")
 	}
 	if c.WakeThreshold != nil && (*c.WakeThreshold < 0.40 || *c.WakeThreshold > 0.9999) {
 		return fmt.Errorf("wake_threshold out of range (must be between 0.40 and 0.9999)")
