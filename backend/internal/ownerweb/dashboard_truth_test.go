@@ -17,9 +17,9 @@ func TestDashboardUsesApprovedSimpleConsumerSurface(t *testing.T) {
 	for _, required := range []string{
 		"Owner Hub",
 		`id="breadcrumb-current"`,
-		"grid-template-columns:200px",
-		"max-width:980px",
-		"font-size:32px",
+		"grid-template-columns:190px",
+		"max-width:930px",
+		"font-size:29px",
 		"@media(max-width:960px)",
 		"grid-template-columns:72px",
 		"Quick add",

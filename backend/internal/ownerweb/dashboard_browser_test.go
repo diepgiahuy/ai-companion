@@ -209,7 +209,7 @@ func (wd *webDriverClient) newSession() error {
 		"capabilities": map[string]any{"alwaysMatch": map[string]any{
 			"browserName": "chrome",
 			"goog:chromeOptions": map[string]any{"args": []string{
-				"--headless=new", "--no-sandbox", "--disable-dev-shm-usage", "--window-size=1280,900",
+				"--headless=new", "--no-sandbox", "--disable-dev-shm-usage", "--hide-scrollbars", "--window-size=1280,900",
 			}},
 		}},
 	})
