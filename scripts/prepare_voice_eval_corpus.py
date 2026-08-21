@@ -23,6 +23,8 @@ import json
 import pathlib
 import subprocess
 import sys
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -34,12 +36,47 @@ REVISION_SEMANTICS = (
     "viewer_rows_are_not_revision_addressable; manifest_and_pcm_sha256_are_corpus_identity"
 )
 OFFSETS = {"vi": ("vi_vn", [0, 7]), "en": ("en_us", [0, 7])}
+RETRYABLE_HTTP_STATUS = {429, 500, 502, 503, 504}
+MAX_HTTP_ATTEMPTS = 5
+
+
+def _retry_delay(attempt: int, exc: BaseException) -> float:
+    """Return a bounded deterministic retry delay for transient source failures."""
+    if isinstance(exc, urllib.error.HTTPError):
+        retry_after = exc.headers.get("Retry-After") if exc.headers else None
+        if retry_after:
+            try:
+                return min(30.0, max(0.0, float(retry_after)))
+            except ValueError:
+                pass
+    return min(16.0, float(2 ** (attempt - 1)))
+
+
+def _retryable(exc: BaseException) -> bool:
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code in RETRYABLE_HTTP_STATUS
+    return isinstance(exc, (urllib.error.URLError, TimeoutError))
 
 
 def get_json(url: str) -> dict:
-    request = urllib.request.Request(url, headers={"User-Agent": "ai-companion-voice-eval/1"})
-    with urllib.request.urlopen(request, timeout=60) as response:
-        return json.load(response)
+    for attempt in range(1, MAX_HTTP_ATTEMPTS + 1):
+        request = urllib.request.Request(
+            url, headers={"User-Agent": "ai-companion-voice-eval/1"}
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                return json.load(response)
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as exc:
+            if not _retryable(exc) or attempt == MAX_HTTP_ATTEMPTS:
+                raise
+            delay = _retry_delay(attempt, exc)
+            print(
+                f"transient source failure attempt={attempt}/{MAX_HTTP_ATTEMPTS} "
+                f"url={url} error={exc}; retrying in {delay:.0f}s",
+                file=sys.stderr,
+            )
+            time.sleep(delay)
+    raise AssertionError("unreachable")
 
 
 def dataset_revision() -> str:
@@ -51,13 +88,37 @@ def dataset_revision() -> str:
 
 
 def download(url: str, path: pathlib.Path) -> None:
-    request = urllib.request.Request(url, headers={"User-Agent": "ai-companion-voice-eval/1"})
-    with urllib.request.urlopen(request, timeout=120) as response, path.open("wb") as out:
-        while True:
-            chunk = response.read(1024 * 1024)
-            if not chunk:
-                break
-            out.write(chunk)
+    partial = path.with_name(path.name + ".part")
+    partial.unlink(missing_ok=True)
+    try:
+        for attempt in range(1, MAX_HTTP_ATTEMPTS + 1):
+            request = urllib.request.Request(
+                url, headers={"User-Agent": "ai-companion-voice-eval/1"}
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=120) as response, partial.open(
+                    "wb"
+                ) as out:
+                    while True:
+                        chunk = response.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        out.write(chunk)
+                partial.replace(path)
+                return
+            except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as exc:
+                partial.unlink(missing_ok=True)
+                if not _retryable(exc) or attempt == MAX_HTTP_ATTEMPTS:
+                    raise
+                delay = _retry_delay(attempt, exc)
+                print(
+                    f"transient audio download failure attempt={attempt}/{MAX_HTTP_ATTEMPTS} "
+                    f"error={exc}; retrying in {delay:.0f}s",
+                    file=sys.stderr,
+                )
+                time.sleep(delay)
+    finally:
+        partial.unlink(missing_ok=True)
 
 
 def normalize_audio(src: pathlib.Path, dst: pathlib.Path) -> None:
