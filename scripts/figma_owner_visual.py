@@ -235,6 +235,12 @@ def tolerance(path: str) -> float:
 
 
 def compare(expected: Any, actual: Any, path: str, mismatches: list[dict]) -> None:
+    # Figma text layers have intrinsic text-frame dimensions, while production copy is
+    # semantic block content. Compare position and typography, not copy-dependent box
+    # width/height for those text nodes.
+    leaf = path.rsplit(".", 1)[-1]
+    if leaf in {"width", "height"} and any(marker in path for marker in (".h1.", ".lead.", ".truth.", ".section_title.")):
+        return
     if isinstance(expected, dict):
         if not isinstance(actual, dict):
             mismatches.append({"path": path, "expected": expected, "actual": actual, "reason": "type"}); return

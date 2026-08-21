@@ -63,7 +63,7 @@ func TestOwnerHubVisualContract(t *testing.T) {
 	}
 	defer wd.closeSession()
 
-	wd.must(t, http.MethodPost, "/session/"+wd.sessionID+"/window/rect", map[string]any{"width": 1120, "height": 720})
+	setOwnerVisualViewport(t, wd, 1120, 720)
 	wd.must(t, http.MethodPost, "/session/"+wd.sessionID+"/url", map[string]any{"url": server.URL + "/v1/owner/dashboard"})
 	waitForScript(t, wd, `return document.readyState === 'complete' && !!document.querySelector('[data-create="expense"]');`)
 
@@ -83,7 +83,7 @@ func TestOwnerHubVisualContract(t *testing.T) {
 	waitForScript(t, wd, `return !!document.querySelector('#save-privacy');`)
 	captureScreenshot(t, wd, filepath.Join(screenshotDir, "settings-desktop.png"))
 
-	wd.must(t, http.MethodPost, "/session/"+wd.sessionID+"/window/rect", map[string]any{"width": 360, "height": 360})
+	setOwnerVisualViewport(t, wd, 360, 360)
 	executeScript(t, wd, `setView('home'); return true;`)
 	waitForScript(t, wd, `return !!document.querySelector('[data-create="expense"]');`)
 	contract["mobile"] = captureMobileVisualContract(t, wd)
@@ -158,6 +158,24 @@ return {
   device:{x:rect(device).x,y:rect(device).y,width:rect(device).width,height:rect(device).height,bg:cs(device).backgroundColor,radius:num(cs(device).borderRadius)},
   nav:{x:rect(nav).x,y:rect(nav).y,width:rect(nav).width,height:rect(nav).height,item_height:rect(item).height,item_radius:num(cs(item).borderRadius),item_font_size:num(cs(item).fontSize),active_bg:cs(item).backgroundColor,active_color:cs(item).color}
 };`)
+}
+
+func setOwnerVisualViewport(t *testing.T, wd *webDriverClient, width, height int) {
+	t.Helper()
+	for i := 0; i < 5; i++ {
+		dims := scriptMap(t, wd, `return {innerWidth,innerHeight,outerWidth,outerHeight};`)
+		innerW, innerH := asFloat(dims["innerWidth"]), asFloat(dims["innerHeight"])
+		if absFloat(innerW-float64(width)) <= 0.5 && absFloat(innerH-float64(height)) <= 0.5 {
+			return
+		}
+		outerW, outerH := asFloat(dims["outerWidth"]), asFloat(dims["outerHeight"])
+		wd.must(t, http.MethodPost, "/session/"+wd.sessionID+"/window/rect", map[string]any{
+			"width": int(outerW + float64(width) - innerW),
+			"height": int(outerH + float64(height) - innerH),
+		})
+	}
+	dims := scriptMap(t, wd, `return {innerWidth,innerHeight,outerWidth,outerHeight};`)
+	t.Fatalf("could not set exact visual viewport %dx%d: %#v", width, height, dims)
 }
 
 func captureScreenshot(t *testing.T, wd *webDriverClient, path string) {
