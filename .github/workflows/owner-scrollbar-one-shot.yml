@@ -1,0 +1,34 @@
+name: owner-scrollbar-one-shot
+
+on:
+  push:
+    branches: [feat/281-figma-visual-oracle]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout implementation branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: feat/281-figma-visual-oracle
+          fetch-depth: 0
+
+      - name: Apply scrollbar visual remediation
+        run: python3 scripts/apply_owner_scrollbar_patch.py
+
+      - name: Commit patched production HTML
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add backend/internal/ownerweb/dashboard.html
+          git commit -m 'fix(ownerweb): preserve Figma width without scrollbar gutter (#281)'
+          git push origin HEAD:feat/281-figma-visual-oracle
