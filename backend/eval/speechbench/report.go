@@ -13,11 +13,13 @@ import (
 const SchemaVersion = "companion.voice.provider-evidence.v1"
 
 type CorpusManifest struct {
-	Dataset  string       `json:"dataset"`
-	Revision string       `json:"revision"`
-	License  string       `json:"license"`
-	Split    string       `json:"split"`
-	Cases    []CorpusCase `json:"cases"`
+	Dataset           string       `json:"dataset"`
+	Revision          string       `json:"revision"`
+	RevisionSemantics string       `json:"revision_semantics,omitempty"`
+	SourceAPI         string       `json:"source_api,omitempty"`
+	License           string       `json:"license"`
+	Split             string       `json:"split"`
+	Cases             []CorpusCase `json:"cases"`
 }
 
 type CorpusCase struct {
@@ -46,12 +48,14 @@ type Report struct {
 }
 
 type CorpusSummary struct {
-	Dataset      string `json:"dataset"`
-	Revision     string `json:"revision"`
-	License      string `json:"license"`
-	Split        string `json:"split"`
-	ManifestHash string `json:"manifest_sha256,omitempty"`
-	CaseCount    int    `json:"case_count"`
+	Dataset           string `json:"dataset"`
+	Revision          string `json:"revision"`
+	RevisionSemantics string `json:"revision_semantics,omitempty"`
+	SourceAPI         string `json:"source_api,omitempty"`
+	License           string `json:"license"`
+	Split             string `json:"split"`
+	ManifestHash      string `json:"manifest_sha256,omitempty"`
+	CaseCount         int    `json:"case_count"`
 }
 
 type ProviderProvenance struct {
@@ -75,6 +79,7 @@ type LaneResult struct {
 	Summary       *LaneSummary         `json:"summary,omitempty"`
 	Cancellation  *CancellationResult  `json:"cancellation,omitempty"`
 	Reconnect     *ReconnectResult     `json:"reconnect,omitempty"`
+	Faults        *FailureMetrics      `json:"faults,omitempty"`
 	Blockers      []string             `json:"blockers,omitempty"`
 	Failures      []string             `json:"failures,omitempty"`
 }
@@ -99,16 +104,16 @@ type CaseResult struct {
 }
 
 type LaneSummary struct {
-	CasesPassed             int     `json:"cases_passed"`
-	CasesFailed             int     `json:"cases_failed"`
-	WERMean                 float64 `json:"wer_mean,omitempty"`
-	CERMean                 float64 `json:"cer_mean,omitempty"`
-	ASRFinalP50MS           float64 `json:"asr_final_p50_ms,omitempty"`
-	ASRFinalP95MS           float64 `json:"asr_final_p95_ms,omitempty"`
-	TTSFirstAudioP50MS      float64 `json:"tts_first_audio_p50_ms,omitempty"`
-	TTSFirstAudioP95MS      float64 `json:"tts_first_audio_p95_ms,omitempty"`
-	SpeechToFirstAudioP50MS float64 `json:"speech_to_first_audio_p50_ms,omitempty"`
-	SpeechToFirstAudioP95MS float64 `json:"speech_to_first_audio_p95_ms,omitempty"`
+	CasesPassed             int      `json:"cases_passed"`
+	CasesFailed             int      `json:"cases_failed"`
+	WERMean                 float64  `json:"wer_mean,omitempty"`
+	CERMean                 float64  `json:"cer_mean,omitempty"`
+	ASRFinalP50MS           float64  `json:"asr_final_p50_ms,omitempty"`
+	ASRFinalP95MS           float64  `json:"asr_final_p95_ms,omitempty"`
+	TTSFirstAudioP50MS      float64  `json:"tts_first_audio_p50_ms,omitempty"`
+	TTSFirstAudioP95MS      float64  `json:"tts_first_audio_p95_ms,omitempty"`
+	SpeechToFirstAudioP50MS float64  `json:"speech_to_first_audio_p50_ms,omitempty"`
+	SpeechToFirstAudioP95MS float64  `json:"speech_to_first_audio_p95_ms,omitempty"`
 	TurnE2EP50MS            *float64 `json:"turn_e2e_p50_ms,omitempty"`
 	TurnE2EP95MS            *float64 `json:"turn_e2e_p95_ms,omitempty"`
 }
@@ -129,41 +134,152 @@ type ReconnectResult struct {
 	Error     string `json:"error,omitempty"`
 }
 
+// FailureMetrics makes #105 failure evidence explicit. Counts are populated only
+// by probes that actually execute; a zero count is not interpreted as proof that
+// a provider never rate-limits or times out.
+type FailureMetrics struct {
+	TimeoutProbeAttempted   bool     `json:"timeout_probe_attempted"`
+	TimeoutHandled          bool     `json:"timeout_handled"`
+	RateLimitProbeAttempted bool     `json:"rate_limit_probe_attempted"`
+	RateLimitHandled        bool     `json:"rate_limit_handled"`
+	RetryProbeAttempted     bool     `json:"retry_probe_attempted"`
+	RetryHandled            bool     `json:"retry_handled"`
+	ProviderErrorsObserved  int      `json:"provider_errors_observed"`
+	Evidence                []string `json:"evidence,omitempty"`
+}
+
 func LoadCorpus(path string) (CorpusManifest, error) {
 	raw, err := os.ReadFile(path)
-	if err != nil { return CorpusManifest{}, err }
-	var manifest CorpusManifest
-	if err := json.Unmarshal(raw, &manifest); err != nil { return CorpusManifest{}, err }
-	if strings.TrimSpace(manifest.Dataset) == "" || strings.TrimSpace(manifest.Revision) == "" || strings.TrimSpace(manifest.License) == "" { return CorpusManifest{}, errors.New("corpus manifest requires dataset, revision and license") }
-	if len(manifest.Cases) == 0 { return CorpusManifest{}, errors.New("corpus manifest contains no cases") }
-	seen := map[string]bool{}; langs := map[string]bool{}
-	for _, c := range manifest.Cases {
-		if strings.TrimSpace(c.ID)=="" || strings.TrimSpace(c.Reference)=="" || strings.TrimSpace(c.PCMPath)=="" { return CorpusManifest{}, fmt.Errorf("invalid corpus case %#v", c) }
-		if seen[c.ID] { return CorpusManifest{}, fmt.Errorf("duplicate corpus case %q", c.ID) }
-		seen[c.ID]=true; langs[c.Language]=true
-		if c.DurationMS <= 0 { return CorpusManifest{}, fmt.Errorf("corpus case %q has invalid duration", c.ID) }
-		if strings.TrimSpace(c.PCM_SHA256)=="" { return CorpusManifest{}, fmt.Errorf("corpus case %q missing PCM hash", c.ID) }
+	if err != nil {
+		return CorpusManifest{}, err
 	}
-	for _, lang := range []string{"vi","en","mixed"} { if !langs[lang] { return CorpusManifest{}, fmt.Errorf("corpus missing required %s case", lang) } }
+	var manifest CorpusManifest
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		return CorpusManifest{}, err
+	}
+	if strings.TrimSpace(manifest.Dataset) == "" || strings.TrimSpace(manifest.Revision) == "" || strings.TrimSpace(manifest.License) == "" {
+		return CorpusManifest{}, errors.New("corpus manifest requires dataset, revision and license")
+	}
+	if len(manifest.Cases) == 0 {
+		return CorpusManifest{}, errors.New("corpus manifest contains no cases")
+	}
+	seen := map[string]bool{}
+	langs := map[string]bool{}
+	for _, c := range manifest.Cases {
+		if strings.TrimSpace(c.ID) == "" || strings.TrimSpace(c.Reference) == "" || strings.TrimSpace(c.PCMPath) == "" {
+			return CorpusManifest{}, fmt.Errorf("invalid corpus case %#v", c)
+		}
+		if seen[c.ID] {
+			return CorpusManifest{}, fmt.Errorf("duplicate corpus case %q", c.ID)
+		}
+		seen[c.ID] = true
+		langs[c.Language] = true
+		if c.DurationMS <= 0 {
+			return CorpusManifest{}, fmt.Errorf("corpus case %q has invalid duration", c.ID)
+		}
+		if strings.TrimSpace(c.PCM_SHA256) == "" {
+			return CorpusManifest{}, fmt.Errorf("corpus case %q missing PCM hash", c.ID)
+		}
+	}
+	for _, lang := range []string{"vi", "en", "mixed"} {
+		if !langs[lang] {
+			return CorpusManifest{}, fmt.Errorf("corpus missing required %s case", lang)
+		}
+	}
 	return manifest, nil
 }
 
 func NewReport(commit, runner, manifestHash string, corpus CorpusManifest) Report {
-	return Report{SchemaVersion:SchemaVersion, GeneratedAt:time.Now().UTC().Format(time.RFC3339), SourceCommit:commit, Runner:runner, Corpus:CorpusSummary{Dataset:corpus.Dataset,Revision:corpus.Revision,License:corpus.License,Split:corpus.Split,ManifestHash:manifestHash,CaseCount:len(corpus.Cases)}}
+	return Report{
+		SchemaVersion: SchemaVersion,
+		GeneratedAt:   time.Now().UTC().Format(time.RFC3339),
+		SourceCommit:  commit,
+		Runner:        runner,
+		Corpus: CorpusSummary{
+			Dataset:           corpus.Dataset,
+			Revision:          corpus.Revision,
+			RevisionSemantics: corpus.RevisionSemantics,
+			SourceAPI:         corpus.SourceAPI,
+			License:           corpus.License,
+			Split:             corpus.Split,
+			ManifestHash:      manifestHash,
+			CaseCount:         len(corpus.Cases),
+		},
+	}
 }
 
 func Summarize(cases []CaseResult) *LaneSummary {
-	if len(cases)==0 { return nil }
-	var passed int; var wer,cer,asr,tts,speech,turn []float64
-	for _, c := range cases {
-		if c.Error!="" { continue }
-		passed++; wer=append(wer,c.WER); cer=append(cer,c.CER); asr=append(asr,c.ASRFinalMS); tts=append(tts,c.TTSFirstAudioMS); speech=append(speech,c.SpeechToFirstAudioMS); if c.TurnE2EMS!=nil{turn=append(turn,*c.TurnE2EMS)}
+	if len(cases) == 0 {
+		return nil
 	}
-	if passed==0 { return &LaneSummary{CasesFailed:len(cases)} }
-	summary:=&LaneSummary{CasesPassed:passed,CasesFailed:len(cases)-passed,WERMean:mean(wer),CERMean:mean(cer),ASRFinalP50MS:Percentile(asr,.50),ASRFinalP95MS:Percentile(asr,.95),TTSFirstAudioP50MS:Percentile(tts,.50),TTSFirstAudioP95MS:Percentile(tts,.95),SpeechToFirstAudioP50MS:Percentile(speech,.50),SpeechToFirstAudioP95MS:Percentile(speech,.95)}
-	if len(turn)>0 { p50,p95:=Percentile(turn,.50),Percentile(turn,.95); summary.TurnE2EP50MS=&p50; summary.TurnE2EP95MS=&p95 }
+	var passed int
+	var wer, cer, asr, tts, speech, turn []float64
+	for _, c := range cases {
+		if c.Error != "" {
+			continue
+		}
+		passed++
+		wer = append(wer, c.WER)
+		cer = append(cer, c.CER)
+		asr = append(asr, c.ASRFinalMS)
+		tts = append(tts, c.TTSFirstAudioMS)
+		speech = append(speech, c.SpeechToFirstAudioMS)
+		if c.TurnE2EMS != nil {
+			turn = append(turn, *c.TurnE2EMS)
+		}
+	}
+	if passed == 0 {
+		return &LaneSummary{CasesFailed: len(cases)}
+	}
+	summary := &LaneSummary{
+		CasesPassed:             passed,
+		CasesFailed:             len(cases) - passed,
+		WERMean:                 mean(wer),
+		CERMean:                 mean(cer),
+		ASRFinalP50MS:           Percentile(asr, .50),
+		ASRFinalP95MS:           Percentile(asr, .95),
+		TTSFirstAudioP50MS:      Percentile(tts, .50),
+		TTSFirstAudioP95MS:      Percentile(tts, .95),
+		SpeechToFirstAudioP50MS: Percentile(speech, .50),
+		SpeechToFirstAudioP95MS: Percentile(speech, .95),
+	}
+	if len(turn) > 0 {
+		p50, p95 := Percentile(turn, .50), Percentile(turn, .95)
+		summary.TurnE2EP50MS = &p50
+		summary.TurnE2EP95MS = &p95
+	}
 	return summary
 }
 
-func mean(values []float64) float64 { if len(values)==0{return 0}; var sum float64; for _,v:=range values{sum+=v}; return sum/float64(len(values)) }
-func Percentile(values []float64, q float64) float64 { if len(values)==0{return 0}; sorted:=append([]float64(nil),values...); sort.Float64s(sorted); if q<=0{return sorted[0]}; if q>=1{return sorted[len(sorted)-1]}; pos:=q*float64(len(sorted)-1); lo:=int(pos); hi:=lo+1; if hi>=len(sorted){return sorted[lo]}; frac:=pos-float64(lo); return sorted[lo]*(1-frac)+sorted[hi]*frac }
+func mean(values []float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+	var sum float64
+	for _, v := range values {
+		sum += v
+	}
+	return sum / float64(len(values))
+}
+
+func Percentile(values []float64, q float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+	sorted := append([]float64(nil), values...)
+	sort.Float64s(sorted)
+	if q <= 0 {
+		return sorted[0]
+	}
+	if q >= 1 {
+		return sorted[len(sorted)-1]
+	}
+	pos := q * float64(len(sorted)-1)
+	lo := int(pos)
+	hi := lo + 1
+	if hi >= len(sorted) {
+		return sorted[lo]
+	}
+	frac := pos - float64(lo)
+	return sorted[lo]*(1-frac) + sorted[hi]*frac
+}
