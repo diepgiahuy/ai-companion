@@ -121,10 +121,20 @@ def transcript(row: dict) -> str:
 
 
 def audio_url(row: dict) -> str:
+    """Return the first downloadable audio source exposed by Dataset Viewer.
+
+    Dataset Viewer currently serializes the Audio feature as a list of media
+    source dictionaries even for a single recording. Older responses and local
+    fixtures may expose a single dictionary, so accept both shapes explicitly.
+    """
     record = row.get("row") or {}
     audio = record.get("audio")
-    if isinstance(audio, dict) and isinstance(audio.get("src"), str):
-        return audio["src"]
+    candidates = audio if isinstance(audio, list) else [audio]
+    for candidate in candidates:
+        if isinstance(candidate, dict) and isinstance(candidate.get("src"), str):
+            source = candidate["src"].strip()
+            if source:
+                return source
     raise RuntimeError(f"FLEURS row has no downloadable audio.src: audio={audio!r}")
 
 
