@@ -26,6 +26,13 @@ type NativeRealtimeEvent struct {
 	ResponseStatus string
 }
 
+// NativeRealtimeProvider is the provider-neutral connection seam used by
+// benchmark/reference native-realtime clients. Product policy/session ownership
+// remains in Companion; this interface grants no provider-side tool authority.
+type NativeRealtimeProvider interface {
+	Connect(ctx context.Context) (NativeRealtimeSession, error)
+}
+
 type NativeRealtimeSession interface {
 	AppendAudio(ctx context.Context, pcm16Mono16k []byte) error
 	CommitAudio(ctx context.Context) error
