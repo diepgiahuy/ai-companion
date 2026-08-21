@@ -24,6 +24,7 @@ type QwenRealtimeConfig struct {
 	WorkspaceID string
 	Voice string
 	Instructions string
+	InputTranscriptionModel string
 	TurnDetection string
 	VADThreshold float64
 	SilenceMS int
@@ -32,18 +33,18 @@ type QwenRealtimeConfig struct {
 }
 
 func (c QwenRealtimeConfig) normalized()(QwenRealtimeConfig,error){
-	c.URL=strings.TrimSpace(c.URL); c.Model=strings.TrimSpace(c.Model); c.APIKey=strings.TrimSpace(c.APIKey)
+	c.URL=strings.TrimSpace(c.URL); c.Model=strings.TrimSpace(c.Model); c.APIKey=strings.TrimSpace(c.APIKey); c.InputTranscriptionModel=strings.TrimSpace(c.InputTranscriptionModel)
 	if c.URL==""||c.Model==""||c.APIKey==""{return c,errors.New("Qwen Realtime URL, model and API key are required")}
 	parsed,err:=url.Parse(c.URL); if err!=nil||parsed.Scheme==""||parsed.Host==""{return c,fmt.Errorf("invalid Qwen Realtime URL %q",c.URL)}
 	if parsed.Scheme!="wss"&&parsed.Hostname()!="localhost"&&parsed.Hostname()!="127.0.0.1"{return c,errors.New("Qwen Realtime URL must use wss outside localhost")}
-	if c.Voice==""{c.Voice="longanqian"}; if c.TurnDetection==""{c.TurnDetection="manual"}; switch c.TurnDetection{case "manual","server_vad","smart_turn":default:return c,fmt.Errorf("unsupported Qwen Realtime turn detection %q",c.TurnDetection)}; if c.VADThreshold==0{c.VADThreshold=0.5}; if c.SilenceMS<=0{c.SilenceMS=800}; return c,nil
+	if c.Voice==""{c.Voice="longanqian"}; if c.TurnDetection==""{c.TurnDetection="manual"}; switch c.TurnDetection{case "manual","server_vad","smart_turn","semantic_vad":default:return c,fmt.Errorf("unsupported Qwen Realtime turn detection %q",c.TurnDetection)}; if c.VADThreshold==0{c.VADThreshold=0.5}; if c.SilenceMS<=0{c.SilenceMS=800}; return c,nil
 }
 
 type QwenRealtimeProvider struct{config QwenRealtimeConfig}
 func NewQwenRealtime(config QwenRealtimeConfig)(*QwenRealtimeProvider,error){normalized,err:=config.normalized();if err!=nil{return nil,err};return &QwenRealtimeProvider{config:normalized},nil}
 func (p *QwenRealtimeProvider) Connect(ctx context.Context)(NativeRealtimeSession,error){
 	if p==nil{return nil,errors.New("Qwen Realtime provider is nil")};parsed,err:=url.Parse(p.config.URL);if err!=nil{return nil,err};query:=parsed.Query();query.Set("model",p.config.Model);parsed.RawQuery=query.Encode();headers:=http.Header{};headers.Set("Authorization","Bearer "+p.config.APIKey);headers.Set("User-Agent","ai-companion/qwen-realtime-reference");if strings.TrimSpace(p.config.WorkspaceID)!=""{headers.Set("X-DashScope-WorkSpace",strings.TrimSpace(p.config.WorkspaceID))};options:=&websocket.DialOptions{HTTPHeader:headers};if p.config.HTTPClient!=nil{options.HTTPClient=p.config.HTTPClient};conn,_,err:=websocket.Dial(ctx,parsed.String(),options);if err!=nil{return nil,fmt.Errorf("dial Qwen Realtime: %w",err)}
-	aliases,tools,err:=qwenRealtimeTools(p.config.Tools);if err!=nil{conn.CloseNow();return nil,err};s:=&qwenRealtimeSession{conn:conn,aliasToCanonical:aliases};session:=map[string]any{"modalities":[]string{"audio","text"},"voice":p.config.Voice,"input_audio_format":"pcm","output_audio_format":"pcm"};if p.config.Instructions!=""{session["instructions"]=p.config.Instructions};if len(tools)>0{session["tools"]=tools};if p.config.TurnDetection=="manual"{session["turn_detection"]=nil}else{turn:=map[string]any{"type":p.config.TurnDetection};if p.config.TurnDetection=="server_vad"{turn["threshold"]=p.config.VADThreshold;turn["silence_duration_ms"]=p.config.SilenceMS};session["turn_detection"]=turn};if err:=s.writeJSON(ctx,map[string]any{"type":"session.update","session":session});err!=nil{conn.CloseNow();return nil,fmt.Errorf("configure Qwen Realtime session: %w",err)};return s,nil
+	aliases,tools,err:=qwenRealtimeTools(p.config.Tools);if err!=nil{conn.CloseNow();return nil,err};s:=&qwenRealtimeSession{conn:conn,aliasToCanonical:aliases};session:=map[string]any{"modalities":[]string{"audio","text"},"voice":p.config.Voice,"input_audio_format":"pcm","output_audio_format":"pcm"};if p.config.Instructions!=""{session["instructions"]=p.config.Instructions};if p.config.InputTranscriptionModel!=""{session["input_audio_transcription"]=map[string]any{"model":p.config.InputTranscriptionModel}};if len(tools)>0{session["tools"]=tools};if p.config.TurnDetection=="manual"{session["turn_detection"]=nil}else{turn:=map[string]any{"type":p.config.TurnDetection};if p.config.TurnDetection=="server_vad"{turn["threshold"]=p.config.VADThreshold;turn["silence_duration_ms"]=p.config.SilenceMS};session["turn_detection"]=turn};if err:=s.writeJSON(ctx,map[string]any{"type":"session.update","session":session});err!=nil{conn.CloseNow();return nil,fmt.Errorf("configure Qwen Realtime session: %w",err)};return s,nil
 }
 
 type qwenRealtimeSession struct{conn *websocket.Conn;writeMu sync.Mutex;closeOnce sync.Once;aliasToCanonical map[string]string}
@@ -60,4 +61,5 @@ func(s *qwenRealtimeSession)Close()error{var err error;s.closeOnce.Do(func(){err
 type qwenRealtimeWireEvent struct{Type string `json:"type"`;Text string `json:"text"`;Stash string `json:"stash"`;Transcript string `json:"transcript"`;Delta string `json:"delta"`;CallID string `json:"call_id"`;Name string `json:"name"`;Arguments string `json:"arguments"`;Error struct{Type string `json:"type"`;Code string `json:"code"`;Message string `json:"message"`} `json:"error"`;Response struct{Status string `json:"status"`} `json:"response"`}
 func qwenRealtimeTools(tools []NativeRealtimeTool)(map[string]string,[]map[string]any,error){aliases:=make(map[string]string,len(tools));result:=make([]map[string]any,0,len(tools));for _,tool:=range tools{canonical:=strings.TrimSpace(tool.Name);if canonical==""{return nil,nil,errors.New("Qwen Realtime tool name is required")};alias:=qwenRealtimeToolAlias(canonical);if previous,exists:=aliases[alias];exists&&previous!=canonical{return nil,nil,fmt.Errorf("Qwen Realtime tool alias collision for %q and %q",previous,canonical)};aliases[alias]=canonical;function:=map[string]any{"name":alias,"description":tool.Description};if tool.Parameters!=nil{function["parameters"]=tool.Parameters};result=append(result,map[string]any{"type":"function","function":function})};return aliases,result,nil}
 func qwenRealtimeToolAlias(canonical string)string{var slug strings.Builder;for _,r:=range canonical{if unicode.IsLetter(r)||unicode.IsDigit(r)||r=='_'||r=='-'{slug.WriteRune(r)}else{slug.WriteByte('_')};if slug.Len()>=32{break}};if slug.Len()==0{slug.WriteString("tool")};sum:=sha256.Sum256([]byte(canonical));return "c_"+slug.String()+"_"+hex.EncodeToString(sum[:8])}
+var _ NativeRealtimeProvider = (*QwenRealtimeProvider)(nil)
 var _ NativeRealtimeSession = (*qwenRealtimeSession)(nil)
