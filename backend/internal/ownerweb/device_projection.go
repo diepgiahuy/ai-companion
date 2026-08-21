@@ -110,10 +110,10 @@ func (request ownerDeviceConfigRequest) patch() (controlplane.RuntimeConfig, err
 	if request.WakeModel != nil {
 		model := strings.TrimSpace(*request.WakeModel)
 		switch model {
-		case "wn9_hiesp", "disabled":
+		case controlplane.WakeModelHeyBin, controlplane.WakeModelDisabled:
 			patch.WakeModel = model
 		default:
-			return controlplane.RuntimeConfig{}, fmt.Errorf("wake_model must be wn9_hiesp or disabled")
+			return controlplane.RuntimeConfig{}, fmt.Errorf("wake_model must be hey_bin or disabled")
 		}
 	}
 	patch.WakeThreshold = request.WakeThreshold
