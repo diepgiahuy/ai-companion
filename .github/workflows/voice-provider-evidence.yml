@@ -167,13 +167,40 @@ jobs:
           echo "FunASR bridge did not become ready within 10 minutes" >&2
           exit 1
 
-      - name: Run real local lane and record unavailable cloud lanes
+      - name: Run real local lane and available cloud lanes
         env:
           FUNASR_BASE_URL: http://127.0.0.1:18080
           FUNASR_MODEL: ${{ env.FUNASR_MODEL_REPO }}@${{ steps.model.outputs.sha }}
           FUNASR_RUNTIME_VERSION: 1.4.1
           EDGE_TTS_VERSION: ${{ env.EDGE_TTS_VERSION }}
           FFMPEG_VERSION: ubuntu-24.04-system-ffmpeg
+          XUNFEI_ASR_APP_ID: ${{ secrets.XUNFEI_ASR_APP_ID }}
+          XUNFEI_ASR_API_KEY: ${{ secrets.XUNFEI_ASR_API_KEY }}
+          XUNFEI_ASR_API_SECRET: ${{ secrets.XUNFEI_ASR_API_SECRET }}
+          XUNFEI_ASR_VI_LANGUAGE: ${{ vars.XUNFEI_ASR_VI_LANGUAGE }}
+          XUNFEI_ASR_MIXED_LANGUAGE: ${{ vars.XUNFEI_ASR_MIXED_LANGUAGE }}
+          XUNFEI_ASR_URL: ${{ vars.XUNFEI_ASR_URL }}
+          XUNFEI_ASR_VI_URL: ${{ vars.XUNFEI_ASR_VI_URL }}
+          XUNFEI_ASR_MIXED_URL: ${{ vars.XUNFEI_ASR_MIXED_URL }}
+          XUNFEI_ASR_REGION: ${{ vars.XUNFEI_ASR_REGION }}
+          XUNFEI_ASR_QUOTA_NOTE: ${{ vars.XUNFEI_ASR_QUOTA_NOTE }}
+          XUNFEI_ASR_PRICING_NOTE: ${{ vars.XUNFEI_ASR_PRICING_NOTE }}
+          HUOSHAN_TTS_APP_ID: ${{ secrets.HUOSHAN_TTS_APP_ID }}
+          HUOSHAN_TTS_ACCESS_TOKEN: ${{ secrets.HUOSHAN_TTS_ACCESS_TOKEN }}
+          HUOSHAN_TTS_RESOURCE_ID: ${{ secrets.HUOSHAN_TTS_RESOURCE_ID }}
+          HUOSHAN_TTS_SPEAKER: ${{ secrets.HUOSHAN_TTS_SPEAKER }}
+          HUOSHAN_TTS_URL: ${{ vars.HUOSHAN_TTS_URL }}
+          HUOSHAN_TTS_REGION: ${{ vars.HUOSHAN_TTS_REGION }}
+          HUOSHAN_TTS_QUOTA_NOTE: ${{ vars.HUOSHAN_TTS_QUOTA_NOTE }}
+          HUOSHAN_TTS_PRICING_NOTE: ${{ vars.HUOSHAN_TTS_PRICING_NOTE }}
+          DASHSCOPE_REALTIME_KEY: ${{ secrets.DASHSCOPE_REALTIME_KEY }}
+          DASHSCOPE_WORKSPACE_ID: ${{ secrets.DASHSCOPE_WORKSPACE_ID }}
+          DASHSCOPE_REALTIME_MODEL: ${{ vars.DASHSCOPE_REALTIME_MODEL }}
+          DASHSCOPE_REALTIME_VOICE: ${{ vars.DASHSCOPE_REALTIME_VOICE }}
+          DASHSCOPE_REALTIME_REGION: ${{ vars.DASHSCOPE_REALTIME_REGION }}
+          DASHSCOPE_REALTIME_URL: ${{ vars.DASHSCOPE_REALTIME_URL }}
+          DASHSCOPE_QUOTA_NOTE: ${{ vars.DASHSCOPE_QUOTA_NOTE }}
+          DASHSCOPE_PRICING_NOTE: ${{ vars.DASHSCOPE_PRICING_NOTE }}
         run: |
           set -euo pipefail
           "$RUNNER_TEMP/bench-speech" \
@@ -239,9 +266,13 @@ jobs:
                   raise SystemExit(f"fault escaped canonical ASR boundary: {probe}")
           for name in ("reference-streaming", "native-realtime"):
               lane = lanes.get(name)
-              if not lane or lane.get("status") != "insufficient_evidence":
-                  raise SystemExit(f"{name} must remain insufficient without credentials: {lane}")
-          print("VOICE EVIDENCE PASS: real FunASR+EdgeTTS measured through canonical /v2/device + ADK + ToolRegistry; injected timeout/rate-limit semantics proven; unavailable cloud lanes remain insufficient_evidence")
+              if not lane:
+                  raise SystemExit(f"missing cloud evidence lane {name}")
+              if lane.get("status") not in ("passed", "insufficient_evidence"):
+                  raise SystemExit(f"cloud lane {name} failed and requires diagnosis: {lane}")
+              if lane.get("status") == "passed" and (not lane.get("cases") or any(case.get("error") for case in lane["cases"])):
+                  raise SystemExit(f"cloud lane {name} claimed pass with incomplete cases: {lane}")
+          print("VOICE EVIDENCE PASS: real FunASR+EdgeTTS measured through canonical /v2/device + ADK + ToolRegistry; injected timeout/rate-limit semantics proven; configured cloud lanes executed and unavailable lanes remain insufficient_evidence")
           PY
 
       - name: Stop benchmark bridge
