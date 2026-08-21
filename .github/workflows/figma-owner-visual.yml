@@ -17,40 +17,49 @@ permissions:
   contents: read
 
 jobs:
-  figma-reference:
-    name: Figma Owner Hub visual reference
+  visual-oracle:
+    name: Figma Owner Hub visual oracle
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 12
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Discover Figma structural frames through REST API
+      - name: Set up exact Go toolchain
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.6'
+          cache-dependency-path: backend/go.sum
+
+      - name: Read approved V3 contract from live Figma REST API
         env:
           FIGMA_TOKEN: ${{ secrets.FIGMA_TOKEN }}
-        run: python3 scripts/figma_owner_visual.py inventory
+        run: |
+          set -euo pipefail
+          python3 scripts/figma_owner_visual.py inventory
+          python3 scripts/figma_owner_visual.py contract
+          python3 scripts/figma_owner_visual.py export --scale 1
 
-      - name: Read exact approved V3 layout and token nodes
+      - name: Capture deterministic production DOM and screenshots
+        working-directory: backend
         env:
-          FIGMA_TOKEN: ${{ secrets.FIGMA_TOKEN }}
-        run: python3 scripts/figma_owner_visual.py contract
+          OWNER_VISUAL_CONTRACT_OUT: ${{ github.workspace }}/artifacts/ownerweb/production_contract.json
+          OWNER_VISUAL_SCREENSHOT_DIR: ${{ github.workspace }}/artifacts/ownerweb/screenshots
+        run: go test ./internal/ownerweb -run '^TestOwnerHubVisualContract$' -count=1
 
-      - name: Export approved V3 screen references from Figma
-        env:
-          FIGMA_TOKEN: ${{ secrets.FIGMA_TOKEN }}
-        run: >-
-          python3 scripts/figma_owner_visual.py export
-          --ids '10:13,10:63,10:109,10:198,11:146'
-          --scale 1
+      - name: Compare production DOM with approved Figma V3
+        run: python3 scripts/figma_owner_visual.py compare
 
-      - name: Upload Figma contract and renders
+      - name: Upload Figma references, production renders, and report
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: figma-owner-reference-${{ github.sha }}
-          path: artifacts/figma/
+          name: figma-owner-visual-${{ github.sha }}
+          path: |
+            artifacts/figma/
+            artifacts/ownerweb/
           if-no-files-found: warn
-          retention-days: 7
+          retention-days: 14
