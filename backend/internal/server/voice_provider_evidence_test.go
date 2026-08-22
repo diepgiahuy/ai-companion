@@ -67,8 +67,8 @@ func TestVoiceEvidenceCanonicalRealCascade(t *testing.T) {
 	}
 
 	funASR, err := speech.NewFunASR(speech.FunASRConfig{
-		BaseURL: funBase,
-		Model:   funModel,
+		BaseURL:  funBase,
+		Model:    funModel,
 		Language: "vi",
 	})
 	if err != nil {
@@ -121,6 +121,7 @@ func TestVoiceEvidenceCanonicalRealCascade(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	const fixtureReply = "Đã xong."
 	llmRequests := atomic.Int32{}
 	llm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/chat/completions" {
@@ -142,7 +143,7 @@ func TestVoiceEvidenceCanonicalRealCascade(t *testing.T) {
 			fmt.Fprint(w, "data: [DONE]\n\n")
 			return
 		}
-		fmt.Fprint(w, "data: {\"id\":\"canonical-2\",\"model\":\"evidence-model\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Tôi đã nhận được âm thanh và hoàn tất kiểm tra.\"},\"finish_reason\":null}]}\n\n")
+		fmt.Fprintf(w, "data: {\"id\":\"canonical-2\",\"model\":\"evidence-model\",\"choices\":[{\"index\":0,\"delta\":{\"content\":%q},\"finish_reason\":null}]}\n\n", fixtureReply)
 		fmt.Fprint(w, "data: {\"id\":\"canonical-2\",\"model\":\"evidence-model\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n")
 		fmt.Fprint(w, "data: [DONE]\n\n")
 	}))
@@ -180,7 +181,7 @@ func TestVoiceEvidenceCanonicalRealCascade(t *testing.T) {
 	httpServer := httptest.NewServer(service.Handler())
 	defer httpServer.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	connection, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(httpServer.URL, "http")+"/v2/device", testDeviceDialOptions("device-voice-evidence"))
 	if err != nil {
@@ -210,7 +211,7 @@ func TestVoiceEvidenceCanonicalRealCascade(t *testing.T) {
 	for !gotTTSStop {
 		kind, raw, err := connection.Read(ctx)
 		if err != nil {
-			t.Fatal(err)
+			t.Fatalf("canonical read failed: %v transcript=%q llm_requests=%d tool_executions=%d tts_start=%v binary_frames=%d", err, transcript, llmRequests.Load(), toolExecutions.Load(), gotTTSStart, binaryFrames)
 		}
 		if kind == websocket.MessageBinary {
 			binaryFrames++
@@ -270,6 +271,7 @@ func TestVoiceEvidenceCanonicalRealCascade(t *testing.T) {
 			"used_duration_ms":        float64(len(pcm)) / float64(protocol.UplinkSampleRate*2) * 1000,
 			"trimmed_to_protocol_max": trimmed,
 		},
+		"llm_fixture_response":       fixtureReply,
 		"transcript":                 transcript,
 		"tool_executions":            toolExecutions.Load(),
 		"llm_fixture_requests":        llmRequests.Load(),
@@ -278,6 +280,7 @@ func TestVoiceEvidenceCanonicalRealCascade(t *testing.T) {
 		"turn_after_listen_stop_ms":   turnMS,
 		"limitations": []string{
 			"Speech providers are real; the LLM transport is a deterministic local fixture so this artifact does not claim LLM provider quality.",
+			"The canonical LLM fixture intentionally uses a short spoken reply. This artifact proves one bounded real-provider session path; it does not claim sustained EdgeTTS media-backpressure behavior for longer utterances. Provider-lane chunk/timing data remains the evidence for EdgeTTS burst characteristics.",
 			"Recorded input does not prove physical microphone, enclosure, AEC, WakeNet or speaker quality.",
 			"SQLite is used only as this isolated test's conversation Store implementation; it is not a product persistence path.",
 		},
