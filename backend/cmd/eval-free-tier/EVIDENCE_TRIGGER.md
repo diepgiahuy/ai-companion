@@ -7,4 +7,4 @@ This file intentionally triggers the trusted zero-cost #23 benchmark after the b
 - Allowed hosted candidates: `gemma-4-26b-a4b-it`, `gemma-4-31b-it`
 - Spend policy: zero paid inference; no priced provider tools; no retries
 - Production selection remains unchanged until evidence review
-- Synchronize trigger: execute the temporary branch-gated CI evidence job.
+- Synchronize trigger: execute the temporary free-only version of the proven Gemini evidence workflow.
