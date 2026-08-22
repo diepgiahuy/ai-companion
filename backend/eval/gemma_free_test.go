@@ -43,16 +43,19 @@ func TestResolveGemmaFreeModelVersion(t *testing.T) {
 }
 
 func TestGemmaToolDeclarationsStripAdditionalProperties(t *testing.T) {
-	aliases, declarations, err := gemmaToolDeclarations([]ToolDefinition{{Function: ToolFunction{
-		Name: "note.create",
-		Parameters: map[string]any{
-			"type":                 "object",
-			"additionalProperties": false,
-			"properties": map[string]any{
-				"content": map[string]any{"type": "string"},
+	definition := ToolDefinition{
+		Function: ToolFunction{
+			Name: "note.create",
+			Parameters: map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"properties": map[string]any{
+					"content": map[string]any{"type": "string"},
+				},
 			},
 		},
-	}})
+	}
+	aliases, declarations, err := gemmaToolDeclarations([]ToolDefinition{definition})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,25 +87,36 @@ func TestGemmaFreeProviderParsesToolCallAndUsage(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Fatal(err)
 		}
-		tools := request["tools"].([]any)
-		decls := tools[0].(map[string]any)["functionDeclarations"].([]any)
-		expectedAlias = decls[0].(map[string]any)["name"].(string)
+		toolGroups := request["tools"].([]any)
+		declarations := toolGroups[0].(map[string]any)["functionDeclarations"].([]any)
+		expectedAlias = declarations[0].(map[string]any)["name"].(string)
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = w.Write([]byte("data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"functionCall\":{\"name\":\"" + expectedAlias + "\",\"args\":{\"content\":\"buy batteries\"}}}]}}]}\n\n"))
 		_, _ = w.Write([]byte("data: {\"usageMetadata\":{\"promptTokenCount\":10,\"candidatesTokenCount\":4,\"totalTokenCount\":14}}\n\n"))
 	}))
 	defer server.Close()
+
 	provider, err := NewGemmaFreeProvider(GemmaFreeConfig{
 		Model: "gemma-4-26b-a4b-it", Version: "004", APIKey: "test-key", BaseURL: server.URL, HTTPClient: server.Client(),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+	definition := ToolDefinition{
+		Function: ToolFunction{
+			Name: "note.create",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"content": map[string]any{"type": "string"},
+				},
+				"required": []any{"content"},
+			},
+		},
+	}
 	response, err := provider.Evaluate(context.Background(), ProviderRequest{Scenario: Scenario{
 		Input: "Note buy batteries",
-		Tools: []ToolDefinition{{Function: ToolFunction{Name: "note.create", Parameters: map[string]any{
-			"type": "object", "properties": map[string]any{"content": map[string]any{"type": "string"}}, "required": []any{"content"},
-		}}}},
+		Tools: []ToolDefinition{definition},
 	}})
 	if err != nil {
 		t.Fatal(err)
