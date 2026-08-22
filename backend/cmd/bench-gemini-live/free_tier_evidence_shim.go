@@ -6,7 +6,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
+
+const evidenceRequestInterval = 15 * time.Second
 
 // This evidence-only shim exists only on the #23 benchmark branch. It runs
 // before bench-gemini-live main(), uses the workflow's existing GEMINI_TOKEN
@@ -47,6 +50,8 @@ func runFreeTierModelEvidence() error {
 		"paid_capable_models=rejected_before_inference\n" +
 		"priced_provider_tools=disabled\n" +
 		"retries=none\n" +
+		"request_pacing=15s_between_inference_request_starts\n" +
+		"pacing_basis=conservative_project_observation_after_429_not_official_universal_rpm\n" +
 		"corpus=synthetic_non_sensitive\n" +
 		"paid_gemini_live_lane=blocked_by_branch_init_shim\n"
 	if err := os.WriteFile(filepath.Join(evidenceDir, "COST_POLICY.txt"), []byte(policy), 0o644); err != nil {
@@ -55,7 +60,10 @@ func runFreeTierModelEvidence() error {
 
 	models := []string{"gemma-4-26b-a4b-it", "gemma-4-31b-it"}
 	var missingReports []string
-	for _, model := range models {
+	for i, model := range models {
+		if i > 0 {
+			time.Sleep(evidenceRequestInterval)
+		}
 		report := filepath.Join(evidenceDir, model+".json")
 		args := []string{
 			"run", "-tags", "nolibopusfile", "./cmd/eval-free-tier",
@@ -69,7 +77,7 @@ func runFreeTierModelEvidence() error {
 		}
 		cmd := exec.Command("go", args...)
 		cmd.Dir = "backend"
-		cmd.Env = os.Environ()
+		cmd.Env = append(os.Environ(), freeTierPacingEnv+"="+evidenceRequestInterval.String())
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		err := cmd.Run()
