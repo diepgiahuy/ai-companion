@@ -1,0 +1,162 @@
+name: gemini-live-evidence
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/gemini-live-evidence.yml'
+      - 'backend/cmd/bench-gemini-live/**'
+      - 'backend/eval/speechbench/**'
+      - 'backend/internal/speech/gemini_live*'
+      - 'backend/internal/speech/native_realtime.go'
+      - 'backend/internal/server/voice_provider_evidence_gemini_test.go'
+      - 'scripts/prepare_voice_eval_corpus.py'
+  workflow_dispatch:
+
+concurrency:
+  group: gemini-live-evidence-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  gemini-live:
+    name: Gemini Live VN/EN canonical evidence
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GEMINI_LIVE_MODEL: gemini-3.1-flash-live-preview
+      GEMINI_LIVE_VOICE: Kore
+    steps:
+      - name: Checkout exact benchmark head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up Go 1.26.6
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.6'
+          cache-dependency-path: backend/go.sum
+
+      - name: Install native prerequisites
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg pkg-config libopus-dev
+
+      - name: Verify adapter and evidence code before provider use
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/prepare_voice_eval_corpus.py
+          cd backend
+          go test ./internal/speech -run '^TestGeminiLive' -count=1
+          go test -tags 'adk,nolibopusfile' ./internal/server -run '^TestVoiceEvidenceCanonicalGeminiLive$' -count=1
+          go build -o "$RUNNER_TEMP/bench-gemini-live" ./cmd/bench-gemini-live
+
+      - name: Prepare shared content-addressed FLEURS corpus
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/gemini-live-evidence/corpus"
+          python3 scripts/prepare_voice_eval_corpus.py \
+            --out-dir "$RUNNER_TEMP/gemini-live-evidence/corpus" \
+            --manifest "$RUNNER_TEMP/gemini-live-evidence/corpus-manifest.json"
+          cat > "$RUNNER_TEMP/gemini-live-evidence/ATTRIBUTION.txt" <<'EOF'
+          FLEURS dataset: google/fleurs
+          License: CC-BY-4.0
+          The immutable benchmark identity is corpus-manifest.json SHA-256 plus
+          each content-addressed PCM SHA-256, shared with the #105 cascade lane.
+          EOF
+
+      - name: Run real Gemini Live provider lane
+        env:
+          GEMINI_TOKEN: ${{ secrets.GEMINI_TOKEN }}
+          GEMINI_LIVE_QUOTA_NOTE: 'Free-tier access is project/account dependent; effective preview-model limits are provider-enforced and not inferred by this runner.'
+          GEMINI_LIVE_PRICING_NOTE: 'Official pricing checked 2026-08-22: free-tier input/output free; paid audio $0.005/min input and $0.018/min output; transcription text tokens are additional when enabled.'
+        run: |
+          set -euo pipefail
+          test -n "$GEMINI_TOKEN"
+          "$RUNNER_TEMP/bench-gemini-live" \
+            --corpus "$RUNNER_TEMP/gemini-live-evidence/corpus-manifest.json" \
+            --out "$RUNNER_TEMP/gemini-live-evidence/gemini-live-report.json" \
+            --commit "${{ github.event.pull_request.head.sha || github.sha }}" \
+            --runner "github-hosted/ubuntu-24.04/x86_64" \
+            --pace=true
+
+      - name: Prove Gemini Live through canonical Companion session
+        env:
+          GEMINI_TOKEN: ${{ secrets.GEMINI_TOKEN }}
+          COMPANION_GEMINI_LIVE_EVIDENCE: '1'
+          VOICE_EVIDENCE_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          VOICE_EVIDENCE_GEMINI_CANONICAL_REPORT: ${{ runner.temp }}/gemini-live-evidence/gemini-canonical-session.json
+        run: |
+          set -euo pipefail
+          VOICE_EVIDENCE_PCM="$(python3 - <<'PY'
+          import json, os, pathlib
+          manifest = pathlib.Path(os.environ['RUNNER_TEMP']) / 'gemini-live-evidence/corpus-manifest.json'
+          data = json.loads(manifest.read_text())
+          print(next(case['pcm_path'] for case in data['cases'] if case['language'] == 'vi'))
+          PY
+          )"
+          export VOICE_EVIDENCE_PCM
+          cd backend
+          go test -tags 'adk,nolibopusfile' ./internal/server \
+            -run '^TestVoiceEvidenceCanonicalGeminiLive$' -count=1 -v
+
+      - name: Validate Gemini evidence boundary
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, pathlib
+          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'gemini-live-evidence'
+          report = json.loads((root / 'gemini-live-report.json').read_text())
+          canonical = json.loads((root / 'gemini-canonical-session.json').read_text())
+          expected_sha = os.environ['EXPECTED_SHA']
+          if report.get('source_commit') != expected_sha:
+              raise SystemExit(f"provider report source mismatch: {report.get('source_commit')} != {expected_sha}")
+          if canonical.get('source_commit') != expected_sha:
+              raise SystemExit(f"canonical report source mismatch: {canonical.get('source_commit')} != {expected_sha}")
+          lanes = report.get('lanes') or []
+          if len(lanes) != 1 or lanes[0].get('lane') != 'native-realtime-gemini-live':
+              raise SystemExit(f'unexpected Gemini lanes: {lanes}')
+          lane = lanes[0]
+          if lane.get('status') != 'passed':
+              raise SystemExit(f"Gemini lane did not pass: {lane.get('status')} failures={lane.get('failures')} blockers={lane.get('blockers')}")
+          cases = lane.get('cases') or []
+          if len(cases) != 5 or any(case.get('error') for case in cases):
+              raise SystemExit(f'Gemini corpus is incomplete: {cases}')
+          if not {'vi', 'en', 'mixed'}.issubset({case.get('language') for case in cases}):
+              raise SystemExit('Gemini corpus is missing VN/EN/mixed coverage')
+          cancellation = lane.get('cancellation') or {}
+          if not cancellation.get('cancelled') or cancellation.get('stale_audio_chunks_after_cancel', 0) != 0:
+              raise SystemExit(f'Gemini cancellation/stale-output evidence failed: {cancellation}')
+          reconnect = lane.get('reconnect') or {}
+          if not reconnect.get('passed'):
+              raise SystemExit(f'Gemini reconnect evidence failed: {reconnect}')
+          if canonical.get('evidence_class') != 'real_provider_recorded_fixture_canonical_native_realtime_session':
+              raise SystemExit(f'canonical Gemini evidence missing: {canonical}')
+          normal = canonical.get('normal_turn') or {}
+          if normal.get('tool_executions') != 1 or normal.get('provider_delegate_calls') != 1 or normal.get('tts_binary_frames', 0) <= 0:
+              raise SystemExit(f'canonical Gemini ADK/ToolRegistry/audio evidence incomplete: {normal}')
+          cancel = canonical.get('cancellation') or {}
+          if not cancel.get('canonical_turn_abort_sent') or cancel.get('provider_cancel_requests', 0) <= 0:
+              raise SystemExit(f'canonical Gemini cancellation did not reach provider boundary: {cancel}')
+          pcm = canonical.get('input_pcm') or {}
+          if pcm.get('used_duration_ms', 999999) > 8000:
+              raise SystemExit(f'canonical Gemini input bypassed Protocol v2 8s bound: {pcm}')
+          print('GEMINI LIVE EVIDENCE PASS: 5 shared-corpus cases + zero-stale cancel + reconnect + authenticated /v2/device + ADK + ToolRegistry + native audio + canonical abort')
+          PY
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Upload Gemini evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: gemini-live-evidence-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/gemini-live-evidence
+          if-no-files-found: warn
+          retention-days: 30
