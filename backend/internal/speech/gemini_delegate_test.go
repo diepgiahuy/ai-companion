@@ -22,8 +22,12 @@ func TestGeminiDelegatingBridgeKeepsTurnsIsolated(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ctxOne := pipeline.WithTurnContext(context.Background(), pipeline.TurnContext{SessionID: "session-one", TurnID: "turn-one"})
-	ctxTwo := pipeline.WithTurnContext(context.Background(), pipeline.TurnContext{SessionID: "session-two", TurnID: "turn-two"})
+	baseOne, cancelOne := context.WithCancel(context.Background())
+	defer cancelOne()
+	baseTwo, cancelTwo := context.WithCancel(context.Background())
+	defer cancelTwo()
+	ctxOne := pipeline.WithTurnContext(baseOne, pipeline.TurnContext{SessionID: "session-one", TurnID: "turn-one"})
+	ctxTwo := pipeline.WithTurnContext(baseTwo, pipeline.TurnContext{SessionID: "session-two", TurnID: "turn-two"})
 	pcm := make([]byte, 2560)
 
 	transcriptOne, err := bridge.Transcribe(ctxOne, pcm)
@@ -103,7 +107,9 @@ func TestGeminiDelegatingBridgeRejectsAudioBeforeDelegation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx := pipeline.WithTurnContext(context.Background(), pipeline.TurnContext{SessionID: "session-unsafe", TurnID: "turn-unsafe"})
+	baseCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctx := pipeline.WithTurnContext(baseCtx, pipeline.TurnContext{SessionID: "session-unsafe", TurnID: "turn-unsafe"})
 	_, err = bridge.Transcribe(ctx, make([]byte, 1280))
 	if err == nil || err.Error() != "Gemini emitted audio before Companion delegation" {
 		t.Fatalf("error=%v", err)
