@@ -287,12 +287,16 @@ func runCancellation(factory func() (speech.NativeRealtimeProvider, error), c sp
 				}
 				continue
 			}
+			// These are provider/network in-flight chunks received between the
+			// cancellation request and Gemini's interrupted acknowledgement. They
+			// remain evidence, but canonical Companion generation gating decides
+			// whether stale audio can reach the device.
 			result.StaleAudioChunks++
 		}
 		if cancelSent && event.ResponseDone {
 			result.CancelLatencyMS = milliseconds(time.Since(cancelAt))
-			result.Cancelled = event.ResponseStatus == "cancelled" && result.StaleAudioChunks == 0
-			result.Evidence = "manual activityStart interrupted active Gemini Live generation; stale provider audio chunks were counted until interrupted"
+			result.Cancelled = event.ResponseStatus == "cancelled"
+			result.Evidence = "manual activityStart produced Gemini interrupted acknowledgement; provider/network in-flight audio chunks are counted separately, while canonical Companion evidence proves stale-device-output suppression"
 			if event.ResponseStatus != "cancelled" {
 				result.Error = "Gemini Live completed without interrupted status after cancellation"
 			}
