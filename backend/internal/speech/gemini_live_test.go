@@ -34,7 +34,32 @@ func TestGeminiLiveSessionAudioToolAndLifecycle(t *testing.T) {
 			t.Errorf("unexpected setup: %#v", setup)
 			return
 		}
-		writeGeminiTestJSON(t, ctx, conn, map[string]any{"setupComplete": map[string]any{}})
+		tools, _ := setupBody["tools"].([]any)
+		if len(tools) != 1 {
+			t.Errorf("unexpected tools: %#v", setupBody["tools"])
+			return
+		}
+		toolGroup, _ := tools[0].(map[string]any)
+		declarations, _ := toolGroup["functionDeclarations"].([]any)
+		if len(declarations) != 1 {
+			t.Errorf("unexpected declarations: %#v", toolGroup)
+			return
+		}
+		declaration, _ := declarations[0].(map[string]any)
+		parameters, _ := declaration["parameters"].(map[string]any)
+		if _, exists := parameters["additionalProperties"]; exists {
+			t.Errorf("Gemini setup leaked unsupported additionalProperties: %#v", parameters)
+			return
+		}
+		properties, _ := parameters["properties"].(map[string]any)
+		valueSchema, _ := properties["value"].(map[string]any)
+		if _, exists := valueSchema["additionalProperties"]; exists {
+			t.Errorf("Gemini nested schema leaked unsupported additionalProperties: %#v", valueSchema)
+			return
+		}
+		// The real Gemini endpoint was observed returning setup JSON in a binary
+		// WebSocket message, so cover both legal JSON carriage modes.
+		writeGeminiTestJSONType(t, ctx, conn, websocket.MessageBinary, map[string]any{"setupComplete": map[string]any{}})
 
 		activityStart := readGeminiTestJSON(t, ctx, conn)
 		if !hasGeminiRealtimeField(activityStart, "activityStart") {
@@ -109,9 +134,13 @@ func TestGeminiLiveSessionAudioToolAndLifecycle(t *testing.T) {
 			Name:        "companion.echo",
 			Description: "echo",
 			Parameters: map[string]any{
-				"type": "object",
+				"type":                 "object",
+				"additionalProperties": false,
 				"properties": map[string]any{
-					"value": map[string]any{"type": "string"},
+					"value": map[string]any{
+						"type":                 "string",
+						"additionalProperties": false,
+					},
 				},
 			},
 		}},
@@ -281,12 +310,17 @@ func readGeminiTestJSON(t *testing.T, ctx context.Context, conn *websocket.Conn)
 
 func writeGeminiTestJSON(t *testing.T, ctx context.Context, conn *websocket.Conn, value any) {
 	t.Helper()
+	writeGeminiTestJSONType(t, ctx, conn, websocket.MessageText, value)
+}
+
+func writeGeminiTestJSONType(t *testing.T, ctx context.Context, conn *websocket.Conn, kind websocket.MessageType, value any) {
+	t.Helper()
 	raw, err := json.Marshal(value)
 	if err != nil {
 		t.Errorf("marshal: %v", err)
 		return
 	}
-	if err := conn.Write(ctx, websocket.MessageText, raw); err != nil {
+	if err := conn.Write(ctx, kind, raw); err != nil {
 		t.Errorf("write: %v", err)
 	}
 }
