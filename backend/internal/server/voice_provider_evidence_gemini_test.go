@@ -238,7 +238,8 @@ func TestVoiceEvidenceCanonicalGeminiLive(t *testing.T) {
 	normalTools := toolExecutions.Load()
 
 	// Second turn proves a canonical turn.abort reaches the active native provider
-	// bridge without changing the product runtime path.
+	// and that the production generation gate prevents any old-turn audio from
+	// reaching the device after the authoritative interrupted marker.
 	abortTurnID := "turn-gemini-live-evidence-abort"
 	writeJSON(t, ctx, connection, testEnvelope{Type: protocol.TurnListenType, State: "start", Mode: "manual", SessionID: hello.SessionID, TurnID: abortTurnID})
 	if err := writeEvidencePCM(ctx, connection, pcm); err != nil {
@@ -266,12 +267,73 @@ func TestVoiceEvidenceCanonicalGeminiLive(t *testing.T) {
 		}
 	}
 	writeJSON(t, ctx, connection, testEnvelope{Type: protocol.TurnAbortType, SessionID: hello.SessionID, TurnID: abortTurnID, Reason: "gemini_evidence_barge_in"})
+
+	preMarkerBinaryFrames := 0
+	gotInterruptedMarker := false
+	markerDeadline := time.Now().Add(5 * time.Second)
+	for !gotInterruptedMarker && time.Now().Before(markerDeadline) {
+		kind, raw, err := connection.Read(ctx)
+		if err != nil {
+			t.Fatalf("canonical Gemini interruption marker read failed: %v", err)
+		}
+		if kind == websocket.MessageBinary {
+			// These bytes may already have crossed the socket before the abort was
+			// processed. The interrupted marker is the device's authoritative point
+			// to discard buffered playback from the invalidated generation.
+			preMarkerBinaryFrames++
+			continue
+		}
+		var message testEnvelope
+		if err := json.Unmarshal(raw, &message); err != nil {
+			t.Fatal(err)
+		}
+		if message.Type == protocol.ProtocolErrorType {
+			t.Fatalf("canonical Gemini cancellation protocol error: %s %s", message.Code, message.Message)
+		}
+		if message.Type == protocol.TurnStateType && message.TurnID == abortTurnID && message.State == "interrupted" {
+			gotInterruptedMarker = true
+		}
+	}
+	if !gotInterruptedMarker {
+		t.Fatal("canonical turn.abort produced no authoritative interrupted marker")
+	}
+
 	cancelDeadline := time.Now().Add(5 * time.Second)
 	for bridge.cancelRequests.Load() == 0 && time.Now().Before(cancelDeadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	if bridge.cancelRequests.Load() == 0 {
 		t.Fatal("canonical turn.abort did not reach Gemini Live cancellation boundary")
+	}
+
+	postInterruptBinaryFrames := 0
+	postMarkerCtx, postMarkerCancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	for {
+		kind, raw, readErr := connection.Read(postMarkerCtx)
+		if readErr != nil {
+			if postMarkerCtx.Err() != nil {
+				break
+			}
+			postMarkerCancel()
+			t.Fatalf("canonical Gemini post-interrupt read failed: %v", readErr)
+		}
+		if kind == websocket.MessageBinary {
+			postInterruptBinaryFrames++
+			continue
+		}
+		var message testEnvelope
+		if err := json.Unmarshal(raw, &message); err != nil {
+			postMarkerCancel()
+			t.Fatal(err)
+		}
+		if message.Type == protocol.ProtocolErrorType {
+			postMarkerCancel()
+			t.Fatalf("canonical Gemini post-interrupt protocol error: %s %s", message.Code, message.Message)
+		}
+	}
+	postMarkerCancel()
+	if postInterruptBinaryFrames != 0 {
+		t.Fatalf("canonical generation gate leaked %d stale binary frames after interrupted marker", postInterruptBinaryFrames)
 	}
 
 	evidence := map[string]any{
@@ -295,6 +357,7 @@ func TestVoiceEvidenceCanonicalGeminiLive(t *testing.T) {
 			"Gemini tool response",
 			"real Gemini Live native audio output",
 			"fixed Protocol v2 PCM framing",
+			"production generation gate",
 			"Opus downlink",
 		},
 		"input_pcm": map[string]any{
@@ -304,21 +367,25 @@ func TestVoiceEvidenceCanonicalGeminiLive(t *testing.T) {
 			"trimmed_to_protocol_max": trimmed,
 		},
 		"normal_turn": map[string]any{
-			"transcript":               transcript,
-			"tool_executions":          normalTools,
-			"provider_delegate_calls":  1,
-			"tts_binary_frames":        binaryFrames,
-			"after_listen_stop_ms":     normalTurnMS,
+			"transcript":                transcript,
+			"tool_executions":           normalTools,
+			"provider_delegate_calls":   1,
+			"tts_binary_frames":         binaryFrames,
+			"after_listen_stop_ms":      normalTurnMS,
 			"provider_output_pcm_bytes": bridge.outputPCMBytes.Load(),
 		},
 		"cancellation": map[string]any{
-			"canonical_turn_abort_sent": true,
-			"provider_cancel_requests":  bridge.cancelRequests.Load(),
-			"server_reason":             "gemini_evidence_barge_in",
+			"canonical_turn_abort_sent":   true,
+			"provider_cancel_requests":    bridge.cancelRequests.Load(),
+			"server_reason":               "gemini_evidence_barge_in",
+			"interruption_marker_received": gotInterruptedMarker,
+			"pre_marker_binary_frames":    preMarkerBinaryFrames,
+			"post_interrupt_binary_frames": postInterruptBinaryFrames,
 		},
 		"limitations": []string{
 			"The Gemini bridge exists only in this evidence test. #105 does not add a second production runtime path; #106 owns any provider selection and hard-cut.",
 			"Gemini performs native audio input/transcription and native audio output, while Companion ADK and ToolRegistry remain authoritative for business tools through the mandatory delegation boundary.",
+			"Provider/network audio that was already in flight before the interrupted marker is recorded separately. The canonical safety assertion is zero old-generation binary output after that marker.",
 			"The ADK LLM transport is a deterministic local fixture, so this artifact proves orchestration and speech transport rather than external LLM quality.",
 			"Recorded input does not prove physical microphone, enclosure, AEC, WakeNet or speaker quality.",
 			"SQLite is used only as this isolated test's conversation Store implementation; it is not a product persistence path.",
@@ -334,7 +401,7 @@ func TestVoiceEvidenceCanonicalGeminiLive(t *testing.T) {
 	if err := os.WriteFile(reportPath, append(raw, '\n'), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("canonical Gemini turn transcript=%q frames=%d tool_calls=%d delegate_calls=%d duration_ms=%.1f cancel_requests=%d", transcript, binaryFrames, normalTools, bridge.delegateCalls.Load(), normalTurnMS, bridge.cancelRequests.Load())
+	t.Logf("canonical Gemini turn transcript=%q frames=%d tool_calls=%d delegate_calls=%d duration_ms=%.1f cancel_requests=%d pre_marker_frames=%d post_interrupt_frames=%d", transcript, binaryFrames, normalTools, bridge.delegateCalls.Load(), normalTurnMS, bridge.cancelRequests.Load(), preMarkerBinaryFrames, postInterruptBinaryFrames)
 }
 
 type batchOnlyAgent struct {
