@@ -131,8 +131,8 @@ jobs:
           if not {'vi', 'en', 'mixed'}.issubset({case.get('language') for case in cases}):
               raise SystemExit('Gemini corpus is missing VN/EN/mixed coverage')
           cancellation = lane.get('cancellation') or {}
-          if not cancellation.get('cancelled') or cancellation.get('stale_audio_chunks_after_cancel', 0) != 0:
-              raise SystemExit(f'Gemini cancellation/stale-output evidence failed: {cancellation}')
+          if not cancellation.get('cancelled'):
+              raise SystemExit(f'Gemini provider did not acknowledge interruption: {cancellation}')
           reconnect = lane.get('reconnect') or {}
           if not reconnect.get('passed'):
               raise SystemExit(f'Gemini reconnect evidence failed: {reconnect}')
@@ -144,10 +144,16 @@ jobs:
           cancel = canonical.get('cancellation') or {}
           if not cancel.get('canonical_turn_abort_sent') or cancel.get('provider_cancel_requests', 0) <= 0:
               raise SystemExit(f'canonical Gemini cancellation did not reach provider boundary: {cancel}')
+          if not cancel.get('interruption_marker_received'):
+              raise SystemExit(f'canonical Gemini cancellation produced no interruption marker: {cancel}')
+          if cancel.get('post_interrupt_binary_frames', -1) != 0:
+              raise SystemExit(f'canonical Gemini generation gate leaked stale device audio: {cancel}')
           pcm = canonical.get('input_pcm') or {}
           if pcm.get('used_duration_ms', 999999) > 8000:
               raise SystemExit(f'canonical Gemini input bypassed Protocol v2 8s bound: {pcm}')
-          print('GEMINI LIVE EVIDENCE PASS: 5 shared-corpus cases + zero-stale cancel + reconnect + authenticated /v2/device + ADK + ToolRegistry + native audio + canonical abort')
+          provider_stale = cancellation.get('stale_audio_chunks_after_cancel', 0)
+          pre_marker = cancel.get('pre_marker_binary_frames', 0)
+          print(f'GEMINI LIVE EVIDENCE PASS: 5 shared-corpus cases + provider interruption ack (in-flight chunks={provider_stale}) + reconnect + authenticated /v2/device + ADK + ToolRegistry + native audio + canonical abort + zero device frames after interrupted marker (pre-marker frames={pre_marker})')
           PY
         env:
           EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
