@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -14,6 +15,9 @@ import (
 
 func TestGeminiLiveSessionAudioToolAndLifecycle(t *testing.T) {
 	alias := geminiLiveToolAlias("companion.echo")
+	largePCM := make([]byte, 48*1024)
+	largePCM[0] = 1
+	largePCM[len(largePCM)-1] = 4
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.URL.Query().Get("key"); got != "test-key" {
 			t.Errorf("key=%q want test-key", got)
@@ -105,13 +109,16 @@ func TestGeminiLiveSessionAudioToolAndLifecycle(t *testing.T) {
 			return
 		}
 
-		writeGeminiTestJSON(t, ctx, conn, map[string]any{
+		// Base64 encoding makes this JSON message roughly 64 KiB, which proves
+		// the adapter accepts real provider-sized frames above coder/websocket's
+		// 32 KiB default while the separate oversize test keeps the ceiling bounded.
+		writeGeminiTestJSONType(t, ctx, conn, websocket.MessageBinary, map[string]any{
 			"serverContent": map[string]any{
 				"modelTurn": map[string]any{
 					"parts": []map[string]any{{
 						"inlineData": map[string]any{
 							"mimeType": "audio/pcm;rate=24000",
-							"data":     base64.StdEncoding.EncodeToString([]byte{1, 2, 3, 4}),
+							"data":     base64.StdEncoding.EncodeToString(largePCM),
 						},
 					}},
 				},
@@ -193,8 +200,8 @@ func TestGeminiLiveSessionAudioToolAndLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := audio.AudioPCM; len(got) != 4 || got[0] != 1 || got[3] != 4 {
-		t.Fatalf("audio=%+v", audio)
+	if got := audio.AudioPCM; len(got) != len(largePCM) || got[0] != 1 || got[len(got)-1] != 4 {
+		t.Fatalf("audio len=%d want=%d", len(got), len(largePCM))
 	}
 	generated, err := session.Receive(ctx)
 	if err != nil {
@@ -286,6 +293,51 @@ func TestGeminiLiveCancelUsesActivityInterruption(t *testing.T) {
 	}
 	if !interrupted.ResponseDone || interrupted.ResponseStatus != "cancelled" {
 		t.Fatalf("interrupted=%+v", interrupted)
+	}
+}
+
+func TestGeminiLiveReadLimitRejectsOversizeProviderMessage(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			t.Errorf("accept: %v", err)
+			return
+		}
+		defer conn.Close(websocket.StatusNormalClosure, "test complete")
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = readGeminiTestJSON(t, ctx, conn)
+		writeGeminiTestJSON(t, ctx, conn, map[string]any{"setupComplete": map[string]any{}})
+		oversizePCM := make([]byte, 200*1024)
+		writeGeminiTestJSONType(t, ctx, conn, websocket.MessageBinary, map[string]any{
+			"serverContent": map[string]any{
+				"modelTurn": map[string]any{
+					"parts": []map[string]any{{
+						"inlineData": map[string]any{
+							"mimeType": "audio/pcm;rate=24000",
+							"data":     base64.StdEncoding.EncodeToString(oversizePCM),
+						},
+					}},
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	provider, err := NewGeminiLive(GeminiLiveConfig{URL: "ws" + server.URL[len("http"):], Model: "test-live", APIKey: "test-key"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	session, err := provider.Connect(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	_, err = session.Receive(ctx)
+	if !errors.Is(err, websocket.ErrMessageTooBig) {
+		t.Fatalf("Receive() err=%v want websocket.ErrMessageTooBig", err)
 	}
 }
 
