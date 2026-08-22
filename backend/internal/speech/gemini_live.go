@@ -267,12 +267,12 @@ func (s *geminiLiveSession) readWire(ctx context.Context) (geminiLiveWireMessage
 		}
 		return geminiLiveWireMessage{}, fmt.Errorf("read Gemini Live event: %w", err)
 	}
-	if kind != websocket.MessageText {
-		return geminiLiveWireMessage{}, errors.New("Gemini Live returned non-JSON event")
+	if kind != websocket.MessageText && kind != websocket.MessageBinary {
+		return geminiLiveWireMessage{}, fmt.Errorf("Gemini Live returned unsupported WebSocket message type %d", kind)
 	}
 	var wire geminiLiveWireMessage
 	if err := json.Unmarshal(raw, &wire); err != nil {
-		return geminiLiveWireMessage{}, fmt.Errorf("decode Gemini Live event: %w", err)
+		return geminiLiveWireMessage{}, fmt.Errorf("decode Gemini Live JSON event: %w", err)
 	}
 	return wire, nil
 }
@@ -459,11 +459,40 @@ func geminiLiveTools(tools []NativeRealtimeTool) (map[string]string, []map[strin
 		aliases[alias] = canonical
 		declaration := map[string]any{"name": alias, "description": tool.Description}
 		if tool.Parameters != nil {
-			declaration["parameters"] = tool.Parameters
+			declaration["parameters"] = geminiLiveSchema(tool.Parameters)
 		}
 		result = append(result, declaration)
 	}
 	return aliases, result, nil
+}
+
+// Gemini's FunctionDeclaration parameters use the Gemini Schema subset rather
+// than arbitrary JSON Schema. Companion definitions commonly include
+// additionalProperties for server-side validation; Gemini rejects that keyword
+// during Live setup, so the reference adapter strips it recursively while
+// leaving Companion's authoritative ToolRegistry schema unchanged.
+func geminiLiveSchema(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for key, child := range typed {
+			if key == "additionalProperties" {
+				continue
+			}
+			out[key] = geminiLiveSchema(child)
+		}
+		return out
+	case []any:
+		out := make([]any, len(typed))
+		for i, child := range typed {
+			out[i] = geminiLiveSchema(child)
+		}
+		return out
+	case []string:
+		return append([]string(nil), typed...)
+	default:
+		return value
+	}
 }
 
 func geminiLiveToolAlias(canonical string) string {
