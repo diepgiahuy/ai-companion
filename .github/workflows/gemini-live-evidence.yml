@@ -5,10 +5,16 @@ on:
     types: [opened, synchronize, reopened]
     paths:
       - '.github/workflows/gemini-live-evidence.yml'
+      - '.env.example'
       - 'backend/cmd/bench-gemini-live/**'
+      - 'backend/cmd/companiond/speech_reference*'
       - 'backend/eval/speechbench/**'
+      - 'backend/internal/pipeline/pipeline.go'
+      - 'backend/internal/pipeline/turn_context_test.go'
+      - 'backend/internal/speech/gemini_delegate*'
       - 'backend/internal/speech/gemini_live*'
       - 'backend/internal/speech/native_realtime.go'
+      - 'backend/internal/server/provider_guard*'
       - 'backend/internal/server/voice_provider_evidence_gemini_test.go'
       - 'scripts/prepare_voice_eval_corpus.py'
   workflow_dispatch:
@@ -48,12 +54,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ffmpeg pkg-config libopus-dev
 
-      - name: Verify adapter and evidence code before provider use
+      - name: Verify production bridge before provider use
         run: |
           set -euo pipefail
           python3 -m py_compile scripts/prepare_voice_eval_corpus.py
           cd backend
-          go test -tags nolibopusfile ./internal/speech -run '^TestGeminiLive' -count=1
+          go test -tags nolibopusfile ./internal/pipeline -run '^TestWithTurnContext' -count=1
+          go test -tags nolibopusfile ./internal/speech -run '^TestGemini' -count=1
+          go test -tags nolibopusfile ./internal/server -run '^TestGuardProviderComponents' -count=1
+          go test -tags 'adk,mcp,nolibopusfile' ./cmd/companiond -run '^TestConfigureSpeechComponents' -count=1
           go test -tags 'adk,nolibopusfile' ./internal/server -run '^TestVoiceEvidenceCanonicalGeminiLive$' -count=1
           go build -tags nolibopusfile -o "$RUNNER_TEMP/bench-gemini-live" ./cmd/bench-gemini-live
 
