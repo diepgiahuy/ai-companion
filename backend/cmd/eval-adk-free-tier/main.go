@@ -124,7 +124,7 @@ func buildProbeRegistry(executions *atomic.Int64, lastQuery *atomic.Value) (*cap
 			"type":                 "object",
 			"additionalProperties": false,
 			"properties": map[string]any{
-				"query": map[string]any{"type": "string", "const": probeQuery},
+				"query": map[string]any{"type": "string", "enum": []string{probeQuery}},
 			},
 			"required": []string{"query"},
 		},
