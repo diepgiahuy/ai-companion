@@ -9,7 +9,10 @@ import (
 	"time"
 )
 
-const evidenceRequestInterval = 15 * time.Second
+const (
+	evidenceRequestInterval = 15 * time.Second
+	evidencePacingEnv        = "COMPANION_FREE_TIER_MIN_REQUEST_INTERVAL"
+)
 
 // This evidence-only shim exists only on the #23 benchmark branch. It runs
 // before bench-gemini-live main(), uses the workflow's existing GEMINI_TOKEN
@@ -77,7 +80,7 @@ func runFreeTierModelEvidence() error {
 		}
 		cmd := exec.Command("go", args...)
 		cmd.Dir = "backend"
-		cmd.Env = append(os.Environ(), freeTierPacingEnv+"="+evidenceRequestInterval.String())
+		cmd.Env = append(os.Environ(), evidencePacingEnv+"="+evidenceRequestInterval.String())
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		err := cmd.Run()
