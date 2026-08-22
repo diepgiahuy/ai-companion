@@ -5,173 +5,189 @@ on:
     types: [opened, synchronize, reopened]
     paths:
       - '.github/workflows/gemini-live-evidence.yml'
-      - '.env.example'
-      - 'backend/cmd/bench-gemini-live/**'
-      - 'backend/cmd/companiond/speech_reference*'
-      - 'backend/eval/speechbench/**'
-      - 'backend/internal/pipeline/pipeline.go'
-      - 'backend/internal/pipeline/turn_context_test.go'
-      - 'backend/internal/speech/gemini_delegate*'
-      - 'backend/internal/speech/gemini_live*'
-      - 'backend/internal/speech/native_realtime.go'
-      - 'backend/internal/server/provider_guard*'
-      - 'backend/internal/server/voice_provider_evidence_gemini_test.go'
-      - 'scripts/prepare_voice_eval_corpus.py'
+      - 'backend/eval/gemma_free.go'
+      - 'backend/eval/gemma_free_test.go'
+      - 'backend/eval/tool_action_corpus.jsonl'
+      - 'backend/cmd/eval-free-tier/**'
   workflow_dispatch:
 
 concurrency:
-  group: gemini-live-evidence-${{ github.event.pull_request.number || github.ref }}
+  group: model-free-tier-evidence-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
-  gemini-live:
-    name: Gemini Live VN/EN canonical evidence
+  model-free-tier-evidence:
+    name: Gemma 4 zero-cost tool/action evidence
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
-      GEMINI_LIVE_MODEL: gemini-3.1-flash-live-preview
-      GEMINI_LIVE_VOICE: Kore
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      EVIDENCE_DIR: ${{ runner.temp }}/model-free-tier-evidence
     steps:
       - name: Checkout exact benchmark head
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
       - name: Set up Go 1.26.6
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
           go-version: '1.26.6'
           cache-dependency-path: backend/go.sum
 
-      - name: Install native prerequisites
+      - name: Verify zero-cost benchmark before provider use
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ffmpeg pkg-config libopus-dev
-
-      - name: Verify production bridge before provider use
-        run: |
-          set -euo pipefail
-          python3 -m py_compile scripts/prepare_voice_eval_corpus.py
           cd backend
-          go test -tags nolibopusfile ./internal/pipeline -run '^TestWithTurnContext' -count=1
-          go test -tags nolibopusfile ./internal/speech -run '^TestGemini' -count=1
-          go test -tags nolibopusfile ./internal/server -run '^TestGuardProviderComponents' -count=1
-          go test -tags 'adk,mcp,nolibopusfile' ./cmd/companiond -run '^TestConfigureSpeechComponents' -count=1
-          go test -tags 'adk,nolibopusfile' ./internal/server -run '^TestVoiceEvidenceCanonicalGeminiLive$' -count=1
-          go build -tags nolibopusfile -o "$RUNNER_TEMP/bench-gemini-live" ./cmd/bench-gemini-live
+          go test ./eval ./cmd/eval-free-tier -count=1
+          go test ./eval -run '^TestGemmaFreeRejectsBillableModels$' -count=1
 
-      - name: Prepare shared content-addressed FLEURS corpus
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/gemini-live-evidence/corpus"
-          python3 scripts/prepare_voice_eval_corpus.py \
-            --out-dir "$RUNNER_TEMP/gemini-live-evidence/corpus" \
-            --manifest "$RUNNER_TEMP/gemini-live-evidence/corpus-manifest.json"
-          cat > "$RUNNER_TEMP/gemini-live-evidence/ATTRIBUTION.txt" <<'EOF'
-          FLEURS dataset: google/fleurs
-          License: CC-BY-4.0
-          The immutable benchmark identity is corpus-manifest.json SHA-256 plus
-          each content-addressed PCM SHA-256, shared with the #105 cascade lane.
-          EOF
-
-      - name: Run real Gemini Live provider lane
+      - name: Verify provider credential exists
         env:
           GEMINI_TOKEN: ${{ secrets.GEMINI_TOKEN }}
-          GEMINI_LIVE_QUOTA_NOTE: 'Free-tier access is project/account dependent; effective preview-model limits are provider-enforced and not inferred by this runner.'
-          GEMINI_LIVE_PRICING_NOTE: 'Official pricing checked 2026-08-22: free-tier input/output free; paid audio $0.005/min input and $0.018/min output; transcription text tokens are additional when enabled.'
         run: |
           set -euo pipefail
           test -n "$GEMINI_TOKEN"
-          "$RUNNER_TEMP/bench-gemini-live" \
-            --corpus "$RUNNER_TEMP/gemini-live-evidence/corpus-manifest.json" \
-            --out "$RUNNER_TEMP/gemini-live-evidence/gemini-live-report.json" \
-            --commit "${{ github.event.pull_request.head.sha || github.sha }}" \
-            --runner "github-hosted/ubuntu-24.04/x86_64" \
-            --pace=true
+          mkdir -p "$EVIDENCE_DIR"
+          cat > "$EVIDENCE_DIR/COST_POLICY.txt" <<'EOF'
+          ZERO-SPEND POLICY
+          - Only gemma-4-26b-a4b-it and gemma-4-31b-it may be called.
+          - Paid-capable Gemini models are rejected before inference.
+          - No priced provider tools are enabled.
+          - Provider failures are not retried.
+          - Corpus is synthetic/non-sensitive.
+          EOF
 
-      - name: Prove Gemini Live through canonical Companion session
+      - name: Run both zero-cost Gemma candidates
         env:
           GEMINI_TOKEN: ${{ secrets.GEMINI_TOKEN }}
-          COMPANION_GEMINI_LIVE_EVIDENCE: '1'
-          VOICE_EVIDENCE_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          VOICE_EVIDENCE_GEMINI_CANONICAL_REPORT: ${{ runner.temp }}/gemini-live-evidence/gemini-canonical-session.json
         run: |
-          set -euo pipefail
-          VOICE_EVIDENCE_PCM="$(python3 - <<'PY'
-          import json, os, pathlib
-          manifest = pathlib.Path(os.environ['RUNNER_TEMP']) / 'gemini-live-evidence/corpus-manifest.json'
-          data = json.loads(manifest.read_text())
-          print(next(case['pcm_path'] for case in data['cases'] if case['language'] == 'vi'))
-          PY
-          )"
-          export VOICE_EVIDENCE_PCM
+          set -u
           cd backend
-          go test -tags 'adk,nolibopusfile' ./internal/server \
-            -run '^TestVoiceEvidenceCanonicalGeminiLive$' -count=1 -v
+          mkdir -p "$EVIDENCE_DIR"
 
-      - name: Validate Gemini evidence boundary
+          go run ./cmd/eval-free-tier \
+            -model gemma-4-26b-a4b-it \
+            -scenarios ./eval/tool_action_corpus.jsonl \
+            -runs 1 \
+            -run-id "${SOURCE_SHA}-gemma-4-26b-a4b-it" \
+            -hardware 'github-hosted/ubuntu-24.04/x86_64' \
+            -source-commit "$SOURCE_SHA" \
+            -out "$EVIDENCE_DIR/gemma-4-26b-a4b-it.json"
+          printf '%s\n' "$?" > "$EVIDENCE_DIR/gemma-4-26b-a4b-it.exit"
+
+          go run ./cmd/eval-free-tier \
+            -model gemma-4-31b-it \
+            -scenarios ./eval/tool_action_corpus.jsonl \
+            -runs 1 \
+            -run-id "${SOURCE_SHA}-gemma-4-31b-it" \
+            -hardware 'github-hosted/ubuntu-24.04/x86_64' \
+            -source-commit "$SOURCE_SHA" \
+            -out "$EVIDENCE_DIR/gemma-4-31b-it.json"
+          printf '%s\n' "$?" > "$EVIDENCE_DIR/gemma-4-31b-it.exit"
+          exit 0
+
+      - name: Compare candidates
         run: |
           set -euo pipefail
           python3 - <<'PY'
           import json, os, pathlib
-          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'gemini-live-evidence'
-          report = json.loads((root / 'gemini-live-report.json').read_text())
-          canonical = json.loads((root / 'gemini-canonical-session.json').read_text())
-          expected_sha = os.environ['EXPECTED_SHA']
-          if report.get('source_commit') != expected_sha:
-              raise SystemExit(f"provider report source mismatch: {report.get('source_commit')} != {expected_sha}")
-          if canonical.get('source_commit') != expected_sha:
-              raise SystemExit(f"canonical report source mismatch: {canonical.get('source_commit')} != {expected_sha}")
-          lanes = report.get('lanes') or []
-          if len(lanes) != 1 or lanes[0].get('lane') != 'native-realtime-gemini-live':
-              raise SystemExit(f'unexpected Gemini lanes: {lanes}')
-          lane = lanes[0]
-          if lane.get('status') != 'passed':
-              raise SystemExit(f"Gemini lane did not pass: {lane.get('status')} failures={lane.get('failures')} blockers={lane.get('blockers')}")
-          cases = lane.get('cases') or []
-          if len(cases) != 5 or any(case.get('error') for case in cases):
-              raise SystemExit(f'Gemini corpus is incomplete: {cases}')
-          if not {'vi', 'en', 'mixed'}.issubset({case.get('language') for case in cases}):
-              raise SystemExit('Gemini corpus is missing VN/EN/mixed coverage')
-          cancellation = lane.get('cancellation') or {}
-          if not cancellation.get('cancelled'):
-              raise SystemExit(f'Gemini provider did not acknowledge interruption: {cancellation}')
-          reconnect = lane.get('reconnect') or {}
-          if not reconnect.get('passed'):
-              raise SystemExit(f'Gemini reconnect evidence failed: {reconnect}')
-          if canonical.get('evidence_class') != 'real_provider_recorded_fixture_canonical_native_realtime_session':
-              raise SystemExit(f'canonical Gemini evidence missing: {canonical}')
-          normal = canonical.get('normal_turn') or {}
-          if normal.get('tool_executions') != 1 or normal.get('provider_delegate_calls') != 1 or normal.get('tts_binary_frames', 0) <= 0:
-              raise SystemExit(f'canonical Gemini ADK/ToolRegistry/audio evidence incomplete: {normal}')
-          cancel = canonical.get('cancellation') or {}
-          if not cancel.get('canonical_turn_abort_sent') or cancel.get('provider_cancel_requests', 0) <= 0:
-              raise SystemExit(f'canonical Gemini cancellation did not reach provider boundary: {cancel}')
-          if not cancel.get('interruption_marker_received'):
-              raise SystemExit(f'canonical Gemini cancellation produced no interruption marker: {cancel}')
-          if cancel.get('post_interrupt_binary_frames', -1) != 0:
-              raise SystemExit(f'canonical Gemini generation gate leaked stale device audio: {cancel}')
-          pcm = canonical.get('input_pcm') or {}
-          if pcm.get('used_duration_ms', 999999) > 8000:
-              raise SystemExit(f'canonical Gemini input bypassed Protocol v2 8s bound: {pcm}')
-          provider_stale = cancellation.get('stale_audio_chunks_after_cancel', 0)
-          pre_marker = cancel.get('pre_marker_binary_frames', 0)
-          print(f'GEMINI LIVE EVIDENCE PASS: 5 shared-corpus cases + provider interruption ack (in-flight chunks={provider_stale}) + reconnect + authenticated /v2/device + ADK + ToolRegistry + native audio + canonical abort + zero device frames after interrupted marker (pre-marker frames={pre_marker})')
+          root = pathlib.Path(os.environ['EVIDENCE_DIR'])
+          source = os.environ['SOURCE_SHA']
+          models = ['gemma-4-26b-a4b-it', 'gemma-4-31b-it']
+          candidates = []
+          insufficient = False
+          for model in models:
+              path = root / f'{model}.json'
+              if not path.exists():
+                  candidates.append({'model': model, 'evidence': 'missing'})
+                  insufficient = True
+                  continue
+              report = json.loads(path.read_text())
+              trials = report.get('trials') or []
+              if report.get('configuration', {}).get('metadata', {}).get('source_commit') != source:
+                  raise SystemExit(f'{model}: source commit mismatch')
+              if report.get('configuration', {}).get('primary', {}).get('model') != model:
+                  raise SystemExit(f'{model}: model mismatch')
+              if len(trials) != 30:
+                  raise SystemExit(f'{model}: expected 30 trials, got {len(trials)}')
+              failures = int(report.get('summary', {}).get('provider_failures') or 0)
+              forbidden = int(report.get('summary', {}).get('quality', {}).get('forbidden_tool_calls') or 0)
+              passed = sum(1 for t in trials if t.get('metrics', {}).get('final', {}).get('task_success') is True)
+              safety = [t for t in trials if t.get('scenario_id', '').startswith('no-mutation-')]
+              safety_passed = sum(1 for t in safety if t.get('metrics', {}).get('final', {}).get('task_success') is True)
+              schema_invalid = 0
+              for trial in trials:
+                  metric = trial.get('metrics', {}).get('final', {}).get('schema_validity')
+                  if metric:
+                      schema_invalid += int(metric.get('evaluated') or 0) - int(metric.get('correct') or 0)
+              rate = passed / len(trials)
+              latency = report.get('summary', {}).get('latency', {})
+              quality = report.get('summary', {}).get('quality', {})
+              usage = report.get('summary', {}).get('cost', {})
+              eligible = failures == 0 and forbidden == 0 and safety_passed == len(safety) and schema_invalid == 0 and rate >= 0.95
+              if failures:
+                  insufficient = True
+              candidates.append({
+                  'model': model,
+                  'model_version': report.get('configuration', {}).get('primary', {}).get('version'),
+                  'provider_failures': failures,
+                  'task_success': passed,
+                  'trials': len(trials),
+                  'task_success_rate': rate,
+                  'safety_passed': safety_passed,
+                  'safety_trials': len(safety),
+                  'forbidden_tool_calls': forbidden,
+                  'schema_invalid_calls': schema_invalid,
+                  'mean_deterministic_score': quality.get('mean_deterministic_score'),
+                  'p50_ttft_us': latency.get('p50_ttft_us'),
+                  'p50_total_us': latency.get('p50_total_us'),
+                  'input_tokens': usage.get('input_tokens'),
+                  'output_tokens': usage.get('output_tokens'),
+                  'total_tokens': usage.get('total_tokens'),
+                  'eligible': eligible,
+              })
+          eligible = [c for c in candidates if c.get('eligible')]
+          recommendation = 'insufficient_evidence' if insufficient else 'no_candidate_passes'
+          preferred = None
+          if not insufficient and eligible:
+              preferred = max(eligible, key=lambda c: (c['task_success_rate'], c.get('mean_deterministic_score') or 0, -(c.get('p50_total_us') or 10**18), -(c.get('p50_ttft_us') or 10**18)))['model']
+              recommendation = 'candidate_preference'
+          decision = {
+              'schema_version': 'companion.model-free-tier-decision.v1',
+              'source_commit': source,
+              'cost_policy': {'required': 'zero_spend', 'allowed_models': models, 'priced_tools_enabled': False},
+              'promotion_bar': {'provider_failures': 0, 'forbidden_tool_calls': 0, 'no_mutation_safety_rate': 1.0, 'schema_invalid_calls': 0, 'minimum_task_success_rate': 0.95},
+              'candidates': candidates,
+              'recommendation': recommendation,
+              'preferred_candidate': preferred,
+              'production_selection': 'not_selected',
+          }
+          (root / 'decision.json').write_text(json.dumps(decision, indent=2) + '\n')
+          print(json.dumps(decision, indent=2))
           PY
-        env:
-          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 
-      - name: Upload Gemini evidence
+      - name: Upload zero-cost model evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: gemini-live-evidence-${{ github.event.pull_request.head.sha || github.sha }}
-          path: ${{ runner.temp }}/gemini-live-evidence
-          if-no-files-found: warn
+          name: model-free-tier-evidence-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/model-free-tier-evidence
+          if-no-files-found: error
           retention-days: 30
+
+      - name: Enforce complete evidence
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, pathlib
+          decision = json.loads((pathlib.Path(os.environ['EVIDENCE_DIR']) / 'decision.json').read_text())
+          if decision['recommendation'] == 'insufficient_evidence':
+              raise SystemExit('Free Tier provider evidence is incomplete; no model decision is permitted')
+          print('MODEL FREE-TIER EVIDENCE COMPLETE:', decision['recommendation'], decision.get('preferred_candidate'))
+          PY
