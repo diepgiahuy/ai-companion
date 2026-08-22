@@ -68,7 +68,7 @@ func TestVoiceEvidenceCanonicalGeminiLive(t *testing.T) {
 		Model:  model,
 		APIKey: apiKey,
 		Voice:  voice,
-		Instructions: "You are the voice transport for Companion. For every user audio turn, do not answer or speak first. Call the only available function exactly once and wait for its result. After the function result arrives, speak exactly response.result.text and nothing else.",
+		Instructions: "You are the voice transport for Companion. For every user audio turn, do not answer or speak first. Call the only available function exactly once and wait for its result. After the function result arrives, speak exactly the string in response.result and nothing else.",
 		Tools: []speech.NativeRealtimeTool{{
 			Name:        "companion_delegate",
 			Description: "MANDATORY handoff to Companion. Call exactly once for every user audio turn before producing any answer or audio. Companion returns the final text to speak.",
@@ -354,7 +354,7 @@ func TestVoiceEvidenceCanonicalGeminiLive(t *testing.T) {
 			"Companion ADK runtime",
 			"Companion ToolRegistry",
 			"deterministic local Chat Completions fixture",
-			"Gemini tool response",
+			"Gemini scalar tool response",
 			"real Gemini Live native audio output",
 			"fixed Protocol v2 PCM framing",
 			"production generation gate",
@@ -375,11 +375,11 @@ func TestVoiceEvidenceCanonicalGeminiLive(t *testing.T) {
 			"provider_output_pcm_bytes": bridge.outputPCMBytes.Load(),
 		},
 		"cancellation": map[string]any{
-			"canonical_turn_abort_sent":   true,
-			"provider_cancel_requests":    bridge.cancelRequests.Load(),
-			"server_reason":               "gemini_evidence_barge_in",
+			"canonical_turn_abort_sent":    true,
+			"provider_cancel_requests":     bridge.cancelRequests.Load(),
+			"server_reason":                "gemini_evidence_barge_in",
 			"interruption_marker_received": gotInterruptedMarker,
-			"pre_marker_binary_frames":    preMarkerBinaryFrames,
+			"pre_marker_binary_frames":     preMarkerBinaryFrames,
 			"post_interrupt_binary_frames": postInterruptBinaryFrames,
 		},
 		"limitations": []string{
@@ -498,16 +498,16 @@ func (b *geminiCanonicalBridge) Synthesize(ctx context.Context, text string, emi
 	if session == nil || call == nil {
 		return fmt.Errorf("Gemini canonical bridge has no pending delegated turn")
 	}
-	result, err := json.Marshal(map[string]any{"text": text})
-	if err != nil {
-		return err
-	}
-	if err := session.ReturnToolResult(ctx, call.CallID, string(result)); err != nil {
+	// Google's Live WebSocket examples use response.result as the function's
+	// direct result value. Keep the canonical speech handoff scalar so Gemini
+	// has one unambiguous string to speak after Companion finishes ADK/tools.
+	if err := session.ReturnToolResult(ctx, call.CallID, text); err != nil {
 		return err
 	}
 
 	frameBytes := protocol.DownlinkSamplesPerFrame * 2
 	buffer := make([]byte, 0, frameBytes*2)
+	providerPCMBytes := 0
 	closeSession := func() {
 		b.mu.Lock()
 		if b.session == session {
@@ -529,6 +529,7 @@ func (b *geminiCanonicalBridge) Synthesize(ctx context.Context, text string, emi
 			return err
 		}
 		if len(event.AudioPCM) > 0 {
+			providerPCMBytes += len(event.AudioPCM)
 			b.outputPCMBytes.Add(int64(len(event.AudioPCM)))
 			buffer = append(buffer, event.AudioPCM...)
 			for len(buffer) >= frameBytes {
@@ -545,6 +546,9 @@ func (b *geminiCanonicalBridge) Synthesize(ctx context.Context, text string, emi
 		if event.ResponseDone {
 			if event.ResponseStatus == "cancelled" {
 				return context.Canceled
+			}
+			if providerPCMBytes == 0 {
+				return fmt.Errorf("Gemini completed delegated response without native audio")
 			}
 			if len(buffer) > 0 {
 				frame := make([]byte, frameBytes)
