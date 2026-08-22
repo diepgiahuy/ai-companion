@@ -113,7 +113,8 @@ Current evidence deliberately keeps these concerns separate:
 
 - PostgreSQL/Atlas/River software/data-plane behavior has hosted evidence.
 - Protocol/session/ToolRegistry/device-capability orchestration has deterministic/Tier-1 evidence for the implemented paths. Capability hardening is covered by exact-head Go/host/ESP32/Tier-1 merge gates; physical volume effect remains unproven because physical firmware does not advertise volume.
-- Reference ASR/TTS/realtime/model adapters exist, but Production-v1 real VN/EN provider/model selection still requires measured evidence.
+- Real-provider reference evidence covers the same normalized VN/EN/mixed corpus for the FunASR + EdgeTTS cascade and Google Gemini Live native-realtime challenger. Both have canonical Companion-session evidence through `/v2/device`, ADK and `ToolRegistry`; the Gemini lane also proves interruption acknowledgement, reconnect and zero stale device audio after the authoritative interrupted marker.
+- Provider evidence is **benchmark evidence, not Production-v1 selection**. Reference adapters and benchmark runners do not form an active runtime selector or silent fallback; promotion/hard-cut remains a separate measured decision.
 - ESP-SR software integration exists, while enclosure AEC/wake/false-interruption/resource behavior remains physical qualification work.
 - Hardware/display selection remains purchase/physical-benchmark gated.
 - A successful build, mock, software-device run or simulator cannot be relabeled as physical/provider proof.

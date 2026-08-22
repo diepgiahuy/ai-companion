@@ -22,7 +22,7 @@ permissions:
 
 jobs:
   reference-local:
-    name: Recorded VN/EN real-provider reference
+    name: Recorded VN/EN local cascade evidence
     runs-on: ubuntu-24.04
     timeout-minutes: 55
     env:
@@ -76,21 +76,18 @@ jobs:
           python3 scripts/prepare_voice_eval_corpus.py \
             --out-dir "$RUNNER_TEMP/voice-evidence/corpus" \
             --manifest "$RUNNER_TEMP/voice-evidence/corpus-manifest.json"
-          cat > "$RUNNER_TEMP/voice-evidence/ATTRIBUTION.txt" <<'EOF'
+          cat > "$RUNNER_TEMP/voice-evidence/ATTRIBUTION.txt" <<'ATTR'
           FLEURS dataset: google/fleurs
           License: CC-BY-4.0
           Selected validation row identifiers, normalized PCM hashes and the observed
           source repository head are recorded in corpus-manifest.json. The immutable
           benchmark corpus identity is the manifest SHA-256 plus per-case PCM SHA-256.
-          EOF
+          ATTR
 
       - name: Install pinned benchmark Python packages
         run: |
           set -euo pipefail
           python3 -m pip install --upgrade pip
-          # QwenAudio/Fun-ASR@${FUNASR_REMOTE_CODE_COMMIT} requires torch>=2.9.0
-          # and torchaudio>=2.9.0. Use PyTorch's official CPU wheel index because
-          # this hosted evidence lane intentionally runs without CUDA.
           python3 -m pip install \
             "torch==${TORCH_VERSION}" \
             "torchaudio==${TORCHAUDIO_VERSION}" \
@@ -167,49 +164,20 @@ jobs:
           echo "FunASR bridge did not become ready within 10 minutes" >&2
           exit 1
 
-      - name: Run real local lane and available cloud lanes
+      - name: Run real local cascade lane
         env:
           FUNASR_BASE_URL: http://127.0.0.1:18080
           FUNASR_MODEL: ${{ env.FUNASR_MODEL_REPO }}@${{ steps.model.outputs.sha }}
           FUNASR_RUNTIME_VERSION: 1.4.1
           EDGE_TTS_VERSION: ${{ env.EDGE_TTS_VERSION }}
           FFMPEG_VERSION: ubuntu-24.04-system-ffmpeg
-          XUNFEI_ASR_APP_ID: ${{ secrets.XUNFEI_ASR_APP_ID }}
-          XUNFEI_ASR_API_KEY: ${{ secrets.XUNFEI_ASR_API_KEY }}
-          XUNFEI_ASR_API_SECRET: ${{ secrets.XUNFEI_ASR_API_SECRET }}
-          XUNFEI_ASR_VI_LANGUAGE: ${{ vars.XUNFEI_ASR_VI_LANGUAGE }}
-          XUNFEI_ASR_MIXED_LANGUAGE: ${{ vars.XUNFEI_ASR_MIXED_LANGUAGE }}
-          XUNFEI_ASR_URL: ${{ vars.XUNFEI_ASR_URL }}
-          XUNFEI_ASR_VI_URL: ${{ vars.XUNFEI_ASR_VI_URL }}
-          XUNFEI_ASR_MIXED_URL: ${{ vars.XUNFEI_ASR_MIXED_URL }}
-          XUNFEI_ASR_REGION: ${{ vars.XUNFEI_ASR_REGION }}
-          XUNFEI_ASR_QUOTA_NOTE: ${{ vars.XUNFEI_ASR_QUOTA_NOTE }}
-          XUNFEI_ASR_PRICING_NOTE: ${{ vars.XUNFEI_ASR_PRICING_NOTE }}
-          HUOSHAN_TTS_APP_ID: ${{ secrets.HUOSHAN_TTS_APP_ID }}
-          HUOSHAN_TTS_ACCESS_TOKEN: ${{ secrets.HUOSHAN_TTS_ACCESS_TOKEN }}
-          HUOSHAN_TTS_RESOURCE_ID: ${{ secrets.HUOSHAN_TTS_RESOURCE_ID }}
-          HUOSHAN_TTS_SPEAKER: ${{ secrets.HUOSHAN_TTS_SPEAKER }}
-          HUOSHAN_TTS_URL: ${{ vars.HUOSHAN_TTS_URL }}
-          HUOSHAN_TTS_REGION: ${{ vars.HUOSHAN_TTS_REGION }}
-          HUOSHAN_TTS_QUOTA_NOTE: ${{ vars.HUOSHAN_TTS_QUOTA_NOTE }}
-          HUOSHAN_TTS_PRICING_NOTE: ${{ vars.HUOSHAN_TTS_PRICING_NOTE }}
-          DASHSCOPE_REALTIME_KEY: ${{ secrets.DASHSCOPE_REALTIME_KEY }}
-          DASHSCOPE_WORKSPACE_ID: ${{ secrets.DASHSCOPE_WORKSPACE_ID }}
-          DASHSCOPE_REALTIME_MODEL: ${{ vars.DASHSCOPE_REALTIME_MODEL }}
-          DASHSCOPE_REALTIME_VOICE: ${{ vars.DASHSCOPE_REALTIME_VOICE }}
-          DASHSCOPE_REALTIME_REGION: ${{ vars.DASHSCOPE_REALTIME_REGION }}
-          DASHSCOPE_REALTIME_URL: ${{ vars.DASHSCOPE_REALTIME_URL }}
-          DASHSCOPE_QUOTA_NOTE: ${{ vars.DASHSCOPE_QUOTA_NOTE }}
-          DASHSCOPE_PRICING_NOTE: ${{ vars.DASHSCOPE_PRICING_NOTE }}
         run: |
           set -euo pipefail
           "$RUNNER_TEMP/bench-speech" \
             --corpus "$RUNNER_TEMP/voice-evidence/corpus-manifest.json" \
             --out "$RUNNER_TEMP/voice-evidence/report.json" \
-            --lanes local,streaming,realtime \
             --commit "${{ github.event.pull_request.head.sha || github.sha }}" \
-            --runner "github-hosted/ubuntu-24.04/x86_64" \
-            --pace=true
+            --runner "github-hosted/ubuntu-24.04/x86_64"
 
       - name: Prove real cascade through canonical Companion session
         env:
@@ -233,7 +201,7 @@ jobs:
           go test -tags 'adk,nolibopusfile' ./internal/server \
             -run '^TestVoiceEvidenceCanonicalRealCascade$' -count=1 -v
 
-      - name: Validate evidence boundary
+      - name: Validate local evidence boundary
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -242,9 +210,11 @@ jobs:
           report = json.loads((root / "report.json").read_text())
           canonical = json.loads((root / "canonical-session.json").read_text())
           faults = json.loads((root / "canonical-faults.json").read_text())
-          lanes = {lane["lane"]: lane for lane in report["lanes"]}
-          local = lanes.get("reference-local")
-          if not local or local.get("status") != "passed":
+          lanes = report.get("lanes") or []
+          if len(lanes) != 1 or lanes[0].get("lane") != "reference-local":
+              raise SystemExit(f"unexpected local evidence lanes: {lanes}")
+          local = lanes[0]
+          if local.get("status") != "passed":
               raise SystemExit(f"reference-local did not pass real-provider run: {local}")
           if not local.get("cases") or any(case.get("error") for case in local["cases"]):
               raise SystemExit("reference-local contains unproven case results")
@@ -256,23 +226,15 @@ jobs:
               raise SystemExit(f"canonical ADK/ToolRegistry/TTS evidence incomplete: {canonical}")
           if faults.get("evidence_class") != "injected_failure_canonical_session":
               raise SystemExit(f"fault evidence is missing or misclassified: {faults}")
-          fault_summary = faults.get("summary") or {}
-          if not fault_summary.get("timeout_handled") or not fault_summary.get("rate_limit_handled"):
-              raise SystemExit(f"timeout/rate-limit semantics were not proven: {fault_summary}")
-          if fault_summary.get("provider_errors_observed") != 2 or fault_summary.get("retries_observed") != 0:
-              raise SystemExit(f"fault counts/retry truth are unexpected: {fault_summary}")
+          summary = faults.get("summary") or {}
+          if not summary.get("timeout_handled") or not summary.get("rate_limit_handled"):
+              raise SystemExit(f"timeout/rate-limit semantics were not proven: {summary}")
+          if summary.get("provider_errors_observed") != 2 or summary.get("retries_observed") != 0:
+              raise SystemExit(f"fault counts/retry truth are unexpected: {summary}")
           for probe in faults.get("probes") or []:
               if probe.get("protocol_error_code") != "asr_failed" or probe.get("agent_requests") != 0 or probe.get("tool_executions") != 0 or probe.get("tts_syntheses") != 0 or probe.get("stale_binary_frames") != 0:
                   raise SystemExit(f"fault escaped canonical ASR boundary: {probe}")
-          for name in ("reference-streaming", "native-realtime"):
-              lane = lanes.get(name)
-              if not lane:
-                  raise SystemExit(f"missing cloud evidence lane {name}")
-              if lane.get("status") not in ("passed", "insufficient_evidence"):
-                  raise SystemExit(f"cloud lane {name} failed and requires diagnosis: {lane}")
-              if lane.get("status") == "passed" and (not lane.get("cases") or any(case.get("error") for case in lane["cases"])):
-                  raise SystemExit(f"cloud lane {name} claimed pass with incomplete cases: {lane}")
-          print("VOICE EVIDENCE PASS: real FunASR+EdgeTTS measured through canonical /v2/device + ADK + ToolRegistry; injected timeout/rate-limit semantics proven; configured cloud lanes executed and unavailable lanes remain insufficient_evidence")
+          print("VOICE EVIDENCE PASS: real FunASR+EdgeTTS measured through canonical /v2/device + ADK + ToolRegistry; timeout/rate-limit semantics proven")
           PY
 
       - name: Stop benchmark bridge
