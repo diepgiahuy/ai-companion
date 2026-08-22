@@ -1,0 +1,90 @@
+name: model-free-tier-reusable
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  evidence:
+    name: Gemma 4 zero-cost tool/action evidence
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      EVIDENCE_DIR: ${{ runner.temp }}/model-free-tier-evidence
+    steps:
+      - name: Checkout exact caller head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up Go 1.26.6
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: '1.26.6'
+          cache-dependency-path: backend/go.sum
+
+      - name: Verify zero-cost allowlist before provider use
+        run: |
+          set -euo pipefail
+          cd backend
+          go test ./eval ./cmd/eval-free-tier -count=1
+          go test ./eval -run '^TestGemmaFreeRejectsBillableModels$' -count=1
+
+      - name: Verify credential and record cost policy
+        env:
+          GEMINI_TOKEN: ${{ secrets.GEMINI_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$GEMINI_TOKEN"
+          mkdir -p "$EVIDENCE_DIR"
+          cat > "$EVIDENCE_DIR/COST_POLICY.txt" <<'EOF'
+          ZERO-SPEND POLICY
+          - Allowed models: gemma-4-26b-a4b-it, gemma-4-31b-it only.
+          - Paid-capable Gemini model ids are rejected before inference.
+          - No priced provider tools are enabled.
+          - Provider requests are not retried.
+          - Corpus data is synthetic/non-sensitive.
+          EOF
+
+      - name: Run both zero-cost candidates once
+        env:
+          GEMINI_TOKEN: ${{ secrets.GEMINI_TOKEN }}
+        shell: bash
+        run: |
+          set -u
+          cd backend
+          mkdir -p "$EVIDENCE_DIR"
+
+          go run ./cmd/eval-free-tier \
+            -model gemma-4-26b-a4b-it \
+            -scenarios ./eval/tool_action_corpus.jsonl \
+            -runs 1 \
+            -run-id "${SOURCE_SHA}-gemma-4-26b-a4b-it" \
+            -hardware 'github-hosted/ubuntu-24.04/x86_64' \
+            -source-commit "$SOURCE_SHA" \
+            -out "$EVIDENCE_DIR/gemma-4-26b-a4b-it.json"
+          printf '%s\n' "$?" > "$EVIDENCE_DIR/gemma-4-26b-a4b-it.exit"
+
+          go run ./cmd/eval-free-tier \
+            -model gemma-4-31b-it \
+            -scenarios ./eval/tool_action_corpus.jsonl \
+            -runs 1 \
+            -run-id "${SOURCE_SHA}-gemma-4-31b-it" \
+            -hardware 'github-hosted/ubuntu-24.04/x86_64' \
+            -source-commit "$SOURCE_SHA" \
+            -out "$EVIDENCE_DIR/gemma-4-31b-it.json"
+          printf '%s\n' "$?" > "$EVIDENCE_DIR/gemma-4-31b-it.exit"
+          exit 0
+
+      - name: Upload raw zero-cost evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: model-free-tier-evidence-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/model-free-tier-evidence
+          if-no-files-found: error
+          retention-days: 30
