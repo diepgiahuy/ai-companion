@@ -47,7 +47,7 @@ func NewGeminiDelegatingBridge(provider NativeRealtimeProvider) (*GeminiDelegati
 }
 
 func (b *GeminiDelegatingBridge) Transcribe(ctx context.Context, pcm []byte) (string, error) {
-	key, err := geminiDelegatingKey(ctx)
+	key, turnDone, err := geminiDelegatingTurnState(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -127,12 +127,12 @@ func (b *GeminiDelegatingBridge) Transcribe(ctx context.Context, pcm []byte) (st
 	b.turns[key] = state
 	b.mu.Unlock()
 	keepSession = true
-	go b.watchTurnCancellation(ctx, key, state)
+	go b.watchTurnCancellation(turnDone, key, state)
 	return transcript, nil
 }
 
 func (b *GeminiDelegatingBridge) Synthesize(ctx context.Context, text string, emit func([]byte) error) error {
-	key, err := geminiDelegatingKey(ctx)
+	key, _, err := geminiDelegatingTurnState(ctx)
 	if err != nil {
 		return err
 	}
@@ -199,11 +199,11 @@ func (b *GeminiDelegatingBridge) Synthesize(ctx context.Context, text string, em
 	}
 }
 
-func (b *GeminiDelegatingBridge) watchTurnCancellation(ctx context.Context, key geminiDelegatingTurnKey, state *geminiDelegatingTurn) {
+func (b *GeminiDelegatingBridge) watchTurnCancellation(turnDone <-chan struct{}, key geminiDelegatingTurnKey, state *geminiDelegatingTurn) {
 	timer := time.NewTimer(geminiDelegatePendingMax)
 	defer timer.Stop()
 	select {
-	case <-ctx.Done():
+	case <-turnDone:
 		b.cancelTurn(key, state)
 	case <-timer.C:
 		b.cancelTurn(key, state)
@@ -244,15 +244,18 @@ func (s *geminiDelegatingTurn) finish() {
 	s.once.Do(func() { close(s.done) })
 }
 
-func geminiDelegatingKey(ctx context.Context) (geminiDelegatingTurnKey, error) {
+func geminiDelegatingTurnState(ctx context.Context) (geminiDelegatingTurnKey, <-chan struct{}, error) {
 	turn, ok := pipeline.CurrentTurn(ctx)
 	if !ok {
-		return geminiDelegatingTurnKey{}, errors.New("Gemini delegation requires Companion turn context")
+		return geminiDelegatingTurnKey{}, nil, errors.New("Gemini delegation requires Companion turn context")
 	}
 	sessionID := strings.TrimSpace(turn.SessionID)
 	turnID := strings.TrimSpace(turn.TurnID)
 	if sessionID == "" || turnID == "" {
-		return geminiDelegatingTurnKey{}, errors.New("Gemini delegation requires session_id and turn_id")
+		return geminiDelegatingTurnKey{}, nil, errors.New("Gemini delegation requires session_id and turn_id")
 	}
-	return geminiDelegatingTurnKey{sessionID: sessionID, turnID: turnID}, nil
+	if turn.Done == nil {
+		return geminiDelegatingTurnKey{}, nil, errors.New("Gemini delegation requires canonical turn lifetime")
+	}
+	return geminiDelegatingTurnKey{sessionID: sessionID, turnID: turnID}, turn.Done, nil
 }
