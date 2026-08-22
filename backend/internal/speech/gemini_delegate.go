@@ -12,7 +12,10 @@ import (
 	"companion-server/internal/protocol"
 )
 
-const geminiDelegateAudioChunkBytes = 1280
+const (
+	geminiDelegateAudioChunkBytes = 1280
+	geminiDelegatePendingMax      = 6 * time.Minute
+)
 
 type GeminiDelegatingBridge struct {
 	provider NativeRealtimeProvider
@@ -197,8 +200,12 @@ func (b *GeminiDelegatingBridge) Synthesize(ctx context.Context, text string, em
 }
 
 func (b *GeminiDelegatingBridge) watchTurnCancellation(ctx context.Context, key geminiDelegatingTurnKey, state *geminiDelegatingTurn) {
+	timer := time.NewTimer(geminiDelegatePendingMax)
+	defer timer.Stop()
 	select {
 	case <-ctx.Done():
+		b.cancelTurn(key, state)
+	case <-timer.C:
 		b.cancelTurn(key, state)
 	case <-state.done:
 	}
