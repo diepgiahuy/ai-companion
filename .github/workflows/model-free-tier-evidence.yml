@@ -225,3 +225,5 @@ jobs:
               raise SystemExit('Free Tier provider evidence is incomplete; no model decision is permitted')
           print('MODEL FREE-TIER EVIDENCE COMPLETE:', decision['recommendation'], decision.get('preferred_candidate'))
           PY
+
+# Evidence trigger for #23 / PR #288. No behavior change.
