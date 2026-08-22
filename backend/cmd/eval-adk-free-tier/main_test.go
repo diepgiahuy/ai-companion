@@ -48,7 +48,7 @@ func TestRunFailsClosedWithoutCredential(t *testing.T) {
 	if report.Status != "FAIL" {
 		t.Fatalf("status=%q", report.Status)
 	}
-	if report.Model != modelID || report.Model != "gemma-4-31b-it" {
+	if report.Model != "gemma-4-31b-it" {
 		t.Fatalf("model=%q", report.Model)
 	}
 	if report.Protocol != adkbridge.ModelProtocolChatCompletions {
