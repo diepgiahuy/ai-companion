@@ -53,9 +53,9 @@ jobs:
           set -euo pipefail
           python3 -m py_compile scripts/prepare_voice_eval_corpus.py
           cd backend
-          go test ./internal/speech -run '^TestGeminiLive' -count=1
+          go test -tags nolibopusfile ./internal/speech -run '^TestGeminiLive' -count=1
           go test -tags 'adk,nolibopusfile' ./internal/server -run '^TestVoiceEvidenceCanonicalGeminiLive$' -count=1
-          go build -o "$RUNNER_TEMP/bench-gemini-live" ./cmd/bench-gemini-live
+          go build -tags nolibopusfile -o "$RUNNER_TEMP/bench-gemini-live" ./cmd/bench-gemini-live
 
       - name: Prepare shared content-addressed FLEURS corpus
         run: |
