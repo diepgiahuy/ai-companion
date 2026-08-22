@@ -87,3 +87,62 @@ func TestSessionSendHonorsCancellationWhenQueueHasCapacity(t *testing.T) {
 		}
 	}
 }
+
+func TestSessionSendTurnMediaWaitsForTransientQueueCapacity(t *testing.T) {
+	s := &session{
+		id:          "queue-media-backpressure",
+		mediaWrites: make(chan outbound, 1),
+	}
+	current := &turn{generation: 7}
+	s.mediaWrites <- outbound{kind: websocket.MessageBinary, data: []byte{1}}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- s.sendTurnMedia(ctx, current, outbound{kind: websocket.MessageBinary, data: []byte{2}})
+	}()
+
+	select {
+	case err := <-done:
+		t.Fatalf("media producer returned before queue capacity became available: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	<-s.mediaWrites
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("media producer failed after queue capacity became available: %v", err)
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("media producer did not resume after queue capacity became available")
+	}
+
+	message := <-s.mediaWrites
+	if !message.turnScoped || message.generation != current.generation {
+		t.Fatalf("queued media scope=%v generation=%d; want scoped generation %d", message.turnScoped, message.generation, current.generation)
+	}
+	if len(message.data) != 1 || message.data[0] != 2 {
+		t.Fatalf("queued media data=%v; want [2]", message.data)
+	}
+}
+
+func TestSessionSendTurnMediaHonorsCancellation(t *testing.T) {
+	s := &session{
+		id:          "queue-media-backpressure-cancel",
+		mediaWrites: make(chan outbound, 1),
+	}
+	current := &turn{generation: 3}
+	s.mediaWrites <- outbound{kind: websocket.MessageBinary, data: []byte{1}}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := s.sendTurnMedia(ctx, current, outbound{kind: websocket.MessageBinary, data: []byte{2}})
+	if err != context.Canceled {
+		t.Fatalf("error=%v; want context canceled", err)
+	}
+	if got := len(s.mediaWrites); got != 1 {
+		t.Fatalf("canceled media send changed queue length to %d", got)
+	}
+}

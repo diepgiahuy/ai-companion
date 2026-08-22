@@ -22,9 +22,9 @@ func TestRuntimeChatCompletionsToolTurnTerminatesAfterDone(t *testing.T) {
 	definition := &capability.ToolDefinition{
 		Name: "benchmark_echo", Description: "fixture", Pack: "test", Risk: "read",
 		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{"value": map[string]any{"type": "string"}},
-			"required": []string{"value"},
+			"type":                 "object",
+			"properties":           map[string]any{"value": map[string]any{"type": "string"}},
+			"required":             []string{"value"},
 			"additionalProperties": false,
 		},
 	}
@@ -68,27 +68,31 @@ func TestRuntimeChatCompletionsToolTurnTerminatesAfterDone(t *testing.T) {
 
 	store := &testConversationStore{}
 	runtime, err := New(Config{
-		AppName: "chat-tool-completion-test",
-		ModelName: "fixture",
+		AppName:       "chat-tool-completion-test",
+		ModelName:     "fixture",
 		ModelProtocol: ModelProtocolChatCompletions,
-		BaseURL: fixture.URL,
-		APIKey: "fixture-key",
-		Instruction: "Call benchmark_echo once, then answer.",
+		BaseURL:       fixture.URL,
+		APIKey:        "fixture-key",
+		Instruction:   "Call benchmark_echo once, then answer.",
 		PromptVersion: "chat-tool-completion@1",
-		HTTPClient: fixture.Client(),
-		Tools: registry,
-		Conversation: conversationctx.New(store, nil),
-		HistoryLimit: 4,
+		HTTPClient:    fixture.Client(),
+		Tools:         registry,
+		Conversation:  conversationctx.New(store, nil),
+		HistoryLimit:  4,
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	streamingRuntime, ok := runtime.(pipeline.StreamingAgent)
+	if !ok {
+		t.Fatalf("runtime type %T does not implement pipeline.StreamingAgent", runtime)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	ctx = pipeline.WithTurnContext(ctx, pipeline.TurnContext{UserID: "u1", ThreadID: "default", DeviceID: "d1", SessionID: "s1", TurnID: "t1"})
 	var text string
-	if err := runtime.Stream(ctx, "t1", "hello", func(event pipeline.AgentStreamEvent) error {
+	if err := streamingRuntime.Stream(ctx, "t1", "hello", func(event pipeline.AgentStreamEvent) error {
 		text += event.TextDelta
 		return nil
 	}); err != nil {

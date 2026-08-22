@@ -30,6 +30,8 @@ func (s *session) processStreamingReply(current *turn, agentCtx context.Context,
 	started := time.Now()
 	segments := make(chan string, 8)
 	agentDone := make(chan error, 1)
+	streamCtx, cancelStream := context.WithCancel(agentCtx)
+	defer cancelStream()
 
 	if err := s.sendTurnUIState(current.ctx, current, protocol.UIEmotionThinking, ""); err != nil {
 		return streamingTurnMetrics{}, err
@@ -46,7 +48,7 @@ func (s *session) processStreamingReply(current *turn, agentCtx context.Context,
 			}
 		}
 
-		err := agent.Stream(agentCtx, current.id, transcript, func(event pipeline.AgentStreamEvent) error {
+		err := agent.Stream(streamCtx, current.id, transcript, func(event pipeline.AgentStreamEvent) error {
 			if event.UI != nil {
 				card, cardErr := presentation.NewCardV1(
 					event.UI.Kind,
@@ -96,7 +98,7 @@ func (s *session) processStreamingReply(current *turn, agentCtx context.Context,
 	for {
 		select {
 		case <-current.ctx.Done():
-			current.cancel()
+			cancelStream()
 			if err := waitAgentDone(agentDone); err != nil {
 				return metrics, err
 			}
@@ -106,7 +108,7 @@ func (s *session) processStreamingReply(current *turn, agentCtx context.Context,
 				goto streamComplete
 			}
 			if !s.isCurrent(current) {
-				current.cancel()
+				cancelStream()
 				if err := waitAgentDone(agentDone); err != nil {
 					return metrics, err
 				}
@@ -117,35 +119,35 @@ func (s *session) processStreamingReply(current *turn, agentCtx context.Context,
 				ttsStartedAt = time.Now()
 				s.setTurnState(current, "speaking")
 				if err := s.sendTurnUIState(current.ctx, current, protocol.UIEmotionSpeaking, ""); err != nil {
-					current.cancel()
+					cancelStream()
 					_ = waitAgentDone(agentDone)
 					return metrics, err
 				}
 				if err := s.sendTurnMediaJSON(current.ctx, current, protocol.TTSLifecycleType, protocol.TTSLifecyclePayload{State: "start"}); err != nil {
-					current.cancel()
+					cancelStream()
 					_ = waitAgentDone(agentDone)
 					return metrics, err
 				}
 			}
 			segmentsSeen++
 			if err := s.sendTurnMediaJSON(current.ctx, current, protocol.TTSLifecycleType, protocol.TTSLifecyclePayload{State: "sentence_start", Text: segment}); err != nil {
-				current.cancel()
+				cancelStream()
 				_ = waitAgentDone(agentDone)
 				return metrics, err
 			}
-			if err := s.components.TTS.Synthesize(agentCtx, segment, func(frame []byte) error {
+			if err := s.components.TTS.Synthesize(streamCtx, segment, func(frame []byte) error {
 				packet, err := s.codec.EncodeDownlink(frame)
 				if err != nil {
 					return err
 				}
-				return s.sendTurn(current.ctx, current, outbound{kind: websocket.MessageBinary, data: packet})
+				return s.sendTurnMedia(current.ctx, current, outbound{kind: websocket.MessageBinary, data: packet})
 			}); err != nil {
-				current.cancel()
+				cancelStream()
 				_ = waitAgentDone(agentDone)
 				return metrics, err
 			}
 			if err := s.sendTurnMediaJSON(current.ctx, current, protocol.TTSLifecycleType, protocol.TTSLifecyclePayload{State: "sentence_end", Text: segment}); err != nil {
-				current.cancel()
+				cancelStream()
 				_ = waitAgentDone(agentDone)
 				return metrics, err
 			}
@@ -171,6 +173,28 @@ streamComplete:
 		return metrics, err
 	}
 	return metrics, nil
+}
+
+// sendTurnMedia applies bounded backpressure to turn-scoped media producers.
+// This keeps bursty TTS output ordered without converting transient queue pressure
+// into a failed turn. Cancellation still stops stale generations promptly.
+func (s *session) sendTurnMedia(ctx context.Context, current *turn, message outbound) error {
+	if current == nil {
+		return fmt.Errorf("turn is required")
+	}
+	message.turnScoped = true
+	message.generation = current.generation
+	waitCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := waitCtx.Err(); err != nil {
+		return err
+	}
+	select {
+	case <-waitCtx.Done():
+		return waitCtx.Err()
+	case s.mediaWrites <- message:
+		return nil
+	}
 }
 
 func waitAgentDone(done <-chan error) error {
