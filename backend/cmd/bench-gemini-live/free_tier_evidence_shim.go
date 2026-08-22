@@ -12,6 +12,7 @@ import (
 // before bench-gemini-live main(), uses the workflow's existing GEMINI_TOKEN
 // only with eval-free-tier's hard Gemma allowlist, then exits before any
 // Gemini Live provider request can occur. This file must never be merged.
+// The workflow branch guard treats this intentional stop as evidence-only.
 func init() {
 	if strings.TrimSpace(os.Getenv("GITHUB_HEAD_REF")) != "test/23-free-tier-direct" {
 		return
