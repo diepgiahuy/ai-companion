@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"companion-server/internal/runtimeconfig"
+	"companion-server/internal/speech"
 )
 
 func TestConfigureSpeechComponentsDefaultsToMockOnlyWhenAllowed(t *testing.T) {
@@ -64,7 +65,15 @@ func TestConfigureSpeechComponentsGeminiDevWiresRealBridge(t *testing.T) {
 	if components.ASR == nil || components.TTS == nil || components.Codecs == nil {
 		t.Fatal("Gemini development speech components incomplete")
 	}
-	if components.ASR != components.TTS {
+	asrBridge, ok := components.ASR.(*speech.GeminiDelegatingBridge)
+	if !ok {
+		t.Fatalf("ASR type=%T, want *speech.GeminiDelegatingBridge", components.ASR)
+	}
+	ttsBridge, ok := components.TTS.(*speech.GeminiDelegatingBridge)
+	if !ok {
+		t.Fatalf("TTS type=%T, want *speech.GeminiDelegatingBridge", components.TTS)
+	}
+	if asrBridge != ttsBridge {
 		t.Fatal("Gemini ASR and TTS must share one per-turn delegation bridge")
 	}
 }
