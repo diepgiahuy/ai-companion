@@ -86,6 +86,9 @@ type TurnContext struct {
 type turnContextKey struct{}
 
 func WithTurnContext(ctx context.Context, turn TurnContext) context.Context {
+	if turn.Done == nil {
+		turn.Done = ctx.Done()
+	}
 	return context.WithValue(ctx, turnContextKey{}, turn)
 }
 
