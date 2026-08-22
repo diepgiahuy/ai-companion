@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-08-16T11:55:00+07:00",
+  "updated_at": "2026-08-22T13:08:00+07:00",
   "rules": {
     "allowed_statuses": [
       "passed",
@@ -114,14 +114,54 @@
       "reason": "Mock/fake voice paths are useful regression tests but do not count as production voice evidence. A real ESP32/network run with real ASR, real LLM and real TTS is still required."
     },
     "real_asr_quality": {
-      "status": "unproven",
-      "evidence": [],
-      "reason": "No Vietnamese/English real-ASR WER/CER benchmark has been recorded."
+      "status": "partial",
+      "production_ready": false,
+      "evidence": [
+        {
+          "kind": "github_actions",
+          "workflow": "voice-provider-evidence",
+          "run_id": 32556694365,
+          "source_head": "0bc5b87e4ea99f633204e71154de9cb7092c6e49",
+          "artifact_id": 9471696818,
+          "artifact_digest": "sha256:f91b7f4e8c65372434eaa2632eb28212217d9d8bfd6c17d91ba1d36cf4cc39a9",
+          "assertion": "Real FunASR reference lane passed 5 normalized VN/EN/mixed recorded cases with mean WER 0.0943 and CER 0.0978; canonical /v2/device evidence preserved the Protocol v2 8-second bound and executed one ToolRegistry call."
+        },
+        {
+          "kind": "github_actions",
+          "workflow": "gemini-live-evidence",
+          "run_id": 32556694371,
+          "source_head": "0bc5b87e4ea99f633204e71154de9cb7092c6e49",
+          "artifact_id": 9471688382,
+          "artifact_digest": "sha256:d47bdc8da4083fd384de05b7c541feae552d0b1c4dd174a6e5172321f93ae85b",
+          "assertion": "Real Gemini Live native-realtime lane passed the same 5 normalized VN/EN/mixed cases with mean WER 0.0915 and CER 0.1060 and also passed the canonical Companion delegation path."
+        }
+      ],
+      "reason": "Recorded real-provider ASR quality is now measured on a normalized benchmark corpus, but this does not prove physical microphone/AEC behavior or select the Production-v1 provider path."
     },
     "real_tts_quality": {
-      "status": "unproven",
-      "evidence": [],
-      "reason": "No real streaming-TTS latency/quality benchmark has been recorded."
+      "status": "partial",
+      "production_ready": false,
+      "evidence": [
+        {
+          "kind": "github_actions",
+          "workflow": "voice-provider-evidence",
+          "run_id": 32556694365,
+          "source_head": "0bc5b87e4ea99f633204e71154de9cb7092c6e49",
+          "artifact_id": 9471696818,
+          "artifact_digest": "sha256:f91b7f4e8c65372434eaa2632eb28212217d9d8bfd6c17d91ba1d36cf4cc39a9",
+          "assertion": "Real EdgeTTS reference lane produced audio for all 5 recorded cases with first-audio p50 938.67 ms and p95 3023.45 ms; cancellation stopped synthesis without stale emitted chunks in the provider benchmark."
+        },
+        {
+          "kind": "github_actions",
+          "workflow": "gemini-live-evidence",
+          "run_id": 32556694371,
+          "source_head": "0bc5b87e4ea99f633204e71154de9cb7092c6e49",
+          "artifact_id": 9471688382,
+          "artifact_digest": "sha256:d47bdc8da4083fd384de05b7c541feae552d0b1c4dd174a6e5172321f93ae85b",
+          "assertion": "Real Gemini Live native audio produced first audio p50 799.912 ms and p95 3866.9514 ms; canonical barge-in reached the provider cancellation boundary with zero stale device frames after the interrupted marker."
+        }
+      ],
+      "reason": "Real-provider audio delivery, latency and cancellation are measured, but subjective voice quality and physical speaker/enclosure acoustics remain unproven and no Production-v1 provider is selected here."
     },
     "real_llm_tool_quality": {
       "status": "unproven",

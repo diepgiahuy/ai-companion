@@ -189,7 +189,9 @@ func (p *EdgeTTSProvider) Synthesize(ctx context.Context, request TTSRequest, em
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := emit(AudioEvent{PCM: append([]byte(nil), pcm[offset:end]...)}); err != nil {
+		chunk := make([]byte, p.config.PCMChunkBytes)
+		copy(chunk, pcm[offset:end])
+		if err := emit(AudioEvent{PCM: chunk}); err != nil {
 			return err
 		}
 	}

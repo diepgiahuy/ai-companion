@@ -3,27 +3,36 @@ package speech
 import "context"
 
 type NativeRealtimeTool struct {
-	Name string
+	Name        string
 	Description string
-	Parameters map[string]any
+	Parameters  map[string]any
 }
 
 type NativeRealtimeToolCall struct {
-	CallID string
-	Name string
+	CallID    string
+	Name      string
 	Arguments map[string]any
 }
 
 type NativeRealtimeEvent struct {
-	Type string
-	InputTranscript string
-	InputFinal bool
-	TextDelta string
-	AudioTranscript string
-	AudioPCM []byte
-	ToolCall *NativeRealtimeToolCall
-	ResponseDone bool
-	ResponseStatus string
+	Type             string
+	InputTranscript  string
+	InputFinal       bool
+	TextDelta        string
+	AudioTranscript  string
+	AudioPCM         []byte
+	ToolCall         *NativeRealtimeToolCall
+	ResponseDone     bool
+	ResponseStatus   string
+	ResumptionHandle string
+	Resumable        bool
+}
+
+// NativeRealtimeProvider is the provider-neutral connection seam used by
+// benchmark/reference native-realtime clients. Product policy/session ownership
+// remains in Companion; this interface grants no provider-side tool authority.
+type NativeRealtimeProvider interface {
+	Connect(ctx context.Context) (NativeRealtimeSession, error)
 }
 
 type NativeRealtimeSession interface {
