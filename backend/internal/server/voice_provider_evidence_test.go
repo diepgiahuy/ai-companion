@@ -54,10 +54,12 @@ func TestVoiceEvidenceCanonicalRealCascade(t *testing.T) {
 		t.Fatalf("invalid PCM fixture length %d", len(pcm))
 	}
 
-	// Protocol v2 has an eight-second bounded audio turn. Keep this oracle on the
-	// same production contract instead of widening it for a benchmark fixture.
-	maxSamples := protocol.UplinkSampleRate * protocol.MaximumAudioSecs
-	maxPCMBytes := maxSamples * 2
+	// Protocol v2 has an eight-second bounded audio turn, while the production
+	// uplink encodes fixed 60 ms Opus frames. Use the largest whole-frame prefix
+	// that remains inside the production bound so a padded final partial frame
+	// cannot decode past MaximumAudioSecs.
+	maxFrames := protocol.UplinkSampleRate * protocol.MaximumAudioSecs / protocol.UplinkSamplesPerFrame
+	maxPCMBytes := maxFrames * protocol.UplinkSamplesPerFrame * 2
 	trimmed := false
 	if len(pcm) > maxPCMBytes {
 		pcm = pcm[:maxPCMBytes]
