@@ -17,7 +17,13 @@ import (
 	"github.com/coder/websocket"
 )
 
-const defaultGeminiLiveURL = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
+const (
+	defaultGeminiLiveURL = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
+	// Gemini Live carries base64-encoded PCM inside JSON and real provider frames
+	// can exceed coder/websocket's 32 KiB default. Keep a bounded provider-specific
+	// ceiling rather than disabling read limits entirely.
+	geminiLiveReadLimit = 256 * 1024
+)
 
 type GeminiLiveConfig struct {
 	URL          string
@@ -88,6 +94,7 @@ func (p *GeminiLiveProvider) Connect(ctx context.Context) (NativeRealtimeSession
 		message := strings.ReplaceAll(err.Error(), p.config.APIKey, "***")
 		return nil, fmt.Errorf("dial Gemini Live: %s", message)
 	}
+	conn.SetReadLimit(geminiLiveReadLimit)
 	aliases, declarations, err := geminiLiveTools(p.config.Tools)
 	if err != nil {
 		conn.CloseNow()
