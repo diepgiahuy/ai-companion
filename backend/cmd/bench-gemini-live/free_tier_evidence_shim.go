@@ -53,10 +53,11 @@ func runFreeTierModelEvidence() error {
 	}
 
 	models := []string{"gemma-4-26b-a4b-it", "gemma-4-31b-it"}
+	var missingReports []string
 	for _, model := range models {
 		report := filepath.Join(evidenceDir, model+".json")
 		args := []string{
-			"run", "./cmd/eval-free-tier",
+			"run", "-tags", "nolibopusfile", "./cmd/eval-free-tier",
 			"-model", model,
 			"-scenarios", "./eval/tool_action_corpus.jsonl",
 			"-runs", "1",
@@ -82,6 +83,12 @@ func runFreeTierModelEvidence() error {
 		if writeErr := os.WriteFile(filepath.Join(evidenceDir, model+".exit"), []byte(fmt.Sprintf("%d\n", exitCode)), 0o644); writeErr != nil {
 			return writeErr
 		}
+		if _, statErr := os.Stat(report); statErr != nil {
+			missingReports = append(missingReports, model)
+		}
+	}
+	if len(missingReports) > 0 {
+		return fmt.Errorf("benchmark report missing for: %s", strings.Join(missingReports, ", "))
 	}
 	return nil
 }
