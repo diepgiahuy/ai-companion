@@ -6,7 +6,7 @@ type ASR interface {
 	Transcribe(ctx context.Context, pcm []byte) (string, error)
 }
 
-// ASRPartial is provider-neutral streaming recognition state. Providers may
+// ASRPartial is provider-neutral streaming recognition state. Providers can
 // omit stability/confidence when unavailable; turn detection must not depend on
 // one vendor-specific score.
 type ASRPartial struct {
@@ -65,8 +65,7 @@ type Components struct {
 }
 
 // TurnContext carries bounded, ephemeral metadata for the current user turn.
-// It lets tool implementations persist the same audio that was sent to ASR
-// without widening the stable Agent interface or coupling the server to tools.
+// It lets tools and providers use canonical turn identity without server coupling.
 type TurnContext struct {
 	UserID     string
 	ThreadID   string
@@ -81,6 +80,7 @@ type TurnContext struct {
 	VoiceKey   string
 	TenantID   string
 	Plan       string
+	Done       <-chan struct{}
 }
 
 type turnContextKey struct{}
