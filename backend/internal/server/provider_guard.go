@@ -211,7 +211,22 @@ func (g guardedTTS) Synthesize(ctx context.Context, text string, emit func([]byt
 	})
 }
 
+type batchAgentSpeechProvider interface {
+	RequiresBatchAgent() bool
+}
+
+func speechRequiresBatchAgent(components pipeline.Components) bool {
+	for _, component := range []any{components.ASR, components.TTS} {
+		provider, ok := component.(batchAgentSpeechProvider)
+		if ok && provider.RequiresBatchAgent() {
+			return true
+		}
+	}
+	return false
+}
+
 func guardProviderComponents(components pipeline.Components, guard *providerCallGuard) pipeline.Components {
+	requiresBatchAgent := speechRequiresBatchAgent(components)
 	if components.ASR != nil {
 		components.ASR = guardedASR{inner: components.ASR, guard: guard}
 	}
@@ -224,6 +239,9 @@ func guardProviderComponents(components pipeline.Components, guard *providerCall
 
 	base := guardedAgentBase{inner: components.Agent, guard: guard}
 	streaming, hasStreaming := components.Agent.(pipeline.StreamingAgent)
+	if requiresBatchAgent {
+		hasStreaming = false
+	}
 	rich, hasRich := components.Agent.(pipeline.RichAgent)
 	switch {
 	case hasStreaming && hasRich:
