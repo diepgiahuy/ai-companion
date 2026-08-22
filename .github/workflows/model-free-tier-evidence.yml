@@ -9,6 +9,16 @@ on:
       - 'backend/cmd/eval-free-tier/**'
       - '.github/workflows/model-free-tier-evidence.yml'
   workflow_dispatch:
+    inputs:
+      candidate:
+        description: Hosted zero-cost Gemma candidate scope
+        required: true
+        default: gemma-4-31b-it
+        type: choice
+        options:
+          - gemma-4-31b-it
+          - gemma-4-26b-a4b-it
+          - both
 
 permissions:
   contents: read
@@ -21,6 +31,7 @@ jobs:
     env:
       SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       EVIDENCE_DIR: ${{ runner.temp }}/model-free-tier-evidence
+      CANDIDATE_SCOPE: ${{ inputs.candidate || 'gemma-4-31b-it' }}
     steps:
       - name: Checkout exact benchmark head
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -39,8 +50,9 @@ jobs:
         run: |
           set -euo pipefail
           cd backend
-          go test ./eval ./cmd/eval-free-tier -count=1
-          go test ./eval -run '^TestGemmaFreeRejectsBillableModels$' -count=1
+          go test -tags nolibopusfile ./eval ./cmd/eval-free-tier -count=1
+          go test -tags nolibopusfile ./eval -run '^TestGemmaFreeRejectsBillableModels$' -count=1
+          go test -tags nolibopusfile ./cmd/eval-free-tier -run '^(TestToolActionCorpusSemanticOracle|TestPacedInferenceTransport)' -count=1
 
       - name: Verify zero-cost provider credential exists
         shell: bash
@@ -53,45 +65,50 @@ jobs:
           cat > "$EVIDENCE_DIR/COST_POLICY.txt" <<'EOF'
           ZERO-SPEND POLICY
           - This workflow can call only gemma-4-26b-a4b-it and gemma-4-31b-it.
+          - Pull-request evidence defaults to gemma-4-31b-it; manual dispatch may select either candidate or both.
           - The command rejects every other Gemini model id before network inference.
           - Current official Gemini Developer API pricing lists Gemma 4 input/output as Free of charge and Paid Tier as Not available.
           - No Google Search, Maps, code execution, file search, or other priced tool is enabled.
-          - Provider 429 responses are not retried.
+          - Provider requests are paced at 15 seconds between inference starts; provider failures are never retried.
           - Corpus data is synthetic because Free Tier content can be used to improve Google products.
           EOF
 
-      - name: Run both hosted zero-cost Gemma 4 candidates
+      - name: Run selected hosted zero-cost Gemma candidate scope
         id: benchmark
         shell: bash
         env:
           GEMINI_TOKEN: ${{ secrets.GEMINI_TOKEN }}
+          COMPANION_FREE_TIER_MIN_REQUEST_INTERVAL: '15s'
         run: |
           set -u
           cd backend
           mkdir -p "$EVIDENCE_DIR"
 
-          go run ./cmd/eval-free-tier \
-            -model gemma-4-26b-a4b-it \
-            -scenarios ./eval/tool_action_corpus.jsonl \
-            -runs 1 \
-            -run-id "${SOURCE_SHA}-gemma-4-26b-a4b-it" \
-            -hardware 'github-hosted/ubuntu-24.04/x86_64' \
-            -source-commit "$SOURCE_SHA" \
-            -out "$EVIDENCE_DIR/gemma-4-26b-a4b-it.json"
-          status_26=$?
+          case "$CANDIDATE_SCOPE" in
+            gemma-4-26b-a4b-it|gemma-4-31b-it)
+              models=("$CANDIDATE_SCOPE")
+              ;;
+            both)
+              models=(gemma-4-26b-a4b-it gemma-4-31b-it)
+              ;;
+            *)
+              echo "unsupported candidate scope: $CANDIDATE_SCOPE" >&2
+              exit 2
+              ;;
+          esac
 
-          go run ./cmd/eval-free-tier \
-            -model gemma-4-31b-it \
-            -scenarios ./eval/tool_action_corpus.jsonl \
-            -runs 1 \
-            -run-id "${SOURCE_SHA}-gemma-4-31b-it" \
-            -hardware 'github-hosted/ubuntu-24.04/x86_64' \
-            -source-commit "$SOURCE_SHA" \
-            -out "$EVIDENCE_DIR/gemma-4-31b-it.json"
-          status_31=$?
-
-          printf '%s\n' "$status_26" > "$EVIDENCE_DIR/gemma-4-26b-a4b-it.exit"
-          printf '%s\n' "$status_31" > "$EVIDENCE_DIR/gemma-4-31b-it.exit"
+          for model in "${models[@]}"; do
+            go run -tags nolibopusfile ./cmd/eval-free-tier \
+              -model "$model" \
+              -scenarios ./eval/tool_action_corpus.jsonl \
+              -runs 1 \
+              -run-id "${SOURCE_SHA}-${model}" \
+              -hardware 'github-hosted/ubuntu-24.04/x86_64' \
+              -source-commit "$SOURCE_SHA" \
+              -out "$EVIDENCE_DIR/${model}.json"
+            status=$?
+            printf '%s\n' "$status" > "$EVIDENCE_DIR/${model}.exit"
+          done
           exit 0
 
       - name: Compare candidates with correctness-first gate
@@ -103,7 +120,9 @@ jobs:
 
           root = pathlib.Path(os.environ['EVIDENCE_DIR'])
           source = os.environ['SOURCE_SHA']
-          models = ['gemma-4-26b-a4b-it', 'gemma-4-31b-it']
+          scope = os.environ['CANDIDATE_SCOPE']
+          all_models = ['gemma-4-26b-a4b-it', 'gemma-4-31b-it']
+          models = all_models if scope == 'both' else [scope]
           candidates = []
           insufficient = False
 
@@ -180,14 +199,17 @@ jobs:
               recommendation = 'candidate_preference'
 
           decision = {
-              'schema_version': 'companion.model-free-tier-decision.v1',
+              'schema_version': 'companion.model-free-tier-decision.v2',
               'source_commit': source,
+              'candidate_scope': scope,
               'cost_policy': {
                   'required': 'zero_spend',
                   'provider': 'Gemini Developer API',
-                  'allowed_models': models,
+                  'allowed_models': all_models,
                   'paid_inference_tier': 'not_available_for_gemma_4_per_official_pricing_checked_2026-08-22',
                   'priced_tools_enabled': False,
+                  'request_interval': '15s',
+                  'retries': 'none',
               },
               'promotion_bar': {
                   'provider_failures': 0,
