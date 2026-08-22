@@ -11,33 +11,78 @@ import (
 func TestConfigureSpeechComponentsDefaultsToMockOnlyWhenAllowed(t *testing.T) {
 	t.Setenv("COMPANION_SPEECH_PROFILE", "")
 	t.Setenv("MOCK_TRANSCRIPT", "tier1")
-	components, err := configureSpeechComponents(runtimeconfig.Config{AllowMock:true})
-	if err != nil { t.Fatal(err) }
-	if components.ASR == nil || components.TTS == nil || components.Codecs == nil { t.Fatal("mock speech components incomplete") }
+	components, err := configureSpeechComponents(runtimeconfig.Config{AllowMock: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if components.ASR == nil || components.TTS == nil || components.Codecs == nil {
+		t.Fatal("mock speech components incomplete")
+	}
 }
 
 func TestConfigureSpeechComponentsFailsClosedWithoutProfile(t *testing.T) {
 	t.Setenv("COMPANION_SPEECH_PROFILE", "")
-	_, err := configureSpeechComponents(runtimeconfig.Config{AllowMock:false})
-	if err == nil || !strings.Contains(err.Error(), "COMPANION_SPEECH_PROFILE") { t.Fatalf("error=%v", err) }
+	_, err := configureSpeechComponents(runtimeconfig.Config{AllowMock: false})
+	if err == nil || !strings.Contains(err.Error(), "COMPANION_SPEECH_PROFILE") {
+		t.Fatalf("error=%v", err)
+	}
 }
 
 func TestConfigureSpeechComponentsRejectsMockInProduction(t *testing.T) {
 	t.Setenv("COMPANION_SPEECH_PROFILE", "mock")
-	_, err := configureSpeechComponents(runtimeconfig.Config{AllowMock:false})
-	if err == nil || !strings.Contains(err.Error(), "forbidden") { t.Fatalf("error=%v", err) }
+	_, err := configureSpeechComponents(runtimeconfig.Config{AllowMock: false})
+	if err == nil || !strings.Contains(err.Error(), "forbidden") {
+		t.Fatalf("error=%v", err)
+	}
+}
+
+func TestConfigureSpeechComponentsGeminiDevRequiresToken(t *testing.T) {
+	t.Setenv("COMPANION_SPEECH_PROFILE", speechProfileGeminiLiveDev)
+	t.Setenv("GEMINI_TOKEN", "")
+	_, err := configureSpeechComponents(runtimeconfig.Config{Profile: runtimeconfig.ProfileDevelopment})
+	if err == nil || !strings.Contains(err.Error(), "GEMINI_TOKEN") {
+		t.Fatalf("error=%v", err)
+	}
+}
+
+func TestConfigureSpeechComponentsGeminiDevRejectsProduction(t *testing.T) {
+	t.Setenv("COMPANION_SPEECH_PROFILE", speechProfileGeminiLiveDev)
+	t.Setenv("GEMINI_TOKEN", "test-key")
+	_, err := configureSpeechComponents(runtimeconfig.Config{Profile: runtimeconfig.ProfileProduction})
+	if err == nil || !strings.Contains(err.Error(), "forbidden") {
+		t.Fatalf("error=%v", err)
+	}
+}
+
+func TestConfigureSpeechComponentsGeminiDevWiresRealBridge(t *testing.T) {
+	t.Setenv("COMPANION_SPEECH_PROFILE", speechProfileGeminiLiveDev)
+	t.Setenv("GEMINI_TOKEN", "test-key")
+	components, err := configureSpeechComponents(runtimeconfig.Config{Profile: runtimeconfig.ProfileDevelopment})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if components.ASR == nil || components.TTS == nil || components.Codecs == nil {
+		t.Fatal("Gemini development speech components incomplete")
+	}
+	if components.ASR != components.TTS {
+		t.Fatal("Gemini ASR and TTS must share one per-turn delegation bridge")
+	}
 }
 
 func TestConfigureSpeechComponentsLocalRequiresExplicitFunASR(t *testing.T) {
 	t.Setenv("COMPANION_SPEECH_PROFILE", "reference-local")
 	_ = os.Unsetenv("FUNASR_BASE_URL")
 	_ = os.Unsetenv("FUNASR_MODEL")
-	_, err := configureSpeechComponents(runtimeconfig.Config{AllowMock:false})
-	if err == nil || !strings.Contains(err.Error(), "FunASR") { t.Fatalf("error=%v", err) }
+	_, err := configureSpeechComponents(runtimeconfig.Config{AllowMock: false})
+	if err == nil || !strings.Contains(err.Error(), "FunASR") {
+		t.Fatalf("error=%v", err)
+	}
 }
 
 func TestConfigureSpeechComponentsStreamingRequiresCredentials(t *testing.T) {
 	t.Setenv("COMPANION_SPEECH_PROFILE", "reference-streaming")
-	_, err := configureSpeechComponents(runtimeconfig.Config{AllowMock:false})
-	if err == nil || !strings.Contains(err.Error(), "Xunfei") { t.Fatalf("error=%v", err) }
+	_, err := configureSpeechComponents(runtimeconfig.Config{AllowMock: false})
+	if err == nil || !strings.Contains(err.Error(), "Xunfei") {
+		t.Fatalf("error=%v", err)
+	}
 }
