@@ -89,8 +89,9 @@ type pacingTransport struct {
 }
 
 func (p *pacingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	if p.inner == nil {
-		p.inner = http.DefaultTransport
+	inner := p.inner
+	if inner == nil {
+		inner = http.DefaultTransport
 	}
 	p.mu.Lock()
 	now := time.Now()
@@ -109,7 +110,7 @@ func (p *pacingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		case <-timer.C:
 		}
 	}
-	return p.inner.RoundTrip(req)
+	return inner.RoundTrip(req)
 }
 
 func buildProbeRegistry(executions *atomic.Int64, lastQuery *atomic.Value) (*capability.ToolRegistry, error) {
@@ -152,8 +153,8 @@ func buildProbeRegistry(executions *atomic.Int64, lastQuery *atomic.Value) (*cap
 	return registry, nil
 }
 
-func run(ctx context.Context, apiKey, sourceCommit, hardware string) (evidenceReport, error) {
-	report := evidenceReport{
+func run(ctx context.Context, apiKey, sourceCommit, hardware string) (report evidenceReport, err error) {
+	report = evidenceReport{
 		Status:              "FAIL",
 		Model:               modelID,
 		Protocol:            adkbridge.ModelProtocolChatCompletions,
@@ -193,7 +194,7 @@ func run(ctx context.Context, apiKey, sourceCommit, hardware string) (evidenceRe
 		ProviderToolAliases: true,
 		BaseURL:             providerBase,
 		APIKey:              strings.TrimSpace(apiKey),
-		Instruction: "This is a production-path compatibility probe. Before answering, call the available read-only tool evidence.lookup exactly once with query adk-production-path. After the tool result, give a short confirmation.",
+		Instruction:         "This is a production-path compatibility probe. Before answering, call the available read-only tool evidence.lookup exactly once with query adk-production-path. After the tool result, give a short confirmation.",
 		PromptVersion:       "issue-23-adk-provider-evidence-v1",
 		HTTPClient:          client,
 		Tools:               registry,
