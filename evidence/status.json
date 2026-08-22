@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-08-22T13:08:00+07:00",
+  "updated_at": "2026-08-22T19:12:00+07:00",
   "rules": {
     "allowed_statuses": [
       "passed",
@@ -164,9 +164,29 @@
       "reason": "Real-provider audio delivery, latency and cancellation are measured, but subjective voice quality and physical speaker/enclosure acoustics remain unproven and no Production-v1 provider is selected here."
     },
     "real_llm_tool_quality": {
-      "status": "unproven",
-      "evidence": [],
-      "reason": "Deterministic ADK Responses tests exist but real-model task success, tool selection and argument accuracy have not been measured."
+      "status": "partial",
+      "production_ready": false,
+      "evidence": [
+        {
+          "kind": "real_provider",
+          "workflow": "gemini-live-evidence",
+          "run_id": 32569259890,
+          "source_head": "bfdf812a53cb9e581d51d01404851732cb96cfba",
+          "artifact_id": 9475000936,
+          "artifact_digest": "sha256:45ed39aaefdb7a825de857e1471791b39c4d6c9cd9de6c3c8f10e8f1379ba592",
+          "assertion": "Real gemma-4-31b-it provider report passed all 30 VN/EN/mixed Companion tool-action cases with zero provider failures, zero forbidden tool calls and 100% task success; p50 TTFT was 10.934406 s and p50 total latency was 14.800877 s."
+        },
+        {
+          "kind": "real_provider",
+          "workflow": "gemini-live-evidence",
+          "run_id": 32570555719,
+          "source_head": "5e77d2aadbf51ed32dd1eadcc452519e3969758a",
+          "artifact_id": 9475235643,
+          "artifact_digest": "sha256:31fc5cbec6f8b5e17bbfa24e31e75e93d05d61d41fd27c4830b163f2356f9e7b",
+          "assertion": "Exact production-model composition probe passed NewProvider -> Google ADK -> ToolRegistry with chat_completions, provider-safe tool aliases and exactly one read-only ToolRegistry execution."
+        }
+      ],
+      "reason": "Real model tool quality is measured for the development candidate, but Production-v1 selection remains open because the current hosted candidate does not satisfy the required production privacy/runtime boundary."
     },
     "prompt_regression_eval": {
       "status": "unproven",
